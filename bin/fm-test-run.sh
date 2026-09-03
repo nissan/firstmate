@@ -283,7 +283,7 @@ family_for_basename() {
     fm-muse-signals-live-e2e.test.sh|\
     fm-herdr-version-floor-live-e2e.test.sh|\
     fm-opencode-primary-live-e2e.test.sh|fm-pi-branch-live-e2e.test.sh|\
-    fm-pi-primary-live-e2e.test.sh|\
+    fm-pi-primary-live-e2e.test.sh|fm-pause-and-learn-live-e2e.test.sh|\
     fm-sessionstart-hook-live-e2e.test.sh|fm-sessionstart-instruction-refresh-live-e2e.test.sh|\
     fm-quota-array-dispatch-live-e2e.test.sh|fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-send-inbox-doorbell-live-e2e.test.sh|\
@@ -602,6 +602,7 @@ tests/fm-no-mistakes-required.test.sh 370
 tests/fm-on.test.sh 11692
 tests/fm-opencode-primary-live-e2e.test.sh 21
 tests/fm-operational-input.test.sh 231
+tests/fm-pause-and-learn-live-e2e.test.sh 21
 tests/fm-peek-remote.test.sh 1018
 tests/fm-pending-reply.test.sh 24679
 tests/fm-pi-branch-extension.test.sh 22239
@@ -1324,7 +1325,7 @@ families_for_changed_path() {
     bin/fm-ff-lib.sh|bin/fm-gotmp*|bin/*pretool*)
       printf '%s\n' pure-contract-unit
       ;;
-    .agents/skills/quota-array-dispatch/SKILL.md)
+    .agents/skills/quota-array-dispatch/SKILL.md|.agents/skills/pause-and-learn/SKILL.md)
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
       ;;
