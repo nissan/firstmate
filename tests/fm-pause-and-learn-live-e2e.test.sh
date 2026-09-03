@@ -12,7 +12,8 @@ if [ "${FM_PAUSE_AND_LEARN_LIVE_E2E:-0}" != 1 ]; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OWNER="$ROOT/.agents/skills/pause-and-learn/SKILL.md"
+OWNER_DIR="$ROOT/.agents/skills/pause-and-learn"
+OWNER="$OWNER_DIR/SKILL.md"
 BRAIN_OWNER="$ROOT/.agents/skills/brain-capture"
 FORGE_OWNER="$ROOT/.agents/skills/skill-forge"
 PLAN_CHECK="$ROOT/.agents/skills/pause-and-learn/plan-check.py"
@@ -35,9 +36,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$PROJECT/.agents/skills/pause-and-learn" "$PROJECT/fleet"
-cp "$OWNER" "$PROJECT/.agents/skills/pause-and-learn/SKILL.md"
-cp -R "$BRAIN_OWNER" "$FORGE_OWNER" "$PROJECT/.agents/skills/"
+mkdir -p "$PROJECT/.agents/skills" "$PROJECT/fleet"
+cp -R "$OWNER_DIR" "$BRAIN_OWNER" "$FORGE_OWNER" "$PROJECT/.agents/skills/"
+[ -f "$PROJECT/.agents/skills/pause-and-learn/plan-check.py" ] \
+  || fail "the lab skill copy is missing the helper its SKILL.md links"
 
 run_control() {
   local label=$1 cycle_record=$2 expected_cycle=$3 out_path="$LAB/$1.out"

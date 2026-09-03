@@ -19,10 +19,7 @@ Only the exact command form `/pause-and-learn plan`, with optional surrounding w
 In that mode, perform the scope and evidence inventory, choose the proposed safe boundary, identify existing cycle artifacts and queued work, and report the plan without spawning work, changing records, invoking component skills, or writing artifacts.
 All safety and authority checks still apply.
 
-Refuse `/pause-and-learn plan` carrying any trailing argument.
-Do not enter planning mode and do not fall through to the mutating cycle: change no record, worker, or artifact, say the read-only form takes no arguments, name the exact accepted form, and let the captain reissue it.
-[`plan-check.py`](plan-check.py) next to this skill is the check-only authority for that classification and for the plan block below; it validates and never writes, spawns, or changes anything.
-End the response with exactly one fenced JSON object introduced by the line `PAUSE_AND_LEARN_PLAN_V1`.
+In that mode, and only there, end the response with exactly one fenced JSON object introduced by the line `PAUSE_AND_LEARN_PLAN_V1`.
 That object is the stable planning contract and contains these fields:
 
 ```json
@@ -44,8 +41,14 @@ That object is the stable planning contract and contains these fields:
 
 Derive every placeholder string from current evidence rather than copying the example values.
 For each downstream tranche, preserve its durable record identity in `id`, keep human wording only in `name`, and express resume requirements through the fixed booleans rather than free-form vocabulary.
-Emit one entry per downstream tranche in `queued`, or an empty array when none exists.
+Emit one entry per downstream tranche in `queued`, each with its own durable identity, or an empty array when none exists.
 Do not negate or qualify the boolean values in prose; the object is authoritative for the plan.
+
+### Refused command forms
+
+Refuse `/pause-and-learn plan` carrying any trailing argument.
+Do not enter planning mode and do not fall through to the mutating cycle: change no record, worker, or artifact, emit no `PAUSE_AND_LEARN_PLAN_V1` block, say the read-only form takes no arguments, name the exact accepted form, and let the captain reissue it.
+[`plan-check.py`](plan-check.py) next to this skill is the check-only authority for both that classification and the plan contract above; it validates and never writes, spawns, or changes anything.
 
 ## 1. Resolve one scope and reuse any cycle already under way
 

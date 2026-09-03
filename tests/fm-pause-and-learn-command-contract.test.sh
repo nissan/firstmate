@@ -2,13 +2,10 @@
 # Deterministic regression for the command classification the skill relies on.
 set -eu
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CHECK="$ROOT/.agents/skills/pause-and-learn/plan-check.py"
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-fail() {
-  printf 'not ok - %s\n' "$1" >&2
-  exit 1
-}
+CHECK="$ROOT/.agents/skills/pause-and-learn/plan-check.py"
 
 classify() {
   python3 "$CHECK" classify "$1"
@@ -39,4 +36,4 @@ if python3 "$CHECK" classify > /dev/null 2>&1; then
   fail "classifier accepted a missing command argument"
 fi
 
-printf 'ok - only the exact no-argument plan command is read-only and trailing arguments are refused\n'
+pass "only the exact no-argument plan command is read-only and trailing arguments are refused"

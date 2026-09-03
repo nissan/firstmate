@@ -2,33 +2,48 @@
 # Deterministic public-contract regression for /pause-and-learn plan output.
 set -eu
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 CHECK="$ROOT/.agents/skills/pause-and-learn/plan-check.py"
 FIXTURES="$ROOT/tests/fixtures/pause-and-learn-plan"
 
-fail() {
-  printf 'not ok - %s\n' "$1" >&2
-  exit 1
+accept() {
+  local fixture=$1 message=$2
+  shift 2
+  python3 "$CHECK" validate "$FIXTURES/$fixture" "$@" || fail "$message"
 }
 
 reject() {
-  local fixture=$1 cycle=$2 message=$3
-  if python3 "$CHECK" validate "$FIXTURES/$fixture" "$cycle" next-tranche > /dev/null 2>&1; then
+  local fixture=$1 message=$2
+  shift 2
+  if python3 "$CHECK" validate "$FIXTURES/$fixture" "$@" > /dev/null 2>&1; then
     fail "$message"
   fi
 }
 
-python3 "$CHECK" validate "$FIXTURES/control.txt" false next-tranche \
-  || fail "canonical plan was rejected"
-python3 "$CHECK" validate "$FIXTURES/reordered-wrapped.txt" true next-tranche \
-  || fail "semantically identical reordered and wrapped plan was rejected"
+accept control.txt "canonical plan was rejected" false next-tranche
+accept reordered-wrapped.txt "semantically identical reordered and wrapped plan was rejected" \
+  true next-tranche
 
-reject unsafe-start.txt false "a plan that starts the queued tranche was accepted"
-reject control.txt true "a fresh-cycle plan satisfied an existing-cycle expectation"
-reject negated-boolean.txt false "a numeric zero passed as a mutation flag"
-reject stringified-boolean.txt false "a stringified boolean passed as a safety flag"
-reject duplicate-block.txt false "a second contradicting plan block was accepted"
-reject malformed-json.txt false "an unparseable plan block was accepted"
-reject missing-block.txt false "prose alone satisfied the machine-readable contract"
+reject unsafe-start.txt "a plan that starts the queued tranche was accepted" false next-tranche
+reject control.txt "a fresh-cycle plan satisfied an existing-cycle expectation" true next-tranche
+reject negated-boolean.txt "a numeric zero passed as a mutation flag" false next-tranche
+reject stringified-boolean.txt "a stringified boolean passed as a safety flag" false next-tranche
+reject duplicate-block.txt "a second contradicting plan block was accepted" false next-tranche
+reject malformed-json.txt "an unparseable plan block was accepted" false next-tranche
+reject missing-block.txt "prose alone satisfied the machine-readable contract" false next-tranche
+pass "plan contract accepts ordering and wording variants while rejecting unsafe and malformed plans"
 
-printf 'ok - plan contract accepts ordering and wording variants while rejecting unsafe and malformed plans\n'
+accept no-queued.txt "the documented empty queue was rejected" false
+accept multi-queued.txt "the documented multi-tranche queue was rejected" false next-tranche
+accept multi-queued.txt "a queued tranche past the first was unreachable" false later-tranche
+
+reject no-queued.txt "an empty queue satisfied a named downstream tranche" false next-tranche
+reject control.txt "a queued tranche was accepted where none should exist" false
+reject multi-queued.txt "an unqueued identity was accepted" false absent-tranche
+reject duplicate-queued.txt "two tranches shared one durable identity" false next-tranche
+reject unsafe-second-queued.txt "a later tranche marked to start was accepted" false next-tranche
+reject malformed-queued.txt "a later tranche with no paused state or resume authority was accepted" \
+  false next-tranche
+pass "every queued tranche is validated for zero, one, and many downstream items"

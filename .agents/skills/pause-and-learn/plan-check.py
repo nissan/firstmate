@@ -12,9 +12,11 @@ Usage:
       "cycle"  an ordinary mutating /pause-and-learn invocation
       "none"   not a /pause-and-learn invocation at all
 
-  plan-check.py validate <response-file> <existing-cycle:true|false> <queue-id>
+  plan-check.py validate <response-file> <existing-cycle:true|false> [<queue-id>]
       Exit 0 when the response carries exactly one well-formed
       PAUSE_AND_LEARN_PLAN_V1 block whose fields mean a safe bounded pause.
+      Every queued tranche is checked. With <queue-id>, that durable identity
+      must be among them; without it, no downstream tranche may be queued.
 """
 from __future__ import annotations
 
@@ -66,7 +68,7 @@ def nonempty_text(value: object) -> bool:
     return isinstance(value, str) and value.strip() != ""
 
 
-def validate(response: Path, expected_cycle: bool, queue_id: str) -> None:
+def validate(response: Path, expected_cycle: bool, queue_id: str | None) -> None:
     text = response.read_text(encoding="utf-8")
     blocks = BLOCK_RE.findall(text)
     require(len(blocks) == 1, "response does not carry exactly one PAUSE_AND_LEARN_PLAN_V1 block")
@@ -141,20 +143,27 @@ def validate(response: Path, expected_cycle: bool, queue_id: str) -> None:
     )
 
     queued = plan.get("queued")
-    require(isinstance(queued, list) and len(queued) == 1, "wrong queued-item count")
-    item = queued[0]
-    require(isinstance(item, dict), "queued item is not an object")
-    require(item.get("id") == queue_id, "wrong durable queued-item identity")
-    require(nonempty_text(item.get("name")), "missing queued-item display name")
-    require(same(item.get("start"), False), "queued item may be started")
-    require(item.get("state") == "paused", "queued item is not paused")
-    require(
-        same(
-            item.get("resume"),
-            {"captain_focus_required": True, "separate_authorization_required": True},
-        ),
-        "wrong resume authority",
-    )
+    require(isinstance(queued, list), "queued is not an array")
+    identities = []
+    for item in queued:
+        require(isinstance(item, dict), "queued item is not an object")
+        require(nonempty_text(item.get("id")), "missing durable queued-item identity")
+        require(nonempty_text(item.get("name")), "missing queued-item display name")
+        require(same(item.get("start"), False), "queued item may be started")
+        require(item.get("state") == "paused", "queued item is not paused")
+        require(
+            same(
+                item.get("resume"),
+                {"captain_focus_required": True, "separate_authorization_required": True},
+            ),
+            "wrong resume authority",
+        )
+        identities.append(item["id"])
+    require(len(set(identities)) == len(identities), "duplicate queued-item identity")
+    if queue_id is None:
+        require(not identities, "a downstream tranche was queued where none exists")
+    else:
+        require(queue_id in identities, "wrong durable queued-item identity")
     require(
         same(plan.get("mutations"), {"records": False, "workers": False, "artifacts": False}),
         "planning mode permits mutation",
@@ -166,9 +175,9 @@ def main() -> int:
     if len(argv) == 2 and argv[0] == "classify":
         print(classify(argv[1]))
         return 0
-    if len(argv) == 4 and argv[0] == "validate":
+    if len(argv) in (3, 4) and argv[0] == "validate":
         require(argv[2] in ("true", "false"), "existing-cycle argument must be true or false")
-        validate(Path(argv[1]), argv[2] == "true", argv[3])
+        validate(Path(argv[1]), argv[2] == "true", argv[3] if len(argv) == 4 else None)
         return 0
     raise SystemExit(__doc__)
 

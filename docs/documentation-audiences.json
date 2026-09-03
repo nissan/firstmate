@@ -505,6 +505,26 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "tests/fixtures/pause-and-learn-plan/duplicate-queued.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/malformed-queued.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/multi-queued.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/no-queued.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/unsafe-second-queued.txt",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/fixtures/pause-and-learn-plan/duplicate-block.txt",
       "audience": "maintainer-verification"
     },
