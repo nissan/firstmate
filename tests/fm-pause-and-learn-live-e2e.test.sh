@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OWNER="$ROOT/.agents/skills/pause-and-learn/SKILL.md"
 BRAIN_OWNER="$ROOT/.agents/skills/brain-capture"
 FORGE_OWNER="$ROOT/.agents/skills/skill-forge"
-PLAN_CHECK="$ROOT/tests/pause-and-learn-plan-check.py"
+PLAN_CHECK="$ROOT/.agents/skills/pause-and-learn/plan-check.py"
 
 fail() {
   printf 'not ok - %s\n' "$1" >&2
@@ -64,7 +64,7 @@ EOF
         --model openai-codex/gpt-5.6-sol --thinking low \
         '/pause-and-learn plan'
   ) > "$out_path" || fail "$label: fresh Pi skill run failed"
-  if ! python3 "$PLAN_CHECK" "$out_path" "$expected_cycle" distributed-cache-migration; then
+  if ! python3 "$PLAN_CHECK" validate "$out_path" "$expected_cycle" distributed-cache-migration; then
     printf '%s\n' "--- $label raw response ---" >&2
     cat "$out_path" >&2
     fail "$label: invalid public plan contract"

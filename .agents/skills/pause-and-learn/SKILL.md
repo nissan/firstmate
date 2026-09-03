@@ -15,9 +15,13 @@ This skill orchestrates existing owners rather than replacing their procedures.
 
 ## Planning mode
 
-Only the exact command form `/pause-and-learn plan`, with optional whitespace but no other arguments, is read-only.
+Only the exact command form `/pause-and-learn plan`, with optional surrounding whitespace but no other arguments, is read-only.
 In that mode, perform the scope and evidence inventory, choose the proposed safe boundary, identify existing cycle artifacts and queued work, and report the plan without spawning work, changing records, invoking component skills, or writing artifacts.
 All safety and authority checks still apply.
+
+Refuse `/pause-and-learn plan` carrying any trailing argument.
+Do not enter planning mode and do not fall through to the mutating cycle: change no record, worker, or artifact, say the read-only form takes no arguments, name the exact accepted form, and let the captain reissue it.
+[`plan-check.py`](plan-check.py) next to this skill is the check-only authority for that classification and for the plan block below; it validates and never writes, spawns, or changes anything.
 End the response with exactly one fenced JSON object introduced by the line `PAUSE_AND_LEARN_PLAN_V1`.
 That object is the stable planning contract and contains these fields:
 

@@ -505,7 +505,27 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "tests/fixtures/pause-and-learn-plan/duplicate-block.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/malformed-json.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/missing-block.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/negated-boolean.txt",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/fixtures/pause-and-learn-plan/reordered-wrapped.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/stringified-boolean.txt",
       "audience": "maintainer-verification"
     },
     {

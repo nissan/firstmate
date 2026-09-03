@@ -1,0 +1,2 @@
+Plan only: nothing was changed, no worker was dispatched, the queued
+tranche stays paused, and the plan follows the firstmate.pause-and-learn.plan.v1 contract.

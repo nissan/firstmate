@@ -1329,7 +1329,7 @@ families_for_changed_path() {
     bin/fm-ff-lib.sh|bin/fm-gotmp*|bin/*pretool*)
       printf '%s\n' pure-contract-unit
       ;;
-    .agents/skills/quota-array-dispatch/SKILL.md|.agents/skills/pause-and-learn/SKILL.md|\
+    .agents/skills/quota-array-dispatch/SKILL.md|.agents/skills/pause-and-learn/*|\
     .agents/skills/brain-capture/*|.agents/skills/skill-forge/*)
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
@@ -1379,7 +1379,12 @@ families_for_changed_path() {
       fi
       ;;
     tests/*)
-      printf '%s\n' "__unmapped__:$path"
+      # A deleted or relocated helper has no consuming suite left to select at
+      # its old path, the same rule the fixture and bin cases above apply. Its
+      # new path selects the suites that read it.
+      if [ -e "$path" ]; then
+        printf '%s\n' "__unmapped__:$path"
+      fi
       ;;
     README.md|LICENSE|assets/*|docs/*|.gitignore)
       ;;

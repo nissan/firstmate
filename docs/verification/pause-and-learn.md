@@ -60,4 +60,10 @@ ok - repeated-cycle
 ```
 
 This was the single authorized final paid run after the test-only command-path correction.
-The deterministic contract tests separately cover exact-command acceptance, trailing-argument refusal, scenario-context separation, JSON ordering and wrapping, and rejection of a queued item marked to start.
+The deterministic contract tests execute `.agents/skills/pause-and-learn/plan-check.py` and separately cover exact-command acceptance, trailing-argument refusal, scenario-context separation, JSON ordering and wrapping, and rejection of a queued item marked to start, a stringified safety boolean, a second contradicting plan block, an unparseable block, and prose with no block at all.
+
+## Binding scope
+
+Each SHA-256 above binds the exact bytes evaluated or tested at the commit named in its own section.
+Review corrections landed after those runs: the plan contract check moved from the test tree to the check-only `plan-check.py` helper beside the skill, and the skill gained an explicit refusal for `/pause-and-learn plan` with trailing arguments.
+Those corrections are covered by the deterministic tests above, not by a re-run of the credentialed or fresh-context arms, and neither arm is restated as covering them.
