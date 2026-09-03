@@ -13,17 +13,38 @@ metadata:
 Bring one project or thread to the safest bounded pause, complete its learning cycle, and leave the next tranche visibly queued without beginning it.
 This skill orchestrates existing owners rather than replacing their procedures.
 
-## Modes
+## Planning mode
 
-A request containing `plan`, `dry-run`, or `preview` is read-only.
+Only the exact command form `/pause-and-learn plan`, with optional whitespace but no other arguments, is read-only.
 In that mode, perform the scope and evidence inventory, choose the proposed safe boundary, identify existing cycle artifacts and queued work, and report the plan without spawning work, changing records, invoking component skills, or writing artifacts.
 All safety and authority checks still apply.
+End the response with exactly one fenced JSON object introduced by the line `PAUSE_AND_LEARN_PLAN_V1`.
+That object is the stable planning contract and contains these fields:
+
+```json
+{
+  "schema": "firstmate.pause-and-learn.plan.v1",
+  "mode": "plan",
+  "scope": {"project": "resolved project", "thread": "resolved thread"},
+  "existing_cycle": {"found": true, "identity": "stable identity or empty string", "resume_phase": "phase or new"},
+  "boundary": {"kind": "post-current-stage", "name": "named stable boundary", "wait_for_current_stage": true, "current_stage": "current stage", "interrupt_current_stage": false},
+  "project_writes": {"route": "worker", "firstmate_writes_project": false},
+  "components": {"retrospective": "planned", "brain_capture": "planned", "skill_forge": "planned", "stow": "planned"},
+  "brain": {"status": "draft", "brain_status": "proposed", "canonical_write": false},
+  "authority": {"merge": false, "sign": false, "approve": false, "promote": false, "discard": false, "destructive": false, "security_sensitive": false, "semantic_expansion": false},
+  "sequencing": {"prior_review_failure_backfilled": false},
+  "queued": [{"name": "queued tranche", "start": false, "state": "paused", "resume_condition": "captain returns focus"}],
+  "mutations": {"records": false, "workers": false, "artifacts": false}
+}
+```
+
+Derive every string from current evidence rather than copying the example values.
+Emit one entry per downstream tranche in `queued`, or an empty array when none exists.
+Do not negate or qualify the boolean values in prose; the object is authoritative for the plan.
 
 ## 1. Resolve one scope and reuse any cycle already under way
 
-1. Resolve the explicit project and thread independently from the current request.
-   A clear follow-up may inherit one confident current referent.
-   If multiple projects or threads plausibly match, ask one concise question and do nothing else.
+1. Resolve the project and thread exactly under `AGENTS.md` section 7, "Intake and authority".
 2. Form a stable cycle identity from the registered project identity and the named thread or current authorized tranche, never from a temporary branch, worker, session, or version.
 3. Inventory structured backlog records, work already under way, completed artifacts, project delivery records, and registered project locations for that identity.
    Treat conversational prose as a lead, not proof of repository or review reality.
@@ -59,38 +80,25 @@ Use the ordinary supervision protocol while waiting and do not create a second w
 
 ## 4. Run the retrospective through its owner
 
-Determine the retrospective owner from the scoped project's conventions.
-When the Shared Brain capture owns the retrospective, load `brain-capture` and follow its retrospective procedure rather than restating its format here.
-When the project has a stronger established retrospective owner, use that owner and give the later brain capture its exact path and source hash.
+Determine the retrospective owner from the scoped project's conventions, then load that owner and follow it without copying its format here.
+When `brain-capture` owns the retrospective, its procedure is authoritative.
 Every project write is performed by a worker in an isolated copy through that project's registered validation and delivery path.
-Firstmate may coordinate, inspect, and report, but does not write the project directly.
 Reuse an overlapping retrospective and amend it only with evidence that belongs to this cycle.
 
 ## 5. Mine and evaluate reusable skill candidates
 
-1. Load `skill-forge` and follow its candidate qualification, candidate list, rejection accounting, authoring, fresh-context evaluation, ablation, stopping rule, and reporting procedure.
-   Do not restate or weaken those contracts here.
-2. Record every candidate and every rejection or fold, including overlap with an existing owner, knowledge-only shape, redundancy, and failure against the predeclared bar.
-   Fold an overlapping procedure into its existing owner only when this invocation already has authority to change that owner; otherwise retain the recommendation without writing it.
-3. Before authoring, predeclare a scenario-specific evaluation bar derived from the accepted outcome and safety boundaries.
-   Require a fresh context that did not author the candidate and normal independent review of any retained artifact.
-4. Keep no candidate that fails fresh-context evaluation, misses its predeclared bar, or whose verified no-skill baseline is materially equivalent.
-   If a valid baseline cannot be isolated, record it as unmeasured exactly as `skill-forge` requires rather than claiming a delta.
-5. Route candidate writes to a worker in the repository that owns the skill and use that repository's normal validation and delivery path.
-   Evaluation permission does not grant merge, promotion, canonical installation, or approval authority.
+Load `skill-forge` and follow its candidate, rejection, evaluation, ablation, stopping, and reporting contracts.
+This Firstmate safety rule overrides `skill-forge`'s live-install-first instruction: author in the owning repository, expose the exact candidate bytes to the evaluator from an isolated repository discovery location, and install or update fleet-visible bytes only after the ordinary reviewed delivery path lands.
+Route every candidate write to a worker in its owning repository, predeclare the scenario-specific bar, require a fresh context and normal independent review, and retain no failing or materially redundant candidate.
+Evaluation grants no merge, promotion, canonical installation, or approval authority.
 
 ## 6. Capture proposed Shared Brain content
 
-1. Resolve the registered Shared Brain project through the project registry.
-   If none is registered or more than one plausibly matches, ask one concise question rather than guessing a path.
-2. Reuse an overlapping lesson or open capture whose identity and sources match.
-   Do not create parallel corpus pages or retrospectives for the same learning cycle.
-3. Dispatch the project change to a worker and require that worker to load `brain-capture` and follow the Shared Brain repository's own current policies, validators, and delivery path.
-4. Supply the completed retrospective, exact source commits and hashes, candidate and rejection ledger, evaluation results, review evidence, failures, corrections, and privacy constraints as inputs.
-5. Keep agent-authored corpus content private and marked `draft` and `proposed`.
-   Preserve exact source hashes, privacy redaction, index and retrieval bindings, unsigned review evidence, repository gates, and normal independent review.
-6. Do not sign, verify, promote, merge, or make the content canonical under this skill.
-   If the registered delivery path opens a PR or leaves a local branch awaiting approval, preserve that boundary.
+Resolve the registered Shared Brain project through the intake owner named in step 1, then reuse any capture with matching identity and sources.
+Dispatch its project change to a worker that loads `brain-capture`; that skill owns the retrospective, corpus format, source stamping, redaction, indexing, validation, evaluation, and report procedure.
+Supply the exact completed evidence and skill-candidate disposition ledger as inputs.
+Keep agent-authored content private, `draft`, and `proposed`, with unsigned review evidence and the project's normal independent review and delivery path.
+This skill never signs, verifies, promotes, merges, or makes that content canonical.
 
 ## 7. Stow local operating memory
 

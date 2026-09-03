@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Credentialed public-behavior regression for /pause-and-learn planning.
+# Credentialed public-behavior regression for /pause-and-learn plan.
 #
-# The test starts a fresh Pi context with only the installed skill and a
-# synthetic fleet. It observes the user-facing plan, not instruction bytes.
+# Each control starts a fresh Pi context with only the installed skill and a
+# synthetic fleet. Assertions consume the public machine-readable plan block,
+# never instruction bytes or unconstrained explanatory prose.
 set -u
 
 if [ "${FM_PAUSE_AND_LEARN_LIVE_E2E:-0}" != 1 ]; then
@@ -18,12 +19,8 @@ fail() {
   exit 1
 }
 
-require_line() {
-  local output=$1 pattern=$2 label=$3
-  printf '%s\n' "$output" | grep -Eiq "$pattern" || fail "$label: output was: $output"
-}
-
 command -v pi >/dev/null 2>&1 || fail "pi not found"
+command -v python3 >/dev/null 2>&1 || fail "python3 not found"
 [ -f "$OWNER" ] || fail "pause-and-learn skill not found"
 
 LAB=$(mktemp -d "${TMPDIR:-/tmp}/fm-pause-and-learn-live.XXXXXX")
@@ -35,38 +32,87 @@ trap cleanup EXIT
 
 mkdir -p "$PROJECT/.agents/skills/pause-and-learn" "$PROJECT/fleet"
 cp "$OWNER" "$PROJECT/.agents/skills/pause-and-learn/SKILL.md"
-cat > "$PROJECT/fleet/current.txt" <<'EOF'
+
+check_plan() {
+  local output_path=$1 expected_cycle=$2
+  python3 - "$output_path" "$expected_cycle" <<'PY'
+import json
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r"PAUSE_AND_LEARN_PLAN_V1\s*\n```(?:json)?\s*\n(.*?)\n```", text, re.S)
+if not match:
+    raise SystemExit("missing PAUSE_AND_LEARN_PLAN_V1 JSON block")
+plan = json.loads(match.group(1))
+expected_cycle = sys.argv[2] == "true"
+
+assert plan["schema"] == "firstmate.pause-and-learn.plan.v1"
+assert plan["mode"] == "plan"
+assert plan["scope"] == {"project": "Signal Atlas", "thread": "resilient import tranche"}
+assert plan["existing_cycle"]["found"] is expected_cycle
+assert bool(plan["existing_cycle"]["identity"]) is expected_cycle
+assert plan["existing_cycle"]["resume_phase"] != "new" if expected_cycle else plan["existing_cycle"]["resume_phase"] == "new"
+assert plan["boundary"]["kind"] == "post-current-stage"
+assert plan["boundary"]["name"]
+assert plan["boundary"]["wait_for_current_stage"] is True
+assert plan["boundary"]["current_stage"] == "exact-head-review"
+assert plan["boundary"]["interrupt_current_stage"] is False
+assert plan["project_writes"] == {"route": "worker", "firstmate_writes_project": False}
+assert plan["components"] == {
+    "retrospective": "planned",
+    "brain_capture": "planned",
+    "skill_forge": "planned",
+    "stow": "planned",
+}
+assert plan["brain"] == {"status": "draft", "brain_status": "proposed", "canonical_write": False}
+assert plan["authority"] == {
+    "merge": False,
+    "sign": False,
+    "approve": False,
+    "promote": False,
+    "discard": False,
+    "destructive": False,
+    "security_sensitive": False,
+    "semantic_expansion": False,
+}
+assert plan["sequencing"] == {"prior_review_failure_backfilled": False}
+assert plan["queued"] == [{
+    "name": "distributed cache migration",
+    "start": False,
+    "state": "paused",
+    "resume_condition": "captain returns focus",
+}]
+assert plan["mutations"] == {"records": False, "workers": False, "artifacts": False}
+PY
+}
+
+run_control() {
+  local label=$1 cycle_record=$2 expected_cycle=$3 out_path="$LAB/$1.out"
+  cat > "$PROJECT/fleet/current.txt" <<EOF
 Registered project: Signal Atlas
 Current thread: resilient import tranche
 Current authorized change: commit 0123456789abcdef0123456789abcdef01234567
-Current stage: independent exact-head review is actively evaluating that commit
+Current stage: exact-head-review
+Current-stage detail: independent exact-head review is actively evaluating that commit
 Completed related change: parser normalization, commit abcdefabcdefabcdefabcdefabcdefabcdefabcd, tests passed and delivered
 Queued next tranche: distributed cache migration, not authorized to start in this cycle
-Existing pause-and-learn cycle: Signal Atlas / resilient import tranche
+$cycle_record
 Existing retrospective: none
 Existing corpus capture: none
 Existing skill candidate ledger: none
 EOF
 
-out=$(
-  cd "$PROJECT" &&
-    pi --print --approve --no-session --no-context-files --no-extensions \
-      --no-skills --skill .agents/skills --tools read \
-      --model openai-codex/gpt-5.6-sol --thinking high \
-      '/pause-and-learn plan for the Signal Atlas resilient import thread. The synthetic fleet record is fleet/current.txt. Give the complete plan and clearly state the boundary, ownership of writes, learning components, authority limits, reuse behavior, and queued work.'
-) || fail "fresh Pi skill run failed: $out"
+  (
+    cd "$PROJECT" &&
+      pi --print --approve --no-session --no-context-files --no-extensions \
+        --no-skills --skill .agents/skills --tools read \
+        --model openai-codex/gpt-5.6-sol --thinking high \
+        '/pause-and-learn plan for the Signal Atlas resilient import thread. The synthetic fleet record is fleet/current.txt.'
+  ) > "$out_path" || fail "$label: fresh Pi skill run failed"
+  check_plan "$out_path" "$expected_cycle" || fail "$label: invalid public plan contract"
+  printf 'ok - %s\n' "$label"
+}
 
-require_line "$out" 'Plan only' "planning mode did not identify itself"
-require_line "$out" '(wait|after).*(exact-head review)|exact-head review.*(finish|complete)' "plan did not wait for the active exact-head review"
-require_line "$out" 'post-review|after.*review.*(boundary|pause)|boundary.*after.*review' "plan did not name the post-review pause boundary"
-require_line "$out" '(worker|delegate).*(project write|retrospective|brain|corpus|skill)' "plan did not route project writes to a worker"
-require_line "$out" 'retrospective' "plan omitted the retrospective"
-require_line "$out" 'brain-capture|Shared Brain' "plan omitted Shared Brain capture"
-require_line "$out" 'skill-forge|skill candidate' "plan omitted skill candidate mining and evaluation"
-require_line "$out" '/stow|stow' "plan omitted stow"
-require_line "$out" 'draft|proposed' "plan omitted proposed corpus status"
-require_line "$out" 'reus(e|ing)|existing pause-and-learn cycle' "plan did not reuse the existing cycle"
-require_line "$out" 'distributed cache migration.*(queued|paused|not start|remain)' "plan did not leave the next tranche queued"
-require_line "$out" '(no records|no .*changed|read-only|no workers|no artifacts)' "plan did not preserve planning-mode immutability"
-printf '%s\n' "$out"
-printf 'ok - pause-and-learn plans the safe post-review learning boundary and reuses its cycle\n'
+run_control new-cycle 'Existing pause-and-learn cycle: none' false
+run_control repeated-cycle 'Existing pause-and-learn cycle: Signal Atlas / resilient import tranche; resume phase: retrospective' true
