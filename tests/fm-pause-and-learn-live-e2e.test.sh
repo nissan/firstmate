@@ -60,14 +60,16 @@ EOF
     cd "$PROJECT" &&
       pi --print --approve --no-session --no-context-files --no-extensions \
         --no-skills --skill .agents/skills --tools read \
-        --model openai-codex/gpt-5.6-sol --thinking medium \
-        '/pause-and-learn plan for the Signal Atlas resilient import thread. The synthetic fleet record is fleet/current.txt.'
+        --append-system-prompt "$(cat fleet/current.txt)" \
+        --model openai-codex/gpt-5.6-sol --thinking low \
+        '/pause-and-learn plan'
   ) > "$out_path" || fail "$label: fresh Pi skill run failed"
   if ! python3 "$PLAN_CHECK" "$out_path" "$expected_cycle" distributed-cache-migration; then
     printf '%s\n' "--- $label raw response ---" >&2
     cat "$out_path" >&2
     fail "$label: invalid public plan contract"
   fi
+  printf 'response-sha256: %s\n' "$(sha256sum "$out_path" | awk '{print $1}')"
   printf 'ok - %s\n' "$label"
 }
 

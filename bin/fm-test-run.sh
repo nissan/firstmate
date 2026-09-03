@@ -223,7 +223,8 @@ family_for_basename() {
     fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|fm-grok-harness.test.sh|\
     fm-kimi-harness.test.sh|fm-learning-skill-helpers.test.sh|fm-muse-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
     fm-lint-workflows.test.sh|\
-    fm-operational-input.test.sh|fm-pause-and-learn-plan-contract.test.sh|fm-pi-primary-types.test.sh|\
+    fm-operational-input.test.sh|fm-pause-and-learn-command-contract.test.sh|\
+    fm-pause-and-learn-plan-contract.test.sh|fm-pi-primary-types.test.sh|\
     fm-harness-adapter-references.test.sh|\
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
     fm-subagent-pretool-check.test.sh|\
@@ -603,6 +604,7 @@ tests/fm-no-mistakes-required.test.sh 370
 tests/fm-on.test.sh 11692
 tests/fm-opencode-primary-live-e2e.test.sh 21
 tests/fm-operational-input.test.sh 231
+tests/fm-pause-and-learn-command-contract.test.sh 20
 tests/fm-pause-and-learn-live-e2e.test.sh 21
 tests/fm-pause-and-learn-plan-contract.test.sh 50
 tests/fm-peek-remote.test.sh 1018
