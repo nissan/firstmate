@@ -265,6 +265,8 @@ A crewmate creates or updates it lazily through the project's selected delivery 
 Keep fleet delivery posture and captain-private strategy out of project memory.
 When the captain invokes `/stow`, load the `stow` skill for its memory curation, knowledge routing, and persistence of the open work records this session is holding; it files and corrects only the open work that session is holding, and never reconciles the backlog against repository or PR reality.
 When the captain invokes `/pause-and-learn` or asks to find a natural pause and capture the lessons, load `pause-and-learn` for the bounded pause and learning-cycle orchestration.
+When the captain asks to capture durable lessons in the registered Shared Brain project, load `brain-capture`.
+When the captain asks to mine, author, or evaluate a reusable skill, load `skill-forge`.
 
 ## 7. Task lifecycle
 

@@ -13,6 +13,8 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OWNER="$ROOT/.agents/skills/pause-and-learn/SKILL.md"
+BRAIN_OWNER="$ROOT/.agents/skills/brain-capture"
+FORGE_OWNER="$ROOT/.agents/skills/skill-forge"
 
 fail() {
   printf 'not ok - %s\n' "$1" >&2
@@ -22,6 +24,8 @@ fail() {
 command -v pi >/dev/null 2>&1 || fail "pi not found"
 command -v python3 >/dev/null 2>&1 || fail "python3 not found"
 [ -f "$OWNER" ] || fail "pause-and-learn skill not found"
+[ -f "$BRAIN_OWNER/SKILL.md" ] || fail "brain-capture skill not found"
+[ -f "$FORGE_OWNER/SKILL.md" ] || fail "skill-forge skill not found"
 
 LAB=$(mktemp -d "${TMPDIR:-/tmp}/fm-pause-and-learn-live.XXXXXX")
 PROJECT="$LAB/project"
@@ -32,6 +36,7 @@ trap cleanup EXIT
 
 mkdir -p "$PROJECT/.agents/skills/pause-and-learn" "$PROJECT/fleet"
 cp "$OWNER" "$PROJECT/.agents/skills/pause-and-learn/SKILL.md"
+cp -R "$BRAIN_OWNER" "$FORGE_OWNER" "$PROJECT/.agents/skills/"
 
 check_plan() {
   local output_path=$1 expected_cycle=$2

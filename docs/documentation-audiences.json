@@ -125,6 +125,14 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/brain-capture/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/brain-capture/reference.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/bootstrap-diagnostics/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -226,6 +234,18 @@
     },
     {
       "path": ".agents/skills/secondmate-provisioning/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/skill-forge/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/skill-forge/evaluating.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/skill-forge/portability.md",
       "audience": "agent-runtime"
     },
     {

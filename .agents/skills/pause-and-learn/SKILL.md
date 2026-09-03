@@ -81,13 +81,13 @@ Use the ordinary supervision protocol while waiting and do not create a second w
 ## 4. Run the retrospective through its owner
 
 Determine the retrospective owner from the scoped project's conventions, then load that owner and follow it without copying its format here.
-When `brain-capture` owns the retrospective, its procedure is authoritative.
+When [`brain-capture`](../brain-capture/SKILL.md) owns the retrospective, its procedure is authoritative.
 Every project write is performed by a worker in an isolated copy through that project's registered validation and delivery path.
 Reuse an overlapping retrospective and amend it only with evidence that belongs to this cycle.
 
 ## 5. Mine and evaluate reusable skill candidates
 
-Load `skill-forge` and follow its candidate, rejection, evaluation, ablation, stopping, and reporting contracts.
+Load [`skill-forge`](../skill-forge/SKILL.md) and follow its candidate, rejection, evaluation, ablation, stopping, and reporting contracts.
 This Firstmate safety rule overrides `skill-forge`'s live-install-first instruction: author in the owning repository, expose the exact candidate bytes to the evaluator from an isolated repository discovery location, and install or update fleet-visible bytes only after the ordinary reviewed delivery path lands.
 Route every candidate write to a worker in its owning repository, predeclare the scenario-specific bar, require a fresh context and normal independent review, and retain no failing or materially redundant candidate.
 Evaluation grants no merge, promotion, canonical installation, or approval authority.
@@ -95,7 +95,7 @@ Evaluation grants no merge, promotion, canonical installation, or approval autho
 ## 6. Capture proposed Shared Brain content
 
 Resolve the registered Shared Brain project through the intake owner named in step 1, then reuse any capture with matching identity and sources.
-Dispatch its project change to a worker that loads `brain-capture`; that skill owns the retrospective, corpus format, source stamping, redaction, indexing, validation, evaluation, and report procedure.
+Dispatch its project change to a worker that loads [`brain-capture`](../brain-capture/SKILL.md); that skill owns the retrospective, corpus format, source stamping, redaction, indexing, validation, evaluation, and report procedure.
 Supply the exact completed evidence and skill-candidate disposition ledger as inputs.
 Keep agent-authored content private, `draft`, and `proposed`, with unsigned review evidence and the project's normal independent review and delivery path.
 This skill never signs, verifies, promotes, merges, or makes that content canonical.
