@@ -41,3 +41,23 @@ Read-only mode remains only the documented exact `/pause-and-learn plan` command
 The deterministic vendored-helper tests passed in the evaluation environment.
 The credentialed machine-readable behavior test was skipped under that evaluator's no-other-agent constraint and was not reported as passing.
 Credentialed pre-delivery behavior remains separate evidence and does not alter this fresh-context verdict.
+
+## Credentialed plan-contract regression
+
+Date: 2026-09-03.
+Test-path commit: `4f4f8e487970a57ce8fba8411246d8295c4781c7`.
+Exact skill commit: `c1375624279bb118fdf9dd7261159b0954201051`.
+Exact skill SHA-256: `033d4a2deab4b0491c7323e3f69e123807295d225959da5b3a0de11fcb8b73b6`.
+Model: OpenAI Codex `gpt-5.6-sol`, low reasoning effort.
+Command: `FM_PAUSE_AND_LEARN_LIVE_E2E=1 tests/fm-pause-and-learn-live-e2e.test.sh`.
+Exit: `0`.
+Response SHA-256: `72a942aa03fcbfbbd3c8d9e9992bdb9ee8827b1672e95ea28e63878f35745584`.
+Verbatim test output:
+
+```text
+response-sha256: 72a942aa03fcbfbbd3c8d9e9992bdb9ee8827b1672e95ea28e63878f35745584
+ok - repeated-cycle
+```
+
+This was the single authorized final paid run after the test-only command-path correction.
+The deterministic contract tests separately cover exact-command acceptance, trailing-argument refusal, scenario-context separation, JSON ordering and wrapping, and rejection of a queued item marked to start.
