@@ -1,0 +1,17 @@
+PAUSE_AND_LEARN_PLAN_V1
+```json
+{
+  "schema": "firstmate.pause-and-learn.plan.v1",
+  "mode": "plan",
+  "scope": {"project": "Example Project", "thread": "current tranche"},
+  "existing_cycle": {"found": false, "identity": "", "resume_phase": "new"},
+  "boundary": {"kind": "post-current-stage", "name": "review complete", "wait_for_current_stage": true, "current_stage": "exact-head-review", "interrupt_current_stage": false},
+  "project_writes": {"route": "worker", "firstmate_writes_project": false},
+  "components": {"retrospective": "planned", "brain_capture": "planned", "skill_forge": "planned", "stow": "planned"},
+  "brain": {"status": "draft", "brain_status": "proposed", "canonical_write": false},
+  "authority": {"merge": false, "sign": false, "approve": false, "promote": false, "discard": false, "destructive": false, "security_sensitive": false, "semantic_expansion": false},
+  "sequencing": {"prior_review_failure_backfilled": false},
+  "queued": [{"id": "next-tranche", "name": "Next tranche", "start": true, "state": "paused", "resume": {"captain_focus_required": true, "separate_authorization_required": true}}],
+  "mutations": {"records": false, "workers": false, "artifacts": false}
+}
+```

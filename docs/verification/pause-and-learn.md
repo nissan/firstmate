@@ -40,4 +40,4 @@ Read-only mode remains only the documented exact `/pause-and-learn plan` command
 
 The deterministic vendored-helper tests passed in the evaluation environment.
 The credentialed machine-readable behavior test was skipped under that evaluator's no-other-agent constraint and was not reported as passing.
-A separate pre-delivery requirement owns running that credentialed test three times against the retained exact skill bytes, with any failure returning the candidate to revision.
+Credentialed pre-delivery behavior remains separate evidence and does not alter this fresh-context verdict.

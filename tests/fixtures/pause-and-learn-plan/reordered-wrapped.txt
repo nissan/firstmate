@@ -1,0 +1,29 @@
+The display wording may vary and wrap.
+PAUSE_AND_LEARN_PLAN_V1
+```json
+{
+  "queued": [
+    {
+      "resume": {
+        "separate_authorization_required": true,
+        "captain_focus_required": true
+      },
+      "state": "paused",
+      "start": false,
+      "name": "A differently worded future tranche",
+      "id": "next-tranche"
+    }
+  ],
+  "mutations": {"artifacts": false, "workers": false, "records": false},
+  "sequencing": {"prior_review_failure_backfilled": false},
+  "authority": {"semantic_expansion": false, "security_sensitive": false, "destructive": false, "discard": false, "promote": false, "approve": false, "sign": false, "merge": false},
+  "brain": {"canonical_write": false, "brain_status": "proposed", "status": "draft"},
+  "components": {"stow": "planned", "skill_forge": "planned", "brain_capture": "planned", "retrospective": "planned"},
+  "project_writes": {"firstmate_writes_project": false, "route": "worker"},
+  "boundary": {"interrupt_current_stage": false, "current_stage": "exact-head-review", "wait_for_current_stage": true, "name": "the next stable review boundary", "kind": "post-current-stage"},
+  "existing_cycle": {"resume_phase": "retrospective", "identity": "example/current-tranche", "found": true},
+  "scope": {"thread": "current tranche", "project": "Example Project"},
+  "mode": "plan",
+  "schema": "firstmate.pause-and-learn.plan.v1"
+}
+```

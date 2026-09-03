@@ -33,12 +33,13 @@ That object is the stable planning contract and contains these fields:
   "brain": {"status": "draft", "brain_status": "proposed", "canonical_write": false},
   "authority": {"merge": false, "sign": false, "approve": false, "promote": false, "discard": false, "destructive": false, "security_sensitive": false, "semantic_expansion": false},
   "sequencing": {"prior_review_failure_backfilled": false},
-  "queued": [{"name": "queued tranche", "start": false, "state": "paused", "resume_condition": "captain returns focus"}],
+  "queued": [{"id": "durable queued-item identity", "name": "display name", "start": false, "state": "paused", "resume": {"captain_focus_required": true, "separate_authorization_required": true}}],
   "mutations": {"records": false, "workers": false, "artifacts": false}
 }
 ```
 
-Derive every string from current evidence rather than copying the example values.
+Derive every placeholder string from current evidence rather than copying the example values.
+For each downstream tranche, preserve its durable record identity in `id`, keep human wording only in `name`, and express resume requirements through the fixed booleans rather than free-form vocabulary.
 Emit one entry per downstream tranche in `queued`, or an empty array when none exists.
 Do not negate or qualify the boolean values in prose; the object is authoritative for the plan.
 

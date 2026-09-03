@@ -499,6 +499,18 @@
     {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/control.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/reordered-wrapped.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/unsafe-start.txt",
+      "audience": "maintainer-verification"
     }
   ]
 }
