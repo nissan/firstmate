@@ -3,6 +3,18 @@
 # This is discovery only: it never clones, fetches, checks out, or modifies the source.
 # Usage: fm-shared-brain-skill.sh pause-and-learn
 set -eu
+# Every refusal below is a git answer about the registered local copy, so those
+# answers must come from the filesystem rather than the caller's environment.
+# `git -C` only changes directory: an inherited GIT_DIR/GIT_WORK_TREE - which
+# git exports into every hook environment - would make the clean, untracked, and
+# identity checks describe an unrelated checkout. CDPATH would redirect the
+# relative `cd` below the same way. Clear the whole class once so every later
+# git call inherits it.
+unset CDPATH \
+  GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_INDEX_FILE \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES GIT_NAMESPACE \
+  GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_GLOBAL \
+  GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
