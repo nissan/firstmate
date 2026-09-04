@@ -1,0 +1,69 @@
+=== /pause-and-learn discovery: what the captain sees in each state ===
+(synthetic Firstmate homes; no private project records, paths, or corpus)
+
+--- 1. registered, clean, at or above the required merge ---
+
+$ env FM_HOME=<HOME-ROOT>/good FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=0849d59d1a01cb4834971eaba1a6ee0391cbba48 bin/fm-shared-brain-skill.sh pause-and-learn
+<HOME-ROOT>/good/projects/shared-brain/skills/pause-and-learn/SKILL.md
+[exit 0]  # resolves the authoritative source, absolute path on stdout
+
+--- 2. same copy, invoked from an unrelated directory with a relative FM_HOME ---
+
+$ cd <HOME-ROOT> && FM_HOME=good bin/fm-shared-brain-skill.sh pause-and-learn
+<HOME-ROOT>/good/projects/shared-brain/skills/pause-and-learn/SKILL.md
+[exit 0]  # the path stays absolute, so the agent can follow it in place
+
+--- 3. no shared-brain registration in this home ---
+
+$ env FM_HOME=<HOME-ROOT>/no-registry bin/fm-shared-brain-skill.sh pause-and-learn
+error: register the shared-brain project in this Firstmate home's data/projects.md
+[exit 1]  # stops with the registration prerequisite
+
+--- 4. registered but never cloned ---
+
+$ env FM_HOME=<HOME-ROOT>/uncloned bin/fm-shared-brain-skill.sh pause-and-learn
+error: clone the registered shared-brain project into this Firstmate home's projects/shared-brain
+[exit 1]  # stops with the clone prerequisite
+
+--- 5. local copy has uncommitted edits ---
+
+$ env FM_HOME=<HOME-ROOT>/dirty FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=0849d59d1a01cb4834971eaba1a6ee0391cbba48 bin/fm-shared-brain-skill.sh pause-and-learn
+error: clean the shared-brain local copy before loading /pause-and-learn so its source identity is unambiguous
+[exit 1]  # stops with the cleanliness prerequisite
+
+--- 6. clean copy that does not contain the required merge (stale) ---
+
+$ env FM_HOME=<HOME-ROOT>/good bin/fm-shared-brain-skill.sh pause-and-learn
+error: update the registered shared-brain local copy to include merge 29099a5f40c28e2f09fec157b7f49816e3e41971 before loading /pause-and-learn
+[exit 1]  # stops with the production required-merge prerequisite
+
+--- 7. clone git cannot read (interrupted clone inside a Firstmate home repo) ---
+
+$ env FM_HOME=<HOME-ROOT>/nested FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=0849d59d1a01cb4834971eaba1a6ee0391cbba48 bin/fm-shared-brain-skill.sh pause-and-learn
+error: repair or re-clone this Firstmate home's projects/shared-brain so git can read it before loading /pause-and-learn
+[exit 1]  # stops with the repair prerequisite, never answered by the surrounding home repo
+
+--- 8. no bundled or global fallback exists after a refusal ---
+
+$ ls <FIRSTMATE-CODE-ROOT>/skills/pause-and-learn
+ls: cannot access 'skills/pause-and-learn': No such file or directory
+$ ls .agents/skills/pause-and-learn
+SKILL.md
+[the only shipped file is the routing stub; nothing to fall back to]
+
+--- 9. discovery is local: same happy path with no network namespace at all ---
+
+$ unshare -rn env FM_HOME=<HOME-ROOT>/good bin/fm-shared-brain-skill.sh pause-and-learn
+<HOME-ROOT>/good/projects/shared-brain/skills/pause-and-learn/SKILL.md
+[exit 0]  # resolves with no network reachable
+
+--- 10. the captain's real registered home, real required merge 29099a5f... ---
+     (paths redacted: a Firstmate home layout is private machine data)
+
+$ FM_HOME=<CAPTAIN-FM_HOME> bin/fm-shared-brain-skill.sh pause-and-learn
+<CAPTAIN-FM_HOME>/projects/shared-brain/skills/pause-and-learn/SKILL.md
+[exit 0]  # production discovery, no FM_TESTING override, no network work
+$ test -r "$(...)" && echo readable   # the agent can actually follow it in place
+readable
+$ wc -l < "$(...)"   # a real authoritative skill, contents not reproduced here
+145
