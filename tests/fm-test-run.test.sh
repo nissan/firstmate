@@ -753,7 +753,7 @@ test_exclude_family() {
 }
 
 test_portable_shard_union_and_coverage_guard() {
-  local s1 s2 proven serial herdr all_count union_count overlap out first
+  local s1 s2 proven serial herdr all_count union_count overlap out first loc
   s1=$("$RUNNER" --list --lane portable-parallel-1)
   s2=$("$RUNNER" --list --lane portable-parallel-2)
   proven=$("$RUNNER" --list --proven-isolated)
@@ -774,6 +774,16 @@ test_portable_shard_union_and_coverage_guard() {
     || fail "herdr family must include smoke"
   out=$("$RUNNER" --check-coverage)
   assert_contains "$out" "FM_TEST_COVERAGE ok" "coverage guard success marker"
+  # The guard sorts every lane listing under LC_ALL=C, so its comparison step
+  # must read them under the same collation. Under a locale whose collation
+  # ignores punctuation, a C-sorted list is "not in sorted order" and the guard
+  # died on comm instead of reporting coverage. Assert it under every installed
+  # non-C collation locale as well as the ambient one.
+  for loc in $(locale -a 2>/dev/null | grep -iv '^\(C\|POSIX\)$' | grep -i 'utf-\?8$'); do
+    out=$(LC_ALL="$loc" "$RUNNER" --check-coverage 2>&1) \
+      || fail "coverage guard failed under LC_ALL=$loc: $out"
+    assert_contains "$out" "FM_TEST_COVERAGE ok" "coverage guard success marker under LC_ALL=$loc"
+  done
   all_count=$("$RUNNER" --list --all | wc -l | tr -d ' ')
   union_count=$(printf '%s\n' "$s1" "$s2" "$serial" "$herdr" | LC_ALL=C sort -u | wc -l | tr -d ' ')
   [ "$union_count" = "$all_count" ] \
