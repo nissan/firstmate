@@ -105,6 +105,8 @@ init_changed_fixture_repo() {
     fm-harness-adapter-references.test.sh \
     fm-backend-herdr-smoke.test.sh \
     fm-secondmate-safety.test.sh \
+    fm-shared-brain-skill.test.sh \
+    fm-pause-and-learn-inventory.test.sh \
     fm-session-start.test.sh \
     fm-afk-pi-herdr-return-e2e.test.sh \
     fm-backend.test.sh \
@@ -129,6 +131,7 @@ init_changed_fixture_repo() {
   : >"$repo/bin/fm-procevent-quota.sh"
   : >"$repo/bin/fm-quota-axi-lib.sh"
   : >"$repo/bin/fm-quota-choose.sh"
+  : >"$repo/bin/fm-shared-brain-skill.sh"
   : >"$repo/bin/unmapped-source.sh"
   # A shared helper with no curated family of its own, named by exactly ONE
   # script of the expensive real-Herdr family and consumed by one curated
@@ -277,6 +280,17 @@ test_changed_dependency_selection_and_unmapped_failure() {
     "shared quota validator selects chooser coverage"
   git -C "$repo" add bin/fm-quota-axi-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm quota-validator-change
+
+  printf '\n' >>"$repo/bin/fm-shared-brain-skill.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-shared-brain-skill.test.sh" \
+    "shared-brain skill resolver selects its discovery and refusal test"
+  assert_contains "$listed" "tests/fm-pause-and-learn-inventory.test.sh" \
+    "shared-brain skill resolver selects its ownership inventory test"
+  assert_not_contains "$listed" "tests/fm-secondmate-safety.test.sh" \
+    "shared-brain skill resolver must not select the unrelated secondmate family"
+  git -C "$repo" add bin/fm-shared-brain-skill.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm shared-brain-skill-change
 
   printf '\n' >>"$repo/bin/fm-control-lib.sh"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)

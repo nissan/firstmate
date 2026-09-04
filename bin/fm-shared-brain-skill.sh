@@ -7,14 +7,16 @@ set -eu
 # answers must come from the filesystem rather than the caller's environment.
 # `git -C` only changes directory: an inherited GIT_DIR/GIT_WORK_TREE - which
 # git exports into every hook environment - would make the clean, untracked, and
-# identity checks describe an unrelated checkout. CDPATH would redirect the
-# relative `cd` below the same way. Clear the whole class once so every later
-# git call inherits it.
+# identity checks describe an unrelated checkout, and inherited config carriers
+# like GIT_CONFIG_PARAMETERS (git exports that one too) can point core.excludesFile
+# at a broad pattern so the untracked check reports a dirty copy as clean. CDPATH
+# would redirect the relative `cd` below the same way. Clear the whole class once
+# so every later git call inherits it.
 unset CDPATH \
   GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_INDEX_FILE \
   GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES GIT_NAMESPACE \
   GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_GLOBAL \
-  GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT
+  GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"

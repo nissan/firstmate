@@ -93,6 +93,15 @@ printf '%s\n' stray > "$PROJECT/stray"
 run_expect_failure 'clean the shared-brain local copy' env FM_HOME="$home" FM_TESTING=1 \
   FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" "$RESOLVER" pause-and-learn
 pass "an untracked stray file in the local copy is refused"
+
+# The untracked refusal must also survive inherited git config, which can point
+# core.excludesFile at a pattern that hides every untracked file from the check.
+excludes="$TMP_ROOT/excludes"
+printf '%s\n' '*' > "$excludes"
+run_expect_failure 'clean the shared-brain local copy' env FM_HOME="$home" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" \
+  GIT_CONFIG_PARAMETERS="'core.excludesFile'='$excludes'" "$RESOLVER" pause-and-learn
+pass "inherited git config cannot hide untracked content from the cleanliness check"
 rm "$PROJECT/stray"
 
 rm "$SOURCE"
