@@ -400,6 +400,17 @@
 # positive evidence - an unmeasurable count, an unusable setting, or an error inside the
 # check itself warns and proceeds - so it can never block the fleet
 # (bin/fm-crew-cap-lib.sh; docs/configuration.md "Worker concurrency cap").
+# A fresh non-secondmate spawn is also gated on the remaining provider allowance for
+# the harness and model it resolved: it is REFUSED, naming the evidence, only when that
+# allowance is already gone (quota-axi reports the applicable scope exhausted, at zero
+# percent, or with zero usable runway seconds), because no delegated work may consume an
+# allowance and deliver nothing. FM_RUNWAY_OVERRIDE=1 spawns past that refusal for that one
+# spawn and says so. Evidence that the allowance merely MIGHT not last, and every
+# unavailable or unreadable quota signal, warns and proceeds - the gate can never block
+# the fleet on a missing signal or a projection. FM_RUNWAY_SNAPSHOT=<path> points the
+# check at an allowance snapshot already captured for this dispatch instead of reading
+# quota-axi again, so the gate can judge the same evidence that chose the tier
+# (bin/fm-runway-lib.sh).
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
 # mode=secondmate, yolo=off, home=, and projects=; a scout records neither, and both the
@@ -562,6 +573,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-crew-cap-lib.sh
 . "$SCRIPT_DIR/fm-crew-cap-lib.sh"
+# shellcheck source=bin/fm-runway-lib.sh
+. "$SCRIPT_DIR/fm-runway-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
@@ -2319,6 +2332,34 @@ if [ "$HARNESS" = omp ]; then
 fi
 if [ "$HARNESS" = agy ]; then
   agy_model_validate "$AGY_BIN" "$MODEL" || exit 1
+fi
+
+# Remaining-allowance gate (bin/fm-runway-lib.sh owns the mechanics and the
+# fail-safe direction). Runs here because it needs the harness and model this
+# spawn actually resolved, and still lands before any endpoint, worktree, backlog
+# transition, or record exists, so a refusal costs nothing to unwind.
+# Only a fresh non-secondmate spawn is gated: a relaunch replaces a worker whose
+# allowance is already committed and is how recovery works, and a secondmate is
+# idle persistent infrastructure rather than a task burning an allowance.
+# `|| rc=$?` both suppresses errexit and keeps the refusal a single explicit
+# code, so a failure inside the check proceeds with a warning instead of
+# blocking the fleet.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  spawn_runway_rc=0
+  fm_runway_check "$HARNESS" "$MODEL" || spawn_runway_rc=$?
+  if [ "$spawn_runway_rc" -eq "$FM_RUNWAY_REFUSE_RC" ]; then
+    if [ -n "${FM_RUNWAY_OVERRIDE:-}" ]; then
+      printf 'warning: FM_RUNWAY_OVERRIDE is set: spawning %s on %s (model %s) with no %s allowance left (%s)\n' \
+        "$ID" "$HARNESS" "${MODEL:-default}" "$FM_RUNWAY_PROVIDER" "$FM_RUNWAY_EVIDENCE" >&2
+    else
+      printf 'error: spawn refused: no %s allowance is left for a %s worker on model %s, so this work could not finish (%s).\nWait for that allowance to reset, dispatch this on a worker runtime or model that still has runway (bin/fm-quota-choose.sh ranks candidates against the same evidence), or re-run with FM_RUNWAY_OVERRIDE=1 to spawn anyway.\n' \
+        "$FM_RUNWAY_PROVIDER" "$HARNESS" "${MODEL:-default}" "$FM_RUNWAY_EVIDENCE" >&2
+      exit 1
+    fi
+  elif [ "$spawn_runway_rc" -ne 0 ]; then
+    printf 'warning: %s; spawning %s anyway\n' \
+      "${FM_RUNWAY_WARNING:-the remaining allowance could not be established}" "$ID" >&2
+  fi
 fi
 
 secondmate_registry_value() {

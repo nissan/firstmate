@@ -195,6 +195,46 @@ trap 'fm_test_cleanup; exit 143' TERM
 trap 'fm_test_cleanup; exit 129' HUP
 trap 'fm_test_cleanup; exit 131' QUIT
 
+# Pin the suite's remaining-allowance evidence (bin/fm-runway-lib.sh). Every
+# fresh spawn consults quota-axi before launching a worker, so without this the
+# suite's verdicts would depend on the developer's real provider allowance at
+# the moment the tests ran, and each spawn would pay a live vendor read. This is
+# evidence, not a bypass: the gate still runs end to end in every spawn test,
+# against a snapshot that says there is ample runway. The file is written now so
+# it is fresh for this test file's run, and it is registered for cleanup like
+# any other fixture. tests/fm-runway-gate.test.sh strips it to drive the real
+# refusing, warning, and silent paths.
+FM_TEST_RUNWAY_DIR=$(fm_test_tmproot fm-runway-evidence) || return 1
+cat > "$FM_TEST_RUNWAY_DIR/quota.json" <<'JSON'
+{
+  "schemaVersion": 5,
+  "providers": [
+    {"provider": "claude", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 90,
+       "runway": {"status": "through_reset"}}]}},
+    {"provider": "codex", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 90,
+       "runway": {"status": "through_reset"}}]}},
+    {"provider": "pi", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 90,
+       "runway": {"status": "through_reset"}}]}},
+    {"provider": "grok", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 90,
+       "runway": {"status": "through_reset"}}]}},
+    {"provider": "kimi", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 90,
+       "runway": {"status": "through_reset"}}]}},
+    {"provider": "cursor", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 90,
+       "runway": {"status": "through_reset"}}]}},
+    {"provider": "meta", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 90,
+       "runway": {"status": "through_reset"}}]}}
+  ]
+}
+JSON
+export FM_RUNWAY_SNAPSHOT="$FM_TEST_RUNWAY_DIR/quota.json"
+
 # fm_test_reap_orphans: best-effort sweep for fixture roots left behind by a
 # prior run that was killed hard enough to skip the traps above (e.g. a
 # SIGKILL timeout). Only removes directories carrying the .fm-test-fixture
