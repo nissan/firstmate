@@ -2,7 +2,7 @@
 # Behavioral tests for local, identity-bound discovery of the authoritative
 # shared-brain /pause-and-learn source, and for every refusal that keeps a
 # stale, dirty, absent, or unreadable source from being loaded.
-set -u
+set -eu
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -61,10 +61,33 @@ run_expect_failure "$PRODUCTION_COMMIT" env FM_HOME="$home" \
   FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" "$RESOLVER" pause-and-learn
 pass "the required-commit override is inert outside FM_TESTING"
 
-missing="$TMP_ROOT/unregistered"
+stale="$TMP_ROOT/stale"
+new_home "$stale"
+stale_project="$stale/projects/shared-brain"
+required_but_divergent=$(git -C "$stale_project" rev-parse HEAD)
+git -C "$stale_project" checkout -q --orphan divergent-head
+git -C "$stale_project" rm -q -rf .
+mkdir -p "$stale_project/skills/pause-and-learn"
+printf '%s\n' '# divergent fixture source' > "$stale_project/skills/pause-and-learn/SKILL.md"
+git -C "$stale_project" add .
+git -C "$stale_project" commit -qm divergent
+run_expect_failure "$required_but_divergent" env FM_HOME="$stale" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$required_but_divergent" "$RESOLVER" pause-and-learn
+pass "a known required commit that is not an ancestor of HEAD is refused as stale"
+
+missing="$TMP_ROOT/no-registry"
 mkdir -p "$missing/data" "$missing/projects"
 run_expect_failure 'register the shared-brain project' env FM_HOME="$missing" "$RESOLVER" pause-and-learn
-pass "an unregistered shared-brain project is refused with the registration prerequisite"
+pass "a home without a project registry is refused with the registration prerequisite"
+
+unregistered="$TMP_ROOT/unregistered"
+new_home "$unregistered"
+unregistered_head=$(git -C "$unregistered/projects/shared-brain" rev-parse HEAD)
+printf '%s\n' '- synthetic-project [local-only] - unrelated synthetic fixture' \
+  > "$unregistered/data/projects.md"
+run_expect_failure 'register the shared-brain project' env FM_HOME="$unregistered" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$unregistered_head" "$RESOLVER" pause-and-learn
+pass "a registry without shared-brain is refused despite a resolvable clone"
 
 uncloned="$TMP_ROOT/uncloned"
 register_home "$uncloned"
@@ -110,4 +133,4 @@ git -C "$PROJECT" commit -qm "remove source"
 newhead=$(git -C "$PROJECT" rev-parse HEAD)
 run_expect_failure 'missing or unreadable' env FM_HOME="$home" FM_TESTING=1 \
   FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$newhead" "$RESOLVER" pause-and-learn
-pass "a clean current copy without the skill source is refused as unreadable"
+pass "a clean current copy with an absent skill source is refused"

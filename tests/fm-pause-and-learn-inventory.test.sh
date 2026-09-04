@@ -2,7 +2,7 @@
 # Ownership guard for the /pause-and-learn consumer integration: Firstmate may
 # carry the discovery stub and its inventory rows, and nothing else the Shared
 # Brain owns.
-set -u
+set -eu
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
