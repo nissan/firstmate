@@ -34,11 +34,8 @@ if [ "$SKILL" != pause-and-learn ]; then
   echo "error: usage: fm-shared-brain-skill.sh pause-and-learn" >&2
   exit 2
 fi
-if [ ! -r "$REG" ]; then
-  echo "error: register the shared-brain project in this Firstmate home's data/projects.md" >&2
-  exit 1
-fi
-if ! awk -v n="$PROJECT_NAME" '$1=="-" && $2==n { found=1 } END { exit !found }' "$REG"; then
+if [ ! -r "$REG" ] \
+  || ! awk -v n="$PROJECT_NAME" '$1=="-" && $2==n { found=1 } END { exit !found }' "$REG"; then
   echo "error: register the shared-brain project in this Firstmate home's data/projects.md" >&2
   exit 1
 fi
@@ -48,11 +45,27 @@ if [ ! -d "$PROJECT/.git" ] && [ ! -f "$PROJECT/.git" ]; then
   echo "error: clone the registered shared-brain project into this Firstmate home's projects/shared-brain" >&2
   exit 1
 fi
-if ! git -C "$PROJECT" diff --quiet --ignore-submodules -- || ! git -C "$PROJECT" diff --cached --quiet --ignore-submodules --; then
-  echo "error: clean the shared-brain local copy before loading /pause-and-learn so its source identity is unambiguous" >&2
+# git reports "this differs" with status 1 and "I could not read this repository
+# at all" with a higher status - dubious ownership, an unreadable index, a
+# dangling gitdir pointer. Only the first is dirtiness, and an unreadable copy
+# answers no question about its own cleanliness, so it gets its own prerequisite
+# rather than sending the captain to clean an already clean worktree.
+refuse_unreadable() {
+  echo "error: repair or re-clone this Firstmate home's projects/shared-brain so git can read it before loading /pause-and-learn" >&2
   exit 1
-fi
-if [ -n "$(git -C "$PROJECT" ls-files --others --exclude-standard)" ]; then
+}
+git_differs() {
+  local status=0
+  git -C "$PROJECT" "$@" || status=$?
+  [ "$status" -le 1 ] || refuse_unreadable
+  return "$status"
+}
+UNTRACKED_STATUS=0
+UNTRACKED=$(git -C "$PROJECT" ls-files --others --exclude-standard) || UNTRACKED_STATUS=$?
+[ "$UNTRACKED_STATUS" -eq 0 ] || refuse_unreadable
+if ! git_differs diff --quiet --ignore-submodules -- \
+  || ! git_differs diff --cached --quiet --ignore-submodules -- \
+  || [ -n "$UNTRACKED" ]; then
   echo "error: clean the shared-brain local copy before loading /pause-and-learn so its source identity is unambiguous" >&2
   exit 1
 fi

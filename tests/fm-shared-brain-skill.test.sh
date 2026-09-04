@@ -127,6 +127,25 @@ run_expect_failure 'clean the shared-brain local copy' env FM_HOME="$home" FM_TE
 pass "inherited git config cannot hide untracked content from the cleanliness check"
 rm "$PROJECT/stray"
 
+# A copy git cannot read at all is a distinct blocker from a dirty one: its
+# worktree may be pristine, so the cleanliness prerequisite would be unactionable.
+unreadable="$TMP_ROOT/unreadable"
+new_home "$unreadable"
+unreadable_project="$unreadable/projects/shared-brain"
+unreadable_head=$(git -C "$unreadable_project" rev-parse HEAD)
+rm -rf "$unreadable_project/.git"
+printf 'gitdir: %s\n' "$unreadable/absent-gitdir" > "$unreadable_project/.git"
+set +e
+unreadable_out=$(env FM_HOME="$unreadable" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$unreadable_head" "$RESOLVER" pause-and-learn 2>&1)
+unreadable_rc=$?
+set -e
+[ "$unreadable_rc" -ne 0 ] || fail "an unreadable local copy was accepted as an authoritative source"
+assert_contains "$unreadable_out" 'repair or re-clone' "unreadable copy did not name its prerequisite"
+assert_not_contains "$unreadable_out" 'clean the shared-brain local copy' \
+  "an unreadable local copy was mislabeled as dirty"
+pass "a local copy git cannot read is refused with a repair prerequisite, not a cleanliness one"
+
 rm "$SOURCE"
 git -C "$PROJECT" add -u
 git -C "$PROJECT" commit -qm "remove source"
