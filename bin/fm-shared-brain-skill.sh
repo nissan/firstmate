@@ -60,6 +60,10 @@ git_differs() {
   [ "$status" -le 1 ] || refuse_unreadable
   return "$status"
 }
+TOPLEVEL_STATUS=0
+TOPLEVEL=$(git -C "$PROJECT" rev-parse --show-toplevel) || TOPLEVEL_STATUS=$?
+[ "$TOPLEVEL_STATUS" -eq 0 ] || refuse_unreadable
+[ "$TOPLEVEL" = "$(cd "$PROJECT" && pwd -P)" ] || refuse_unreadable
 UNTRACKED_STATUS=0
 UNTRACKED=$(git -C "$PROJECT" ls-files --others --exclude-standard) || UNTRACKED_STATUS=$?
 [ "$UNTRACKED_STATUS" -eq 0 ] || refuse_unreadable

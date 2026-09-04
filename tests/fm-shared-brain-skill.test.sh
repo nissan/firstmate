@@ -146,6 +146,32 @@ assert_not_contains "$unreadable_out" 'clean the shared-brain local copy' \
   "an unreadable local copy was mislabeled as dirty"
 pass "a local copy git cannot read is refused with a repair prerequisite, not a cleanliness one"
 
+# A Firstmate home is itself a git repository in the real layout, so a corrupt
+# clone under its projects/ must never be answered by the home repository:
+# git's discovery walks past an invalid .git directory and up to the parent.
+nested="$TMP_ROOT/nested-home"
+mkdir -p "$nested"
+git -C "$nested" init -q
+register_home "$nested"
+printf '%s\n' 'projects/' > "$nested/.gitignore"
+git -C "$nested" add .gitignore data/projects.md
+git -C "$nested" commit -qm "firstmate home"
+nested_project="$nested/projects/shared-brain"
+mkdir -p "$nested_project/skills/pause-and-learn" "$nested_project/.git"
+printf '%s\n' '# corrupt clone fixture' > "$nested_project/skills/pause-and-learn/SKILL.md"
+set +e
+nested_out=$(env FM_HOME="$nested" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" "$RESOLVER" pause-and-learn 2>&1)
+nested_rc=$?
+set -e
+[ "$nested_rc" -ne 0 ] || fail "a corrupt clone was answered by the surrounding Firstmate home repository"
+assert_contains "$nested_out" 'repair or re-clone' "corrupt nested clone did not name its prerequisite"
+assert_not_contains "$nested_out" 'to include merge' \
+  "a corrupt clone was mislabeled as stale by the surrounding repository"
+assert_not_contains "$nested_out" 'clean the shared-brain local copy' \
+  "a corrupt clone was mislabeled as dirty by the surrounding repository"
+pass "git discovery cannot ascend from a corrupt clone into the Firstmate home repository"
+
 rm "$SOURCE"
 git -C "$PROJECT" add -u
 git -C "$PROJECT" commit -qm "remove source"
