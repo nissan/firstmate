@@ -238,6 +238,20 @@ An inherited `data/captain-shared.md` counts in a secondmate's total but remains
 The internal [`/stow` skill](../.agents/skills/stow/SKILL.md) owns curation and its automatic secondmate cascade, which accounts every home against this same per-home allowance separately rather than against a fleet total.
 The helper's header owns exact parsing, publication, and report output mechanics.
 
+## Worker concurrency cap (config/crew-concurrency-cap)
+
+`config/crew-concurrency-cap` is this home's maximum number of concurrently running workers.
+`bin/fm-spawn.sh` refuses a fresh worker beyond it and names the workers already running, so the operator can see what to finish or clean up first.
+The file is local and gitignored, and `bin/fm-spawn.sh` materializes its visible default of `3` when it is absent, so an absent file means the default rather than no cap.
+It must be one positive base-10 integer followed by exactly one newline in a regular, single-linked file beneath a non-symlinked `config/` directory.
+Set `FM_CREW_CAP_OVERRIDE=1` on a single spawn to launch past an established cap; that spawn proceeds and reports on standard error that the cap was overridden, so using it is never silent.
+
+The cap only ever refuses on positive evidence, because every task in the fleet is dispatched through this one path and a gate that erred toward refusing would stop all work.
+A worker counts only when its recorded endpoint reads back a verified live agent; a malformed or unsafe value, an unreadable endpoint inventory, and any error inside the check itself all skip the cap with a warning rather than blocking the spawn.
+A malformed value therefore applies no cap at all instead of an inferred default, and a runtime backend with no liveness classifier has no effective cap.
+Relaunches are exempt because they replace an existing worker, and second mates are exempt because they are persistent infrastructure that is idle by default.
+[`bin/fm-crew-cap-lib.sh`](../bin/fm-crew-cap-lib.sh)'s header owns the parsing and counting mechanics.
+
 ## Stow pass horizon (config/stow-pass-horizon)
 
 `config/stow-pass-horizon` is an optional local, gitignored presence flag that opts this home in to the pass-count decay horizon in the internal [`/stow` skill](../.agents/skills/stow/SKILL.md).

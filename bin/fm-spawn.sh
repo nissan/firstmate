@@ -216,6 +216,13 @@
 # items), on a config/backlog-backend=manual home, and in a home that keeps no
 # data/backlog.md. An automatic-backend home with a backlog but no compatible
 # tasks-axi refuses before creating any lifecycle state.
+# A fresh non-secondmate spawn is capped by config/crew-concurrency-cap (default 3,
+# materialized on first use): it is refused, naming the workers already running, when
+# this home's count of verified live workers has reached the cap. FM_CREW_CAP_OVERRIDE=1
+# spawns past an established cap for that one spawn and says so. The cap refuses only on
+# positive evidence - an unmeasurable count, an unusable setting, or an error inside the
+# check itself warns and proceeds - so it can never block the fleet
+# (bin/fm-crew-cap-lib.sh; docs/configuration.md "Worker concurrency cap").
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
 # mode=secondmate, yolo=off, home=, and projects=; a scout records neither, and both the
@@ -306,6 +313,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-crew-cap-lib.sh
+. "$SCRIPT_DIR/fm-crew-cap-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
@@ -1019,6 +1028,30 @@ fi
 . "$SCRIPT_DIR/fm-lease-lib.sh"
 if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)"
+fi
+# Concurrency cap (bin/fm-crew-cap-lib.sh owns the mechanics; docs/configuration.md
+# owns config/crew-concurrency-cap). A fresh worker adds to what this home is
+# already spending, so only a fresh non-secondmate spawn is capped: a relaunch
+# replaces an existing worker, and a secondmate is idle persistent infrastructure.
+# `|| rc=$?` both suppresses errexit and keeps the refusal a single explicit
+# code, so a failure inside the check proceeds with a warning instead of
+# blocking the fleet.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  spawn_cap_rc=0
+  fm_crew_cap_check "$CONFIG" "$STATE" || spawn_cap_rc=$?
+  if [ "$spawn_cap_rc" -eq "$FM_CREW_CAP_REFUSE_RC" ]; then
+    if [ -n "${FM_CREW_CAP_OVERRIDE:-}" ]; then
+      printf 'warning: FM_CREW_CAP_OVERRIDE is set: spawning %s past this home'\''s cap of %s, with %s worker(s) already running:\n%s\n' \
+        "$ID" "$FM_CREW_CAP_VALUE" "$FM_CREW_CAP_COUNT" "$FM_CREW_CAP_ACTIVE" >&2
+    else
+      printf 'error: spawn refused: this home already has %s worker(s) running and its cap is %s (config/crew-concurrency-cap):\n%s\nFinish or tear one down, raise the cap, or re-run with FM_CREW_CAP_OVERRIDE=1 to spawn past it.\n' \
+        "$FM_CREW_CAP_COUNT" "$FM_CREW_CAP_VALUE" "$FM_CREW_CAP_ACTIVE" >&2
+      exit 1
+    fi
+  elif [ "$spawn_cap_rc" -ne 0 ]; then
+    printf 'warning: worker concurrency cap not applied (%s); spawning %s anyway\n' \
+      "${FM_CREW_CAP_WARNING:-reason unavailable}" "$ID" >&2
+  fi
 fi
 if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_CONTROL_LOCK="$STATE/.control-$ID.lock"
