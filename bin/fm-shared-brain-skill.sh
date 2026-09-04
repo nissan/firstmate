@@ -73,12 +73,18 @@ PROJECT_ROOT=$(cd -P -- "$PROJECT" 2>/dev/null && pwd -P) || refuse_unreadable
 # answered for by the home around it.
 TOPLEVEL=$(git_local rev-parse --show-toplevel) || refuse_unreadable
 [ "$TOPLEVEL" = "$PROJECT_ROOT" ] || refuse_unreadable
-# One status answers tracked, staged, unmerged, and untracked state together: a
-# failed command means the copy could not be read at all, non-empty output means
-# it is dirty. Those are different blockers with different prerequisites, and a
-# copy git cannot read answers no question about its own cleanliness.
-WORKTREE_STATE=$(git_local status --porcelain=v1 --untracked-files=normal --ignore-submodules=none) \
-  || refuse_unreadable
+# One status answers tracked, staged, unmerged, and untracked state together,
+# and it answers in three ways, not two: it fails when the copy cannot be read
+# at all, it reports on stdout what is dirty, and it demotes a path it could not
+# open to a stderr warning while still succeeding with nothing to report. Only
+# the second is dirtiness. The other two leave part of the copy uninspected, so
+# they take the repair prerequisite - and take it without repeating git's
+# diagnostic, which names paths inside the captain's home.
+STATUS_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-shared-brain-status.XXXXXX") || refuse_unreadable
+trap 'rm -f "$STATUS_ERR"' EXIT
+WORKTREE_STATE=$(git_local status --porcelain=v1 --untracked-files=normal --ignore-submodules=none \
+  2>"$STATUS_ERR") || refuse_unreadable
+[ ! -s "$STATUS_ERR" ] || refuse_unreadable
 if [ -n "$WORKTREE_STATE" ]; then
   echo "error: clean the shared-brain local copy before loading /pause-and-learn so its source identity is unambiguous" >&2
   exit 1

@@ -179,6 +179,42 @@ run_expect_failure 'clean the shared-brain local copy' env FM_HOME="$conflicted"
   FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$conflicted_base" "$RESOLVER" pause-and-learn
 pass "a local copy with unmerged index entries is refused"
 
+# git demotes a worktree path it cannot open to a stderr warning and still exits
+# zero with nothing to report, which reads as clean. A stub on PATH reproduces
+# that answer deterministically, instead of betting on how the running uid
+# experiences a mode-000 directory; every other subcommand still reaches the
+# real git, so identity and ancestry stay genuinely enforced.
+partial="$TMP_ROOT/partly-inspectable"
+new_home "$partial"
+partial_head=$(git -C "$partial/projects/shared-brain" rev-parse HEAD)
+warnbin="$TMP_ROOT/warnbin"
+mkdir -p "$warnbin"
+cat > "$warnbin/git" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = status ]; then
+    printf '%s\n' "warning: could not open directory 'helpers/': Permission denied" >&2
+    exit 0
+  fi
+done
+exec "$FM_TEST_REAL_GIT" "$@"
+SH
+chmod +x "$warnbin/git"
+set +e
+partial_out=$(env PATH="$warnbin:$PATH" FM_TEST_REAL_GIT="$(command -v git)" \
+  FM_HOME="$partial" FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$partial_head" \
+  "$RESOLVER" pause-and-learn 2>&1)
+partial_rc=$?
+set -e
+[ "$partial_rc" -ne 0 ] || fail "a copy git could only partly inspect was accepted as an authoritative source"
+assert_contains "$partial_out" 'repair or re-clone' "a partly inspectable copy did not name its prerequisite"
+assert_not_contains "$partial_out" 'clean the shared-brain local copy' \
+  "a partly inspectable copy was mislabeled as dirty"
+assert_not_contains "$partial_out" 'Permission denied' \
+  "the refusal repeated git's own diagnostic instead of a private-safe prerequisite"
+assert_not_contains "$partial_out" 'SKILL.md' "a partly inspectable copy still emitted a source path"
+pass "a copy git could only partly inspect is refused instead of read as clean"
+
 # A copy git cannot read at all is a distinct blocker from a dirty one: its
 # worktree may be pristine, so the cleanliness prerequisite would be unactionable.
 unreadable="$TMP_ROOT/unreadable"
