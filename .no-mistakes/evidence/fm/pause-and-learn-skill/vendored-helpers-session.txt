@@ -1,0 +1,51 @@
+=== Vendored captain-owned helpers, exercised as an author would use them ===
+
+--- skill-forge: author a candidate in the OWNING repository, not the fleet home ---
+created <lab>/owning-repo/.agents/skills/resilient-import-review/SKILL.md
+next: define the predeclared bar, evaluate exact candidate bytes from an isolated discovery location, and deliver through the owning repository
+files created:
+  .agents/skills/resilient-import-review
+  .agents/skills/resilient-import-review/evals
+  .agents/skills/resilient-import-review/SKILL.md
+fleet-visible install under HOME/.claude/skills: absent - nothing installed before reviewed delivery lands
+second scaffold of the same name (no --force): refused, existing candidate preserved
+scaffold with no explicit destination: refused, an owning repository must be named
+
+--- brain-capture: bind a lesson page to the exact bytes of its sources ---
+authored page (documented reference template, hash left unbound):
+  ---
+  {
+    "updated_at": "2030-01-01T00:00:00+00:00",
+    "sources": [
+      {"resource": "../../docs/retrospectives/session.md", "content_hash": "sha256:<64 hex>"}
+    ]
+  }
+  ---
+  
+  # Lesson
+  
+  Body text the author wrote.
+
+check mode on the unbound page: refused - an unbound placeholder is not a current hash
+stamp:   rehashed: ../../docs/retrospectives/session.md
+  updated_at: 2026-09-04T01:24:26+00:00
+  now run: .venv/bin/python scripts/validate.py && .venv/bin/python scripts/evaluate.py
+page after stamping:
+  ---
+  {
+    "updated_at": "2026-09-04T01:24:26+00:00",
+    "sources": [
+      {"resource": "../../docs/retrospectives/session.md", "content_hash": "sha256:88b80ef83e2be454fe051465bca6dc0d30f2c34247bf73b8adc9f5951effa315"}
+    ]
+  }
+  ---
+  
+  # Lesson
+  
+  Body text the author wrote.
+
+independently computed sha256 of the referenced source: sha256:88b80ef83e2be454fe051465bca6dc0d30f2c34247bf73b8adc9f5951effa315
+check mode after stamping: OK all source hashes current
+source edited, then check mode:   STALE hashes: ../../docs/retrospectives/session.md
+mistyped read-only flag (--chek) on a valid page: refused
+  page bytes unchanged - the slip never reached the write path

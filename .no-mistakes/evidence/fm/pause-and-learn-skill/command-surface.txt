@@ -1,0 +1,22 @@
+=== /pause-and-learn command surface: what the captain gets for each typed form ===
+(production classifier: .agents/skills/pause-and-learn/plan-check.py)
+
+CAPTAIN TYPES                                  | MODE    | MEANING
+-----------------------------------------------+---------+--------------------------------------------
+/pause-and-learn plan                          | plan    | read-only preview, emits the plan contract
+  /pause-and-learn plan                        | plan    | read-only preview, emits the plan contract
+/pause-and-learn plan                          | plan    | read-only preview, emits the plan contract
+/pause-and-learn plan for Signal Atlas         | refuse  | refused, no mutation and no plan block
+/pause-and-learn Plan                          | refuse  | refused, no mutation and no plan block
+/pause-and-learn PLAN                          | refuse  | refused, no mutation and no plan block
+/pause-and-learn plans                         | refuse  | refused, no mutation and no plan block
+/pause-and-learn planning                      | refuse  | refused, no mutation and no plan block
+/pause-and-learn planned                       | refuse  | refused, no mutation and no plan block
+/pause-and-learn Plan.                         | refuse  | refused, no mutation and no plan block
+/pause-and-learn                               | cycle   | ordinary mutating pause-and-learn cycle
+/pause-and-learn Signal Atlas                  | cycle   | ordinary mutating pause-and-learn cycle
+/pause-and-learn Planetarium                   | cycle   | ordinary mutating pause-and-learn cycle
+Registered project: Signal Atlas               | none    | not a /pause-and-learn invocation
+
+Missing argument (captain surface must not silently default):
+  refused, exit=1 (usage printed, nothing classified)

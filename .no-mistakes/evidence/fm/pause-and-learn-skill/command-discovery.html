@@ -1,0 +1,27 @@
+<!doctype html><meta charset=utf-8>
+<title>Firstmate built-in skill discovery</title>
+<style>
+body{font:16px/1.55 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1f2328;margin:0;padding:32px;background:#fff;max-width:1080px}
+h2{border-bottom:1px solid #d1d9e0;padding-bottom:.3em;font-size:1.5em}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border:1px solid #d1d9e0;padding:8px 13px;text-align:left;vertical-align:top}
+th{background:#f6f8fa;font-weight:600}
+tr:nth-child(2n) td{background:#f6f8fa}
+tr.new td{background:#dafbe1 !important;box-shadow:inset 3px 0 0 #1a7f37}
+code{background:rgba(129,139,152,.16);padding:.2em .4em;border-radius:6px;font-size:85%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+tr.new td code{background:rgba(26,127,55,.16)}
+p{margin:.6em 0} .cap{color:#59636e;font-size:13px;margin-top:14px}
+</style>
+<h2>Built-in skills</h2>
+<p>Firstmate ships these user-invocable built-in skills.</p><p>Claude and grok use the slash form shown here; codex uses the same names with <code>$</code>, such as <code>$afk</code>.</p>
+<table><thead><tr><th>Skill</th><th>What it does</th></tr></thead><tbody>
+<tr class=''><td><code>/afk</code></td><td>Enter away-mode supervision: the sub-supervisor self-handles routine notifications in bash, escalates captain-relevant events and bounded declared-external-wait rechecks as batched digests, and actively alerts if delivery gets stuck while you step away</td></tr>
+<tr class=''><td><code>/ahoy</code></td><td>Recap visible session events since the prior real captain message plus visibly unanswered captain decisions, then guide the captain through any open decisions one at a time in agent-judged impact order; fall back to Bearings when invoked as the session&#x27;s first real captain message</td></tr>
+<tr class=''><td><code>/bearings</code></td><td>Generate a concise four-section chat digest from bounded fleet state, including registered remote-home ledgers; use <code>/bearings file</code> to also replace today&#x27;s dated report in <code>data/</code>, and add <code>include PRs</code> for live GitHub enrichment</td></tr>
+<tr class='new'><td><code>/brain-capture</code></td><td>Capture a completed session&#x27;s reusable lessons as private draft/proposed content in the registered Shared Brain project through its own validation and delivery path</td></tr>
+<tr class='new'><td><code>/pause-and-learn</code></td><td>Bring one project or thread to its next safe natural pause, capture its retrospective and proposed Shared Brain lessons, evaluate reusable skill candidates, run <code>/stow</code>, and leave the next tranche queued; <code>/pause-and-learn plan</code> previews the cycle without changing anything</td></tr>
+<tr class='new'><td><code>/skill-forge</code></td><td>Mine a session for reusable procedures, reject overlap and knowledge-only candidates, author in the owning repository, and keep only candidates that pass fresh-context evaluation</td></tr>
+<tr class=''><td><code>/updatefirstmate</code></td><td>Self-update the running firstmate and its secondmates with fast-forward-only pulls, then reload changed second-mate instructions through persist-gated restarts or fallback re-read nudges</td></tr>
+<tr class=''><td><code>/stow</code></td><td>Sweep the session for uncaptured durable knowledge, persist the open work records this session knows are unfiled or now wrong, curate tiered startup memory with decay and cold archival, enforce each home&#x27;s budget or surface the required decision, cascade to registered second mates, and report what is safe to reset</td></tr>
+</tbody></table>
+<p class=cap>Rendered from README.md &sect; &ldquo;Built-in skills&rdquo; at the change under test. Highlighted rows are the commands this change makes discoverable.</p>

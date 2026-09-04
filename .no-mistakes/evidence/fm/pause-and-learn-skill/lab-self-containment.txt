@@ -1,0 +1,32 @@
+=== Isolated credentialed lab is self-contained (precondition of the paid arm, checked for free) ===
+Reproduces tests/fm-pause-and-learn-live-e2e.test.sh lab construction without invoking a paid model.
+
+skills copied into the lab: brain-capture pause-and-learn skill-forge stow 
+
+--- pause-and-learn/SKILL.md local references ---
+  resolves   ../brain-capture/SKILL.md
+  resolves   plan-check.py
+  resolves   ../skill-forge/SKILL.md
+  resolves   ../stow/SKILL.md
+--- brain-capture/SKILL.md local references ---
+--- skill-forge/SKILL.md local references ---
+--- stow/SKILL.md local references ---
+
+Host-global fallback check: HOME points at an empty sandbox, no ~/.claude/skills present.
+unresolved local references: 0
+RESULT: every linked local skill and helper resolves inside the lab copy.
+
+Linked helper is executable inside the lab (no host path):
+  classify "/pause-and-learn plan" -> plan
+
+--- sibling helpers and references named in prose also ship in the lab copy ---
+  present    brain-capture/reference.md
+  present    brain-capture/stamp.py
+  present    skill-forge/scaffold.py
+  present    skill-forge/evaluating.md
+  present    skill-forge/portability.md
+  present    pause-and-learn/plan-check.py
+
+--- the vendored helpers run from the lab copy under an empty HOME ---
+  skill-forge scaffold: created <lab>/project/dest/lab-candidate/SKILL.md
+  brain-capture stamp usage: refuses with usage when given no lesson page

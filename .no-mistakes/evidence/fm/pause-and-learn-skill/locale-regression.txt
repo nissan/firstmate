@@ -1,0 +1,17 @@
+=== Locale regression: the test runner coverage guard under a non-C ambient locale ===
+Ambient collation locales installed on this host: C.utf8 en_US.utf8 
+
+--- BEFORE (base commit 7adb358 tree, unpatched runner) ---
+$ LC_ALL=en_US.utf8 bin/fm-test-run.sh --check-coverage
+  comm: file 2 is not in sorted order
+  comm: input is not in sorted order
+exit=1
+
+--- AFTER (target commit, this worktree) ---
+$ LC_ALL=en_US.utf8 bin/fm-test-run.sh --check-coverage
+  FM_TEST_COVERAGE ok total=181 parallel=24 serial=144 serial_shards=5 serial_unhinted=1 herdr=13
+exit=0
+
+$ LC_ALL=C.utf8 bin/fm-test-run.sh --check-coverage
+  FM_TEST_COVERAGE ok total=181 parallel=24 serial=144 serial_shards=5 serial_unhinted=1 herdr=13
+exit=0

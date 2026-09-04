@@ -1,0 +1,54 @@
+=== Every unsafe or malformed plan a captain could be handed is refused, with its reason ===
+invocation: plan-check.py validate <response> <existing-cycle> [<queued-tranche-id>]
+
+-- accepted shapes ------------------------------------------------------------
+control.txt                            ACCEPT  canonical fresh-cycle plan
+reordered-wrapped.txt                  ACCEPT  resumed cycle, reordered/wrapped JSON
+no-queued.txt                          ACCEPT  no downstream tranche exists
+multi-queued.txt                       ACCEPT  many queued tranches, first named
+multi-queued.txt                       ACCEPT  many queued tranches, later one named
+boundary-terminal-change.txt           ACCEPT  terminal completed change
+boundary-review-ready.txt              ACCEPT  green review-ready change
+boundary-investigation-report.txt      ACCEPT  completed investigation report
+boundary-external-wait.txt             ACCEPT  documented external wait
+
+-- refused: pause safety ------------------------------------------------------
+unsafe-start.txt                       REFUSE  "queued item may be started"
+unsafe-second-queued.txt               REFUSE  "queued item may be started"
+malformed-queued.txt                   REFUSE  "queued item is not paused"
+duplicate-queued.txt                   REFUSE  "duplicate queued-item identity"
+no-queued.txt                          REFUSE  "wrong durable queued-item identity"
+control.txt                            REFUSE  "a downstream tranche was queued where none exists"
+multi-queued.txt                       REFUSE  "wrong durable queued-item identity"
+
+-- refused: boundary vocabulary and per-kind invariants ------------------------
+boundary-unknown-kind.txt              REFUSE  "wrong boundary kind"
+boundary-terminal-awaits-stage.txt     REFUSE  "only a post-current-stage boundary awaits an active stage"
+boundary-review-ready-names-stage.txt  REFUSE  "only a post-current-stage boundary names an active stage"
+boundary-report-interrupts.txt         REFUSE  "current stage may be interrupted"
+boundary-external-wait-unnamed.txt     REFUSE  "missing boundary name"
+boundary-stage-not-awaited.txt         REFUSE  "only a post-current-stage boundary awaits an active stage"
+
+-- refused: delivery authority, routing, brain status, sequencing --------------
+direct-project-write.txt               REFUSE  "wrong project-write routing"
+missing-component.txt                  REFUSE  "missing learning component"
+brain-canonical-write.txt              REFUSE  "wrong brain authority"
+brain-promoted-status.txt              REFUSE  "wrong brain authority"
+sequencing-backfilled.txt              REFUSE  "historical review gate was backfilled"
+authority-merge.txt                    REFUSE  "wrong authority boundary"
+authority-sign.txt                     REFUSE  "wrong authority boundary"
+authority-approve.txt                  REFUSE  "wrong authority boundary"
+authority-promote.txt                  REFUSE  "wrong authority boundary"
+authority-discard.txt                  REFUSE  "wrong authority boundary"
+authority-destructive.txt              REFUSE  "wrong authority boundary"
+authority-security-sensitive.txt       REFUSE  "wrong authority boundary"
+authority-semantic-expansion.txt       REFUSE  "wrong authority boundary"
+
+-- refused: cycle identity and block well-formedness ---------------------------
+blank-resume-phase.txt                 REFUSE  "missing resume phase"
+control.txt                            REFUSE  "wrong existing-cycle state"
+negated-boolean.txt                    REFUSE  "planning mode permits mutation"
+stringified-boolean.txt                REFUSE  "queued item may be started"
+duplicate-block.txt                    REFUSE  "response does not carry exactly one PAUSE_AND_LEARN_PLAN_V1 block"
+malformed-json.txt                     REFUSE  "plan block is not valid JSON: Expecting property name enclosed in double quotes: line 3 column 18 (char 68)"
+missing-block.txt                      REFUSE  "response does not carry exactly one PAUSE_AND_LEARN_PLAN_V1 block"
