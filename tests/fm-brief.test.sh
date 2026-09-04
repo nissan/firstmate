@@ -869,6 +869,7 @@ test_briefs_require_absolute_path_reads() {
     FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" "${id_kind%%:*}" alpha ${id_kind##*:} >/dev/null 2>&1 \
       || fail "fm-brief.sh scaffold exited non-zero for ${id_kind}"
     brief="$BRIEF_HOME/data/${id_kind%%:*}/brief.md"
+    # shellcheck disable=SC2016 # The backticks are literal brief prose, not a substitution.
     assert_grep 'Never `cd` before a read' "$brief" \
       "${id_kind%%:*} brief must forbid a cd before a read"
     assert_grep 'pass absolute paths' "$brief" \
