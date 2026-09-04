@@ -66,3 +66,17 @@ reject boundary-external-wait-unnamed.txt "an external wait with no named bounda
 reject boundary-stage-not-awaited.txt "a post-current-stage boundary awaited no stage" \
   false next-tranche
 pass "each documented boundary kind carries its own invariants"
+
+reject blank-resume-phase.txt "a resumed cycle named no phase at all" true next-tranche
+reject direct-project-write.txt "Firstmate was allowed to write the project directly" \
+  false next-tranche
+reject missing-component.txt "a plan that drops a learning component was accepted" false next-tranche
+reject brain-canonical-write.txt "a canonical Shared Brain write was accepted" false next-tranche
+reject brain-promoted-status.txt "promoted Shared Brain status was accepted" false next-tranche
+reject sequencing-backfilled.txt "a backfilled historical review gate was accepted" \
+  false next-tranche
+
+for flag in merge sign approve promote discard destructive security-sensitive semantic-expansion; do
+  reject "authority-$flag.txt" "the plan claimed $flag authority" false next-tranche
+done
+pass "routing, components, brain status, every authority boolean, and sequencing are enforced"

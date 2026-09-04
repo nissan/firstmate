@@ -99,8 +99,13 @@ def hash_spans(front: str, sources: list[tuple[str, str]], page: Path) -> list[r
 
 
 def main() -> int:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    check = "--check" in sys.argv
+    argv = sys.argv[1:]
+    flags = [a for a in argv if a.startswith("--")]
+    unknown = [flag for flag in flags if flag != "--check"]
+    if unknown:
+        raise SystemExit(f"unknown option: {unknown[0]}\n{__doc__}")
+    args = [a for a in argv if not a.startswith("--")]
+    check = "--check" in flags
     if len(args) != 1:
         raise SystemExit(__doc__)
 

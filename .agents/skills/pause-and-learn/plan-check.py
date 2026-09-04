@@ -103,8 +103,9 @@ def validate(response: Path, expected_cycle: bool, queue_id: str | None) -> None
     require(isinstance(cycle, dict), "missing existing-cycle state")
     require(same(cycle.get("found"), expected_cycle), "wrong existing-cycle state")
     require(nonempty_text(cycle.get("identity")) is expected_cycle, "wrong existing-cycle identity")
-    require(isinstance(cycle.get("resume_phase"), str), "missing resume phase")
-    require((cycle.get("resume_phase") != "new") is expected_cycle, "wrong resume phase")
+    phase = cycle.get("resume_phase")
+    require(nonempty_text(phase), "missing resume phase")
+    require((phase.strip() != "new") is expected_cycle, "wrong resume phase")
 
     boundary = plan.get("boundary")
     require(isinstance(boundary, dict), "missing boundary")

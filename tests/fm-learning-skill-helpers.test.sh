@@ -186,6 +186,29 @@ after_fence=$(awk 'f {print} /^---$/ {n++; if (n == 2) f = 1}' "$lesson")
   || fail "stamping reflowed the bytes after the closing frontmatter fence"
 pass "brain-capture binds the documented placeholder and preserves body bytes"
 
+# An unrecognised flag must never fall through to the mutating write path.
+lesson=$(new_brain flags)
+cat > "$lesson" <<EOF
+---
+{
+  "updated_at": "2030-01-01T00:00:00+00:00",
+  "sources": [
+    {"resource": "../../docs/retrospectives/alpha.md", "content_hash": "$ZEROS"}
+  ]
+}
+---
+# Page
+EOF
+for flag in --dry-run --chek --check-only; do
+  before=$(sha_of "$lesson")
+  if python3 "$STAMP" "$lesson" "$flag" > /dev/null 2>&1; then
+    fail "brain-capture helper accepted the unknown flag $flag"
+  fi
+  [ "$(sha_of "$lesson")" = "$before" ] \
+    || fail "the unknown flag $flag reached the mutating write path"
+done
+pass "brain-capture refuses an unknown flag before writing anything"
+
 stamp_rejects "a malformed content_hash" "---
 {
   \"updated_at\": \"2030-01-01T00:00:00+00:00\",

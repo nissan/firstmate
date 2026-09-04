@@ -63,6 +63,7 @@ This was the single authorized final paid run after the test-only command-path c
 The deterministic contract tests execute `.agents/skills/pause-and-learn/plan-check.py` and separately cover exact-command acceptance, trailing-argument refusal, scenario-context separation, JSON ordering and wrapping, and rejection of a queued item marked to start, a stringified safety boolean, a second contradicting plan block, an unparseable block, and prose with no block at all.
 They also cover the documented queued shapes: no downstream tranche, one, and many, with every entry checked for its own durable identity, uniqueness, unstarted state, paused state, and resume authority.
 They cover each documented boundary kind positively and negatively, and the reserved planning near-misses `Plan`, `plans`, `planning`, and `planned`, which refuse rather than reaching the mutating cycle.
+Every object-level plan invariant now has its own negative fixture: project-write routing, each required learning component, draft and proposed brain status, canonical write, each of the eight authority booleans, sequencing backfill, and a resumed cycle with a blank phase.
 
 ## Binding scope
 

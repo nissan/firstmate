@@ -505,6 +505,62 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "tests/fixtures/pause-and-learn-plan/authority-approve.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/authority-destructive.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/authority-discard.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/authority-merge.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/authority-promote.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/authority-security-sensitive.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/authority-semantic-expansion.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/authority-sign.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/blank-resume-phase.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/brain-canonical-write.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/brain-promoted-status.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/direct-project-write.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/missing-component.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/sequencing-backfilled.txt",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/fixtures/pause-and-learn-plan/boundary-external-wait-unnamed.txt",
       "audience": "maintainer-verification"
     },
