@@ -52,7 +52,18 @@ head=$(git -C "$PROJECT" rev-parse HEAD)
 
 out=$(FM_HOME="$home" FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" "$RESOLVER" pause-and-learn)
 [ "$out" = "$SOURCE" ] || fail "registered source did not resolve to the authoritative path"
+case "$out" in
+  /*) ;;
+  *) fail "discovery printed a source path the caller cannot resolve from elsewhere: $out" ;;
+esac
 pass "discovery resolves the registered local source from FM_HOME alone"
+
+# The caller reads the printed path from whatever directory it is standing in,
+# so a relative FM_HOME must still name the source absolutely.
+relative_out=$(cd "$TMP_ROOT" && env FM_HOME=good FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" "$RESOLVER" pause-and-learn)
+[ "$relative_out" = "$SOURCE" ] || fail "a relative FM_HOME did not resolve to the absolute authoritative path"
+pass "a relative FM_HOME still prints the absolute authoritative source path"
 
 run_expect_failure "$PRODUCTION_COMMIT" env FM_HOME="$home" "$RESOLVER" pause-and-learn
 pass "a local copy below the required merge is refused"
@@ -95,6 +106,18 @@ run_expect_failure 'clone the registered shared-brain project' env FM_HOME="$unc
   FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" "$RESOLVER" pause-and-learn
 pass "a registered but uncloned shared-brain project is refused with the clone prerequisite"
 
+# Discovery derives from FM_HOME alone: no caller environment may redirect the
+# registry or the clone location to a registration or a copy this home lacks.
+run_expect_failure 'register the shared-brain project' env FM_HOME="$missing" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" FM_DATA_OVERRIDE="$home/data" \
+  "$RESOLVER" pause-and-learn
+pass "a data-location override cannot supply a registration this home does not have"
+
+run_expect_failure 'clone the registered shared-brain project' env FM_HOME="$uncloned" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" FM_PROJECTS_OVERRIDE="$home/projects" \
+  "$RESOLVER" pause-and-learn
+pass "a projects-location override cannot supply a clone this home does not have"
+
 rm "$SOURCE"
 run_expect_failure 'clean the shared-brain local copy' env FM_HOME="$home" FM_TESTING=1 \
   FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" "$RESOLVER" pause-and-learn
@@ -126,6 +149,35 @@ run_expect_failure 'clean the shared-brain local copy' env FM_HOME="$home" FM_TE
   GIT_CONFIG_PARAMETERS="'core.excludesFile'='$excludes'" "$RESOLVER" pause-and-learn
 pass "inherited git config cannot hide untracked content from the cleanliness check"
 rm "$PROJECT/stray"
+
+# A staged addition leaves the worktree matching the index, so it shows up only
+# on the index side of the copy's state.
+printf '%s\n' staged > "$PROJECT/staged"
+git -C "$PROJECT" add staged
+run_expect_failure 'clean the shared-brain local copy' env FM_HOME="$home" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" "$RESOLVER" pause-and-learn
+pass "a staged-only change in the local copy is refused"
+git -C "$PROJECT" reset -q
+rm "$PROJECT/staged"
+
+# An interrupted merge leaves unmerged index entries, which make the copy's
+# source identity ambiguous in a way neither side of a plain diff reports alone.
+conflicted="$TMP_ROOT/conflicted"
+new_home "$conflicted"
+conflicted_project="$conflicted/projects/shared-brain"
+conflicted_base=$(git -C "$conflicted_project" rev-parse HEAD)
+git -C "$conflicted_project" checkout -q -b other-side
+printf '%s\n' '# other side' > "$conflicted_project/skills/pause-and-learn/SKILL.md"
+git -C "$conflicted_project" commit -qam "other side"
+git -C "$conflicted_project" checkout -q -
+printf '%s\n' '# this side' > "$conflicted_project/skills/pause-and-learn/SKILL.md"
+git -C "$conflicted_project" commit -qam "this side"
+git -C "$conflicted_project" merge other-side >/dev/null 2>&1 || true
+[ -n "$(git -C "$conflicted_project" ls-files --unmerged)" ] \
+  || fail "the conflicted fixture did not produce an unmerged index entry"
+run_expect_failure 'clean the shared-brain local copy' env FM_HOME="$conflicted" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$conflicted_base" "$RESOLVER" pause-and-learn
+pass "a local copy with unmerged index entries is refused"
 
 # A copy git cannot read at all is a distinct blocker from a dirty one: its
 # worktree may be pristine, so the cleanliness prerequisite would be unactionable.

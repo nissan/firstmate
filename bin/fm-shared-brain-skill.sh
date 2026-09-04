@@ -18,11 +18,7 @@ unset CDPATH \
   GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_GLOBAL \
   GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
-REG="${FM_DATA_OVERRIDE:-$FM_HOME/data}/projects.md"
-PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PROJECT_NAME=shared-brain
 REQUIRED_COMMIT=29099a5f40c28e2f09fec157b7f49816e3e41971
 if [ "${FM_TESTING:-0}" = 1 ] && [ -n "${FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT:-}" ]; then
@@ -34,50 +30,65 @@ if [ "$SKILL" != pause-and-learn ]; then
   echo "error: usage: fm-shared-brain-skill.sh pause-and-learn" >&2
   exit 2
 fi
+# The registry, the clone, and the printed source path are all named relative to
+# this home, and the caller reads that path from wherever it happens to be
+# standing, so the home has to become an absolute physical directory here. The
+# refusals never echo the rejected value back: a Firstmate home path is the
+# captain's private machine layout.
+FM_HOME=$(cd -P -- "${FM_HOME:-$SCRIPT_DIR/..}" 2>/dev/null && pwd -P) || FM_HOME=
+case "$FM_HOME" in
+  /*) ;;
+  *)
+    echo "error: set FM_HOME to a readable Firstmate home directory before loading /pause-and-learn" >&2
+    exit 1
+    ;;
+esac
+REG="$FM_HOME/data/projects.md"
 if [ ! -r "$REG" ] \
   || ! awk -v n="$PROJECT_NAME" '$1=="-" && $2==n { found=1 } END { exit !found }' "$REG"; then
   echo "error: register the shared-brain project in this Firstmate home's data/projects.md" >&2
   exit 1
 fi
-PROJECT="$PROJECTS/$PROJECT_NAME"
-SOURCE="$PROJECT/skills/$SKILL/SKILL.md"
+PROJECT="$FM_HOME/projects/$PROJECT_NAME"
 if [ ! -d "$PROJECT/.git" ] && [ ! -f "$PROJECT/.git" ]; then
   echo "error: clone the registered shared-brain project into this Firstmate home's projects/shared-brain" >&2
   exit 1
 fi
-# git reports "this differs" with status 1 and "I could not read this repository
-# at all" with a higher status - dubious ownership, an unreadable index, a
-# dangling gitdir pointer. Only the first is dirtiness, and an unreadable copy
-# answers no question about its own cleanliness, so it gets its own prerequisite
-# rather than sending the captain to clean an already clean worktree.
 refuse_unreadable() {
   echo "error: repair or re-clone this Firstmate home's projects/shared-brain so git can read it before loading /pause-and-learn" >&2
   exit 1
 }
-git_differs() {
-  local status=0
-  git -C "$PROJECT" "$@" || status=$?
-  [ "$status" -le 1 ] || refuse_unreadable
-  return "$status"
+# Discovery is a local read: no prompt, no credential helper, no transport, and
+# no lazy fetch of a missing object may turn one of these queries into network
+# work or a wait for input.
+git_local() {
+  GIT_TERMINAL_PROMPT=0 GIT_ASKPASS='' SSH_ASKPASS='' GIT_NO_LAZY_FETCH=1 \
+    git --no-optional-locks \
+    -c core.askPass= -c credential.helper= -c protocol.allow=never \
+    -C "$PROJECT" "$@"
 }
-TOPLEVEL_STATUS=0
-TOPLEVEL=$(git -C "$PROJECT" rev-parse --show-toplevel) || TOPLEVEL_STATUS=$?
-[ "$TOPLEVEL_STATUS" -eq 0 ] || refuse_unreadable
-[ "$TOPLEVEL" = "$(cd "$PROJECT" && pwd -P)" ] || refuse_unreadable
-UNTRACKED_STATUS=0
-UNTRACKED=$(git -C "$PROJECT" ls-files --others --exclude-standard) || UNTRACKED_STATUS=$?
-[ "$UNTRACKED_STATUS" -eq 0 ] || refuse_unreadable
-if ! git_differs diff --quiet --ignore-submodules -- \
-  || ! git_differs diff --cached --quiet --ignore-submodules -- \
-  || [ -n "$UNTRACKED" ]; then
+PROJECT_ROOT=$(cd -P -- "$PROJECT" 2>/dev/null && pwd -P) || refuse_unreadable
+# git walks past an unusable `.git` and keeps searching upward, and a Firstmate
+# home is itself a repository, so an interrupted clone would otherwise be
+# answered for by the home around it.
+TOPLEVEL=$(git_local rev-parse --show-toplevel) || refuse_unreadable
+[ "$TOPLEVEL" = "$PROJECT_ROOT" ] || refuse_unreadable
+# One status answers tracked, staged, unmerged, and untracked state together: a
+# failed command means the copy could not be read at all, non-empty output means
+# it is dirty. Those are different blockers with different prerequisites, and a
+# copy git cannot read answers no question about its own cleanliness.
+WORKTREE_STATE=$(git_local status --porcelain=v1 --untracked-files=normal --ignore-submodules=none) \
+  || refuse_unreadable
+if [ -n "$WORKTREE_STATE" ]; then
   echo "error: clean the shared-brain local copy before loading /pause-and-learn so its source identity is unambiguous" >&2
   exit 1
 fi
-if ! git -C "$PROJECT" cat-file -e "$REQUIRED_COMMIT^{commit}" 2>/dev/null \
-  || ! git -C "$PROJECT" merge-base --is-ancestor "$REQUIRED_COMMIT" HEAD 2>/dev/null; then
+if ! git_local cat-file -e "$REQUIRED_COMMIT^{commit}" 2>/dev/null \
+  || ! git_local merge-base --is-ancestor "$REQUIRED_COMMIT" HEAD 2>/dev/null; then
   echo "error: update the registered shared-brain local copy to include merge $REQUIRED_COMMIT before loading /pause-and-learn" >&2
   exit 1
 fi
+SOURCE="$PROJECT_ROOT/skills/$SKILL/SKILL.md"
 if [ ! -f "$SOURCE" ] || [ ! -r "$SOURCE" ]; then
   echo "error: the authoritative shared-brain source skills/pause-and-learn/SKILL.md is missing or unreadable" >&2
   exit 1
