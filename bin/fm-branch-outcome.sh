@@ -268,6 +268,17 @@ rebuild_outcome_indexes() {
   ' "$STORE") || return 1
   while IFS=$(printf '\t') read -r task seq epoch endpoint ident; do
     [ -n "$task" ] || continue
+    # A legacy row can carry a task string that was never a real task id (for
+    # example a raw endpoint identifier recorded before `append` validated
+    # this), or can name a task since retired. Neither has an addressable
+    # cache slot to (re)build: outcome_index_path rejects the former, and the
+    # latter has no live meta or status left to key off of, matching the skip
+    # append already applies so migration does not recreate what teardown
+    # removed. Skipping just this row's cache must not abort every other
+    # task's rebuild - one unusable legacy task id must not disable the
+    # backstop fleet-wide.
+    outcome_index_path "$task" >/dev/null 2>&1 || continue
+    { [ -e "$STATE/$task.meta" ] || [ -e "$STATE/$task.status" ]; } || continue
     if [ -z "$endpoint" ] || [ -z "$ident" ]; then
       f="$STATE/$task.status"
       endpoint=0

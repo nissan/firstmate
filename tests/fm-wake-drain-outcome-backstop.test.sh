@@ -380,6 +380,42 @@ test_malformed_outcome_store_fails_closed_without_pi_advice() {
   pass "a genuine outcome-store fault fails closed without Pi-specific restart advice"
 }
 
+test_legacy_unindexable_task_id_cannot_disable_the_backstop_fleet_wide() {
+  local dir state out body
+  dir=$(make_case index-selfheal-legacy-bad-task-id)
+  state="$dir/state"
+  out="$dir/drain.out"
+
+  # A row recorded before `append` validated --task (or otherwise written
+  # outside the CLI) can carry a task string that was never a real task id,
+  # such as a raw endpoint identifier. The store is append-only, so that row
+  # is permanent. One such row must not make every other task's cache
+  # unbuildable and disable the fleet-wide backstop forever.
+  printf '%s\n' '{"seq":1,"epoch":1,"task":"default:w2:p2","wake":"stale: default:w2:p2","verdict":"captain","summary":"unrecoverable stale endpoint"}' \
+    > "$state/branch-outcomes.jsonl"
+  printf '%s\n' '{"seq":2,"epoch":2,"task":"other","wake":"","verdict":"captain","summary":"unrelated"}' \
+    >> "$state/branch-outcomes.jsonl"
+  printf 'done: uncovered completion despite a bad legacy task id\n' > "$state/fresh.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
+    || fail "drain failed with a legacy unindexable task id in the outcome store"
+  if grep -F 'STATUS OUTCOME BACKSTOP SKIPPED:' "$out" >/dev/null; then
+    fail "a single legacy unindexable task id disabled the backstop fleet-wide: $(cat "$out")"
+  fi
+  grep -F 'STATUS OUTCOME BACKSTOP (' "$out" >/dev/null \
+    || fail "the backstop did not self-heal past the legacy unindexable task id: $(cat "$out")"
+  body=$(backstop_body "$out")
+  case "$body" in *'fresh done: uncovered completion despite a bad legacy task id'*) ;; *)
+    fail "uncovered status did not surface once the legacy task id was skipped: $body"
+    ;;
+  esac
+  [ -f "$state/.branch-outcome-index-ready" ] \
+    || fail "the legacy task id prevented the outcome-index ready marker from publishing"
+  [ ! -e "$state/.default:w2:p2.branch-outcome-index" ] \
+    || fail "an unaddressable task id should never get its own cache file"
+  pass "a legacy row with an unindexable task id is skipped rather than disabling the backstop for every task"
+}
+
 test_held_lock_mode_rejects_an_unlocked_caller() {
   local dir state out
   dir=$(make_case index-selfheal-held-lock-guard)
@@ -518,6 +554,7 @@ test_rejected_decision_line_surfaces_once_through_backstop
 test_missing_index_self_heals_on_first_drain
 test_uncovered_event_surfaces_on_first_drain_without_index
 test_malformed_outcome_store_fails_closed_without_pi_advice
+test_legacy_unindexable_task_id_cannot_disable_the_backstop_fleet_wide
 test_held_lock_mode_rejects_an_unlocked_caller
 test_held_lock_mode_accepts_a_lock_owner_descendant
 test_index_self_heal_runs_under_the_outcome_lock
