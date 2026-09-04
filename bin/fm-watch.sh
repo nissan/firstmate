@@ -63,6 +63,15 @@
 #                          an unhandled record's ladder cannot advance; quiet
 #                          successful attempts never wake firstmate
 #                          (bin/fm-task-inbox-lib.sh owns the ladder policy)
+#   stale: <window> (spending without producing: ...)
+#                          the spend-without-artifact guard: a pane whose token
+#                          counter kept CLIMBING while no commit, report write,
+#                          status line, or worktree write appeared. This is the
+#                          one shape the hash-driven staleness backbone below
+#                          cannot see, because such a pane never freezes. A
+#                          FROZEN counter is a wait, never this wake
+#                          (bin/fm-noprogress-lib.sh owns the whole policy).
+#                          Human inspection only - nothing is ever stopped.
 #   check: <script>: <out> authenticated check output, always actionable
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued
@@ -94,6 +103,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 mkdir -p "$STATE"
 
 # The native event fast-path and only its true dependencies have one narrow
@@ -133,6 +143,8 @@ mkdir -p "$STATE"
 # gate and the wake emission (inbox_steer_check below).
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-noprogress-lib.sh
+. "$SCRIPT_DIR/fm-noprogress-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -313,7 +325,7 @@ window_label() {
 # The ONE derivation of a window's per-window marker key: `:`, `/` and `.` become
 # `_` so a window name is usable as a filename suffix. Every per-window file the
 # watcher keeps is named by it (.hash-, .count-, .stale-, .stale-since-,
-# .wedge-escalations-, .paused-*, .writing-*), and live homes hold those markers on
+# .wedge-escalations-, .paused-*, .writing-*, .noprogress-*), and live homes hold those markers on
 # disk under the current format, so the format lives here alone: a second copy is
 # how a future change to it silently orphans a window's markers instead of clearing
 # them. The helpers below take the derived key rather than re-deriving it, so one
@@ -747,6 +759,48 @@ wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
 clear_write_tracking() {  # <window-key>
   local key=$1
   rm -f "$STATE/.writing-since-$key" "$STATE/.writing-resurfaced-$key"
+}
+
+# noprogress_check: the spend-without-artifact guard (bin/fm-noprogress-lib.sh).
+#
+# Runs on EVERY ordinary task every poll, busy or idle, because it is the one
+# check the pane-staleness backbone structurally cannot make. That backbone
+# fires only on a frozen hash, so a worker whose pane keeps moving - a climbing
+# token counter, a spinner, scrolling tool output - is read as alive no matter
+# how long it produces nothing. A real burn used exactly that gap: ~18 hours and
+# 292.7k tokens with no output, twice on one task, unnoticed both times.
+#
+# The observation is free: <tail40> is the capture already taken for hashing,
+# and the artifact fingerprint is three stats and one rev-parse. The bounded
+# worktree walk is NOT free, so - exactly like wedge_timer_check below - it runs
+# only in the branch that is about to escalate, and a written worktree turns
+# that escalation into a window restart instead.
+#
+# This never stops anything. It appends one stale wake for a human to read.
+noprogress_check() {  # <window> <task> <tail40>
+  local win=$1 task=$2 tail40=$3 tokens sig verdict spend age reason
+  [ -n "$task" ] || return 0
+  tokens=$(fm_noprogress_pane_tokens "$tail40") || return 0
+  sig=$(fm_noprogress_artifact_sig "$STATE" "$task" "$DATA")
+  verdict=$(fm_noprogress_observe "$STATE" "$task" "$tokens" "$sig" "$(date +%s)") || return 0
+  case "$verdict" in
+    escalate\ *) ;;
+    *) return 0 ;;
+  esac
+  verdict=${verdict#escalate }
+  spend=${verdict%% *}
+  age=${verdict##* }
+  # Uncommitted writes are production too. Probed here and nowhere else so the
+  # walk costs at most one bounded pass per escalation, and treated as a window
+  # restart so the next window measures spend from now.
+  if crew_worktree_written_since "$task" "$STATE" "$(fm_noprogress_anchor "$STATE" "$task")"; then
+    fm_noprogress_clear "$STATE" "$task"
+    triage_log "absorbed spend-without-artifact (worktree written since the window opened): $win"
+    return 0
+  fi
+  reason=$(fm_noprogress_reason "$win" "$spend" "$age")
+  fm_wake_append stale "$win" "$reason" || exit 1
+  wake "$reason"
 }
 
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
@@ -1862,6 +1916,9 @@ EOF
     # content cannot suppress stale detection. Read once per window per poll and
     # reused below so a busy verdict is consistent within one cycle.
     if window_is_busy "$w" "$tail40"; then busy_now=0; else busy_now=1; fi
+    # Spend-without-artifact runs BEFORE the hash branch below, and outside it,
+    # because the shape it catches is a pane that never goes stale at all.
+    [ "$kind" = secondmate ] || noprogress_check "$w" "$task" "$tail40"
     if [ "$h" = "$prev" ]; then
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"
