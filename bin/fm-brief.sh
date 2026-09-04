@@ -392,7 +392,9 @@ The report is the only thing that survives, so anything worth keeping must be in
 $INBOX_SECTION
 
 # Definition of done
-Write your findings to \`$DATA/$ID/report.md\`.
+Create \`$DATA/$ID/report.md\` before you start investigating, and append each finding as you establish it.
+A run that is interrupted or runs out of budget leaves usable evidence only if the report was written incrementally; findings held back for a final write are lost entirely.
+Never append a terminal status line (\`done\`, \`failed\`, \`blocked\`, \`needs-decision\`) before confirming that file exists and is non-empty.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
 If your deliverable is a visual artifact the captain will review and iterate on, you may host the Lavish review loop yourself (poll, revise, re-serve, staying alive) instead of handing it back to firstmate.
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.

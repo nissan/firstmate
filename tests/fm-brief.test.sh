@@ -842,6 +842,24 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+# A scout must write its report incrementally, so an interrupted run still
+# leaves evidence, and must not report a terminal state without one.
+test_scout_report_is_incremental_and_gates_terminal_status() {
+  local brief
+  FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-scout-inc alpha --scout >/dev/null 2>&1 \
+    || fail "fm-brief.sh scout scaffold exited non-zero"
+  brief="$BRIEF_HOME/data/brief-scout-inc/brief.md"
+  assert_grep "before you start investigating" "$brief" \
+    "scout brief must require the report be created before investigation starts"
+  assert_grep "append each finding as you establish it" "$brief" \
+    "scout brief must require incremental appends, not one final write"
+  assert_grep "Never append a terminal status line" "$brief" \
+    "scout brief must forbid a terminal status line without a report"
+  assert_grep "exists and is non-empty" "$brief" \
+    "scout brief must name the existence and non-emptiness check"
+  pass "fm-brief.sh: scout report is incremental and gates the terminal status line"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -864,3 +882,4 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
+test_scout_report_is_incremental_and_gates_terminal_status
