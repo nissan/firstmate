@@ -15,6 +15,8 @@ by rewriting hash values in place rather than re-serializing the frontmatter.
 
 Usage:  python3 stamp.py <path-to-lesson.md> [--check]
         --check  report drift and exit non-zero; write nothing
+Any other option is refused before anything is written, so a misspelled
+--check cannot fall through to the default rewrite.
 """
 from __future__ import annotations
 

@@ -40,6 +40,8 @@ That object is the stable planning contract and contains these fields:
 ```
 
 Derive every placeholder string from current evidence rather than copying the example values.
+When `existing_cycle.found` is true, name the reused cycle in `identity` and the phase this invocation resumes at in `resume_phase`; when it is false, `identity` is an empty string and `resume_phase` is exactly `new`.
+`resume_phase` is never blank.
 `boundary.kind` is one of exactly five stable values: `terminal-completed-change`, `green-review-ready-change`, `completed-investigation-report`, `documented-external-wait`, or `post-current-stage`.
 Use `post-current-stage` only while an active protected stage must finish first; then, and only then, set `wait_for_current_stage` true and name that stage in `current_stage`.
 For the other four the boundary is already terminal or externally stable, so `wait_for_current_stage` is false and `current_stage` is an empty string.
