@@ -860,6 +860,25 @@ test_scout_report_is_incremental_and_gates_terminal_status() {
   pass "fm-brief.sh: scout report is incremental and gates the terminal status line"
 }
 
+# Every crewmate brief must carry the absolute-path read rule: a read behind a
+# `cd` cannot be cleared automatically and stalls the worker on manual approval.
+test_briefs_require_absolute_path_reads() {
+  local brief
+  for id_kind in "brief-abs-ship:--mode local-only" "brief-abs-scout:--scout"; do
+    # shellcheck disable=SC2086 # The fixture flags are intentionally word-split.
+    FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" "${id_kind%%:*}" alpha ${id_kind##*:} >/dev/null 2>&1 \
+      || fail "fm-brief.sh scaffold exited non-zero for ${id_kind}"
+    brief="$BRIEF_HOME/data/${id_kind%%:*}/brief.md"
+    assert_grep 'Never `cd` before a read' "$brief" \
+      "${id_kind%%:*} brief must forbid a cd before a read"
+    assert_grep 'pass absolute paths' "$brief" \
+      "${id_kind%%:*} brief must require absolute paths for reads and searches"
+    assert_grep 'git -C <absolute-path>' "$brief" \
+      "${id_kind%%:*} brief must name the absolute-path git form"
+  done
+  pass "fm-brief.sh: ship and scout briefs require absolute-path reads"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -883,3 +902,4 @@ test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_scout_report_is_incremental_and_gates_terminal_status
+test_briefs_require_absolute_path_reads
