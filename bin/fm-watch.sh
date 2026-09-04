@@ -927,6 +927,10 @@ clear_pause_tracking() {  # <window-key>
 # After fm-crew-state has fallen back to stopped or unknown, paused classification is
 # recovered only for a confidently dead ordinary crew, or for a secondmate, whose
 # endpoint liveness this function deliberately never reads.
+#
+# `working` is returned ONLY for a crew that declared NOTHING: past the declared-wait
+# gate below, an authoritative active run CONFIRMS the declaration rather than
+# overriding it, so it takes the bounded pause cadence too. See that branch for why.
 pause_state_class() {  # <window> <task>
   local win=$1 task=$2 key last recheck_file class agent_alive kind
   key=$(window_key "$win")
@@ -955,8 +959,23 @@ pause_state_class() {  # <window> <task>
   fi
   class=$(crew_absorb_class "$task")
   if [ "$class" = working ]; then
-    rm -f "$recheck_file"
-    printf 'working'
+    # An active run behind a DECLARED wait is not a contradiction of that wait; it
+    # is the wait's own subject. The declaration a crew writes when it hands a round
+    # to the pipeline ("paused: waiting on no-mistakes run <id>") describes exactly
+    # this state - an idle pane whose work is running elsewhere - and an active run
+    # step is the strongest liveness evidence the watcher has for it. Returning
+    # `working` here handed that crew the caller's 240s wedge timer instead, and the
+    # 2026-09-04 incident is what that costs: one healthy crew escalated as a
+    # possible wedge roughly six times in a single session, each escalation a wake
+    # and a handling turn spent on a crew doing precisely what it said it would.
+    # The frozen-run protection the wedge timer supplied is not dropped, only
+    # slowed to the cadence a declared wait already earns: handle_paused_stale
+    # re-surfaces this pane once per PAUSE_RESURFACE_SECS with "confirm the wait
+    # still holds", so a run that is stuck rather than working is still reported,
+    # and a crew that stops declaring the wait resumes wedge tracking on the very
+    # next poll through the no-declaration path above.
+    date +%s > "$recheck_file"
+    printf 'paused'
     return
   fi
   if [ "$kind" != secondmate ]; then
@@ -1910,12 +1929,15 @@ EOF
           # Non-terminal stale: a crew gone quiet without a captain-relevant status.
           # Decided once per distinct stale hash (the costly state reads run only
           # on first sight, never every poll) via pause_state_class, which returns:
-          #   - working: an actively-running pipeline legitimately sits on a static
-          #     pane (e.g. waiting on CI), so absorb and start the wedge timer so a
-          #     genuinely frozen run still escalates past STALE_ESCALATE_SECS;
+          #   - working: an UNDECLARED crew whose pipeline is actively running
+          #     legitimately sits on a static pane (e.g. waiting on CI), so absorb and
+          #     start the wedge timer so a genuinely frozen run still escalates past
+          #     STALE_ESCALATE_SECS;
           #   - paused: a declared wait pause_state_class admits (its header owns which
-          #     liveness evidence each kind of crew must supply), so absorb on the long
-          #     PAUSE_RESURFACE_SECS cadence instead of wedge-escalating;
+          #     liveness evidence each kind of crew must supply, and an active run
+          #     behind the declaration is admitted as the wait's own subject rather
+          #     than an override of it), so absorb on the long PAUSE_RESURFACE_SECS
+          #     cadence instead of wedge-escalating;
           #   - none: no running pipeline, no exact busy verdict, no admitted declared wait.
           #     Surface immediately so firstmate inspects the inconclusive state
           #     (it may be done via an interactive menu that wrote no done: status,

@@ -467,6 +467,9 @@ $RULE1
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   Handing a round to the validation pipeline and then sitting idle waiting for its next gate is
+   exactly that kind of wait: append \`$PAUSED_VERB: waiting on no-mistakes run {run id}\` before you
+   go quiet, and \`working:\` again once the gate returns and you are acting on it.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
