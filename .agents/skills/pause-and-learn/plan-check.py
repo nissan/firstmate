@@ -8,7 +8,8 @@ Usage:
   plan-check.py classify <command-text>
       Print how the invoked command form is treated:
       "plan"   the exact read-only planning command, surrounding whitespace allowed
-      "refuse" the planning command with trailing arguments: refuse, change nothing
+      "refuse" a near miss of the planning command: trailing arguments, or a
+               case or plural variant of the plan word; refuse and change nothing
       "cycle"  an ordinary mutating /pause-and-learn invocation
       "none"   not a /pause-and-learn invocation at all
 
@@ -27,6 +28,15 @@ from pathlib import Path
 
 COMMAND = "/pause-and-learn"
 PLAN_WORD = "plan"
+PLAN_NEAR_MISSES = frozenset({"plan", "plans", "planning", "planned"})
+STAGE_BOUNDARY = "post-current-stage"
+BOUNDARY_KINDS = frozenset({
+    "terminal-completed-change",
+    "green-review-ready-change",
+    "completed-investigation-report",
+    "documented-external-wait",
+    STAGE_BOUNDARY,
+})
 MARKER = "PAUSE_AND_LEARN_PLAN_V1"
 BLOCK_RE = re.compile(MARKER + r"\s*\n```(?:json)?\s*\n(.*?)\n```", re.S)
 
@@ -42,9 +52,12 @@ def classify(text: str) -> str:
         return "none"
     if len(tokens) == 1:
         return "cycle"
-    if tokens[1] != PLAN_WORD:
-        return "cycle"
-    return "plan" if len(tokens) == 2 else "refuse"
+    word = tokens[1]
+    if word == PLAN_WORD:
+        return "plan" if len(tokens) == 2 else "refuse"
+    if word.lower().strip(".,:;!?'\"") in PLAN_NEAR_MISSES:
+        return "refuse"
+    return "cycle"
 
 
 def same(actual: object, expected: object) -> bool:
@@ -95,10 +108,19 @@ def validate(response: Path, expected_cycle: bool, queue_id: str | None) -> None
 
     boundary = plan.get("boundary")
     require(isinstance(boundary, dict), "missing boundary")
-    require(boundary.get("kind") == "post-current-stage", "wrong boundary kind")
+    kind = boundary.get("kind")
+    require(kind in BOUNDARY_KINDS, "wrong boundary kind")
     require(nonempty_text(boundary.get("name")), "missing boundary name")
-    require(same(boundary.get("wait_for_current_stage"), True), "current stage is not awaited")
-    require(nonempty_text(boundary.get("current_stage")), "missing current stage")
+    awaits_stage = kind == STAGE_BOUNDARY
+    require(
+        same(boundary.get("wait_for_current_stage"), awaits_stage),
+        "only a post-current-stage boundary awaits an active stage",
+    )
+    require(
+        nonempty_text(boundary.get("current_stage")) is awaits_stage,
+        "only a post-current-stage boundary names an active stage",
+    )
+    require(isinstance(boundary.get("current_stage"), str), "missing current stage")
     require(same(boundary.get("interrupt_current_stage"), False), "current stage may be interrupted")
 
     require(

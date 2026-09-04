@@ -23,6 +23,13 @@ classify() {
   || fail "the bare command was not the ordinary mutating cycle"
 [ "$(classify '/pause-and-learn Example Project')" = cycle ] \
   || fail "a scoped cycle invocation changed classification"
+[ "$(classify '/pause-and-learn Planetarium')" = cycle ] \
+  || fail "a scope argument that merely starts like the plan word was refused"
+
+for near_miss in Plan PLAN plans planning planned 'Plan.'; do
+  [ "$(classify "/pause-and-learn $near_miss")" = refuse ] \
+    || fail "the near-miss plan word '$near_miss' reached the mutating cycle"
+done
 
 scenario='Registered project: Example Project
 Current thread: current tranche'

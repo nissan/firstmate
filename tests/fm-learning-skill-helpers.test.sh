@@ -155,6 +155,37 @@ stamp_rejects "a duplicated source field" "---
   ]
 }"
 
+# The reference template ships an unbound placeholder for the author to stamp.
+lesson=$(new_brain placeholder)
+brain=$(dirname "$(dirname "$(dirname "$lesson")")")
+cat > "$lesson" <<'EOF'
+---
+{
+  "updated_at": "2030-01-01T00:00:00+00:00",
+  "sources": [
+    {"resource": "../../docs/retrospectives/alpha.md", "content_hash": "sha256:<64 hex>"}
+  ]
+}
+---
+
+# Page
+
+Body text.
+EOF
+if python3 "$STAMP" "$lesson" --check > /dev/null 2>&1; then
+  fail "check mode reported an unbound placeholder as current"
+fi
+python3 "$STAMP" "$lesson" > /dev/null \
+  || fail "the documented placeholder was refused instead of bound"
+assert_grep "\"content_hash\": \"$(sha_of "$brain/docs/retrospectives/alpha.md")\"" "$lesson" \
+  "the placeholder was not bound to the referenced bytes"
+python3 "$STAMP" "$lesson" --check > /dev/null \
+  || fail "a freshly bound placeholder was reported stale"
+after_fence=$(awk 'f {print} /^---$/ {n++; if (n == 2) f = 1}' "$lesson")
+[ "$after_fence" = "$(printf -- '\n# Page\n\nBody text.')" ] \
+  || fail "stamping reflowed the bytes after the closing frontmatter fence"
+pass "brain-capture binds the documented placeholder and preserves body bytes"
+
 stamp_rejects "a malformed content_hash" "---
 {
   \"updated_at\": \"2030-01-01T00:00:00+00:00\",

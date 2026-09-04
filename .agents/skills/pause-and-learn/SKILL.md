@@ -40,13 +40,18 @@ That object is the stable planning contract and contains these fields:
 ```
 
 Derive every placeholder string from current evidence rather than copying the example values.
+`boundary.kind` is one of exactly five stable values: `terminal-completed-change`, `green-review-ready-change`, `completed-investigation-report`, `documented-external-wait`, or `post-current-stage`.
+Use `post-current-stage` only while an active protected stage must finish first; then, and only then, set `wait_for_current_stage` true and name that stage in `current_stage`.
+For the other four the boundary is already terminal or externally stable, so `wait_for_current_stage` is false and `current_stage` is an empty string.
+`interrupt_current_stage` is always false.
 For each downstream tranche, preserve its durable record identity in `id`, keep human wording only in `name`, and express resume requirements through the fixed booleans rather than free-form vocabulary.
 Emit one entry per downstream tranche in `queued`, each with its own durable identity, or an empty array when none exists.
 Do not negate or qualify the boolean values in prose; the object is authoritative for the plan.
 
 ### Refused command forms
 
-Refuse `/pause-and-learn plan` carrying any trailing argument.
+Refuse `/pause-and-learn plan` carrying any trailing argument, and refuse a near miss of the plan word such as `Plan`, `plans`, `planning`, or `planned`.
+A different argument that names real scope, such as a registered project, is not a near miss and runs the ordinary cycle.
 Do not enter planning mode and do not fall through to the mutating cycle: change no record, worker, or artifact, emit no `PAUSE_AND_LEARN_PLAN_V1` block, say the read-only form takes no arguments, name the exact accepted form, and let the captain reissue it.
 [`plan-check.py`](plan-check.py) next to this skill is the check-only authority for both that classification and the plan contract above; it validates and never writes, spawns, or changes anything.
 
@@ -67,9 +72,9 @@ Do not enter planning mode and do not fall through to the mutating cycle: change
 
 1. Inventory the current tranche's accepted intent, current delivery stage, dependencies, externally stable milestones, and the next queued roadmap tranche.
 2. Prefer the earliest boundary that leaves the accepted tranche coherent, testable, recoverable, and externally stable.
-   A terminal completed change, a green review-ready change, a completed investigation report, or a documented external wait can qualify.
+   A terminal completed change (`terminal-completed-change`), a green review-ready change (`green-review-ready-change`), a completed investigation report (`completed-investigation-report`), or a documented external wait (`documented-external-wait`) can qualify.
 3. Never interrupt an active validation run, exact-head review, merge, irreversible operation, or worker-owned branch stage merely to pause.
-   Name the next safe terminal boundary after that operation and supervise the existing work until it reaches that boundary.
+   Name the next safe terminal boundary after that operation as `post-current-stage` and supervise the existing work until it reaches that boundary.
 4. Finish only work already authorized and necessary to make the current tranche coherent at that boundary.
    Preserve the selected delivery path, branch custody, review sequence, and merge authority.
 5. Do not start the next roadmap tranche, opportunistic cleanup, or a recommended implementation that lacks separate authorization.

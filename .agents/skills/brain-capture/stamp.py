@@ -7,8 +7,10 @@ its own JSON source object and refuses malformed frontmatter, where the imported
 original paired "resource" and "content_hash" by line order across the whole
 frontmatter.
 
-Recomputes the sha256 content_hash of every local source and sets updated_at to
-now in the brain's configured timezone. Formatting and field order are preserved
+Recomputes the sha256 content_hash of every local source, binding the documented
+"sha256:<64 hex>" placeholder from the referenced bytes, and sets updated_at to
+now in the brain's configured timezone. --check refuses an unbound placeholder
+rather than reporting it current. Formatting and field order are preserved
 by rewriting hash values in place rather than re-serializing the frontmatter.
 
 Usage:  python3 stamp.py <path-to-lesson.md> [--check]
@@ -28,6 +30,7 @@ from zoneinfo import ZoneInfo
 HASH_RE = re.compile(r'"content_hash"\s*:\s*"([^"]*)"')
 UPDATED_RE = re.compile(r'"updated_at"\s*:\s*"([^"]*)"')
 SHA256_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+PLACEHOLDER = "sha256:<64 hex>"
 
 
 def find_brain_root(start: Path) -> Path:
@@ -77,7 +80,7 @@ def declared_sources(data: dict, page: Path) -> list[tuple[str, str]]:
         digest = entry.get("content_hash")
         if not isinstance(resource, str) or not resource:
             raise SystemExit(f"{page.name}: sources[{index}] has no resource for its content_hash")
-        if not isinstance(digest, str) or not SHA256_RE.match(digest):
+        if not isinstance(digest, str) or not (SHA256_RE.match(digest) or digest == PLACEHOLDER):
             raise SystemExit(f"{page.name}: sources[{index}] has no well-formed content_hash")
         bound.append((resource, digest))
     return bound
@@ -119,8 +122,13 @@ def main() -> int:
 
     edits, changed = [], []
     for span, (resource, digest) in zip(spans, sources):
+        unbound = digest == PLACEHOLDER
         if ":" in resource or resource.startswith("/"):
+            if unbound:
+                raise SystemExit(f"{page.name}: cannot bind a placeholder hash for {resource}")
             continue
+        if unbound and check:
+            raise SystemExit(f"{page.name}: unbound placeholder hash: {resource}")
         target = (page.parent / resource).resolve()
         if not target.is_file():
             raise SystemExit(f"{page.name}: source missing: {resource}")
@@ -149,7 +157,7 @@ def main() -> int:
         cursor = end
     out.append(front[cursor:])
 
-    page.write_text("---\n" + "".join(out) + "\n---\n" + body.lstrip("\n"), encoding="utf-8")
+    page.write_text("---\n" + "".join(out) + "\n---\n" + body, encoding="utf-8")
     print(f"rehashed: {', '.join(changed) if changed else '(no hash drift)'}")
     print(f"updated_at: {now}")
     print("now run: .venv/bin/python scripts/validate.py && .venv/bin/python scripts/evaluate.py")

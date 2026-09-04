@@ -505,6 +505,46 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-external-wait-unnamed.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-external-wait.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-investigation-report.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-report-interrupts.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-review-ready-names-stage.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-review-ready.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-stage-not-awaited.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-terminal-awaits-stage.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-terminal-change.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/pause-and-learn-plan/boundary-unknown-kind.txt",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/fixtures/pause-and-learn-plan/duplicate-queued.txt",
       "audience": "maintainer-verification"
     },

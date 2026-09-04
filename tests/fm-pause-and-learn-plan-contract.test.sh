@@ -47,3 +47,22 @@ reject unsafe-second-queued.txt "a later tranche marked to start was accepted" f
 reject malformed-queued.txt "a later tranche with no paused state or resume authority was accepted" \
   false next-tranche
 pass "every queued tranche is validated for zero, one, and many downstream items"
+
+accept boundary-terminal-change.txt "a terminal completed change was rejected" false next-tranche
+accept boundary-review-ready.txt "a green review-ready change was rejected" false next-tranche
+accept boundary-investigation-report.txt "a completed investigation report was rejected" false next-tranche
+accept boundary-external-wait.txt "a documented external wait was rejected" false next-tranche
+
+reject boundary-unknown-kind.txt "a boundary outside the documented vocabulary was accepted" \
+  false next-tranche
+reject boundary-terminal-awaits-stage.txt "a terminal change claimed to await an active stage" \
+  false next-tranche
+reject boundary-review-ready-names-stage.txt "a review-ready change named an active stage" \
+  false next-tranche
+reject boundary-report-interrupts.txt "an investigation-report boundary interrupted the current stage" \
+  false next-tranche
+reject boundary-external-wait-unnamed.txt "an external wait with no named boundary was accepted" \
+  false next-tranche
+reject boundary-stage-not-awaited.txt "a post-current-stage boundary awaited no stage" \
+  false next-tranche
+pass "each documented boundary kind carries its own invariants"
