@@ -107,6 +107,7 @@ new_cap_home() {
 # run_check <home> [env assignments...]
 # Runs fm_crew_cap_check in a real subprocess against the real libraries and
 # prints "<rc>|<count>|<cap>|<warning>|<active ids>".
+# shellcheck disable=SC2016 # The subprocess body is literal shell for `bash -c`.
 run_check() {
   local home=$1 fakebin
   shift
@@ -373,8 +374,9 @@ test_a_broken_cap_surface_never_blocks_a_spawn() {
   IFS='|' read -r home wt fakebin proj <<EOF
 $rec
 EOF
-  out=$(run_capped_spawn "$home" "$wt" "$fakebin" "$proj" broken-first)
-  [ $? -ne 0 ] || fail "the intact fixture must refuse, or this case proves nothing: $out"
+  if out=$(run_capped_spawn "$home" "$wt" "$fakebin" "$proj" broken-first); then
+    fail "the intact fixture must refuse, or this case proves nothing: $out"
+  fi
 
   printf 'not-a-number\n' > "$home/config/crew-concurrency-cap"
   out=$(run_capped_spawn "$home" "$wt" "$fakebin" "$proj" broken-new); status=$?

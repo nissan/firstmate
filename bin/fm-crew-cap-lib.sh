@@ -189,6 +189,8 @@ fm_crew_cap_active() {
 # proceed with FM_CREW_CAP_WARNING explaining why no cap could be applied.
 # On a 0 or refusing return, FM_CREW_CAP_VALUE, FM_CREW_CAP_COUNT, and
 # FM_CREW_CAP_ACTIVE describe what was measured.
+# shellcheck disable=SC2034 # FM_CREW_CAP_COUNT/ACTIVE/WARNING are this
+# function's out-parameters, read by the sourcing caller (bin/fm-spawn.sh).
 fm_crew_cap_check() {
   local config_dir=$1 state_dir=$2 cap active count
   FM_CREW_CAP_VALUE=""
