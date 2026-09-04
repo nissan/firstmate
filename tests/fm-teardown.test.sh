@@ -7,7 +7,7 @@
 # and GitHub reports a PR head that contains the current local work, or its content
 # is already in the up-to-date default branch.
 #
-# Covers three fixes:
+# Covers four fixes:
 #   - local-only fork-remote: a fork IS a remote, so fork-pushed upstream-
 #     contribution PRs are teardown-eligible (the pre-fix code false-refused them).
 #   - squash-merge-then-delete-branch: the branch's own commits live nowhere on a
@@ -19,6 +19,12 @@
 #     git index.lock that blocks teardown. The return path retries on the lock
 #     error signature (even if the lock self-clears mid-check), then only removes a
 #     provably stale lock before re-running safety checks.
+#   - stale-local-remote-ref: a no-mistakes run commits and pushes from its own
+#     pipeline copy, not this crew worktree, so this worktree's cached
+#     refs/remotes/<remote>/<branch> never learns the branch was pushed and
+#     "--not --remotes" false-refuses already-landed work. The check now asks the
+#     actual remote (git ls-remote) before trusting that local cache, and fails
+#     safe (refuses) when the remote cannot be verified at all.
 #
 # Matrix:
 #   (a) local-only + HEAD on a fork remote-tracking branch     -> ALLOW  (fork fix)
@@ -38,6 +44,11 @@
 #   (o) fm-pr-check rerun after HEAD moved                      -> no stale pr_head
 #   (p) fm-pr-check when local HEAD lags                        -> record remote PR head
 #   (q) no-mistakes + NO pr= recorded, PR discovered by branch  -> ALLOW  (yolo/no-CI merge)
+#   (z1) no-mistakes + branch pushed via a separate pipeline clone, this
+#        worktree's own remote-tracking ref never refreshed          -> ALLOW  (stale-ref fix)
+#   (z2) no-mistakes + truly unpushed, origin reachable and checked   -> REFUSE (safety preserved)
+#   (z3) no-mistakes + branch pushed via a separate clone, but the
+#        remote cannot be verified at all (ls-remote fails)           -> REFUSE (fail-safe)
 #
 # Also covers backlog teardown-lock-race: a git index.lock left in the worktree by a
 # killed crew process (bin/fm-teardown.sh's teardown_treehouse_return).
@@ -230,6 +241,25 @@ land_on_origin_main() {
   git -C "$tmp" add -- "$file"
   git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "squash $file"
   git -C "$tmp" push -q origin HEAD:main
+  rm -rf "$tmp"
+}
+
+# Push the worktree's exact current branch head to origin through a THIRD,
+# throwaway clone that shares nothing with $case_dir/project or $case_dir/wt -
+# reproducing a no-mistakes run that commits and pushes from its own pipeline
+# copy. The worktree's (and project's) own refs/remotes/origin/<branch> is
+# never touched by this, so it stays exactly as stale as it would after a real
+# pipeline push: the branch is genuinely on origin, but this worktree's local
+# remote-tracking cache has no idea. Args: case_dir branch
+push_branch_via_other_clone() {
+  local case_dir=$1 branch=$2 tmp head
+  tmp="$case_dir/_pipeline"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git clone -q "$case_dir/origin.git" "$tmp"
+  # Fetch the exact commit object from the worktree by path (a local
+  # filesystem fetch), so the pushed SHA is identical to the worktree's HEAD.
+  git -C "$tmp" fetch -q "$case_dir/wt" "$head"
+  git -C "$tmp" push -q origin "$head:refs/heads/$branch"
   rm -rf "$tmp"
 }
 
@@ -517,6 +547,29 @@ SH
   chmod +x "$case_dir/fakebin/git"
 }
 
+# Wrap real git so every `ls-remote` invocation fails as if the remote could
+# not be reached at all (network/auth/anything else - the fail-safe case),
+# while every other git call passes through unchanged. Touches
+# $case_dir/state/.ls-remote-attempted first, so a test can confirm the
+# unreachable-remote path was actually exercised rather than some other
+# refusal reason. Args: case_dir
+add_git_ls_remote_failure() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/git" <<SH
+#!/usr/bin/env bash
+real=\${REAL_GIT_FOR_TEST:?}
+for a in "\$@"; do
+  if [ "\$a" = ls-remote ]; then
+    : > "$case_dir/state/.ls-remote-attempted"
+    echo "fatal: unable to access remote: Could not resolve host" >&2
+    exit 128
+  fi
+done
+exec "\$real" "\$@"
+SH
+  chmod +x "$case_dir/fakebin/git"
+}
+
 # Run teardown with PATH mocking. Args: case_dir [extra args...]
 run_teardown() {
   local case_dir=$1; shift
@@ -719,6 +772,78 @@ test_no_mistakes_truly_unpushed_refuses() {
   expect_code 1 "$rc" "nm-unpushed: teardown should refuse"
   grep -q REFUSED "$case_dir/stderr" || fail "nm-unpushed: no REFUSED line in stderr"
   pass "no-mistakes worktree with genuinely unlanded work is refused (safety preserved)"
+}
+
+# Reproduces the proven false refusal: a no-mistakes run commits and pushes from
+# its own pipeline copy, not this crew worktree, so the branch really is on
+# origin while this worktree's own cached refs/remotes/origin/<branch> was never
+# refreshed to know it. The old "--not --remotes" check trusts only that stale
+# local cache and false-refuses landed work; the fix asks the actual remote.
+test_no_mistakes_pipeline_pushed_stale_local_ref_allows() {
+  local case_dir rc
+  case_dir=$(make_case nm-pipeline-pushed)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "pipeline-pushed work"
+  # Push the exact same commit to origin through a third, unrelated clone so
+  # $case_dir/project and $case_dir/wt never see refs/remotes/origin/fm-task-x1
+  # move - their cache stays exactly as stale as it would after a real
+  # pipeline push.
+  push_branch_via_other_clone "$case_dir" fm/task-x1
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "nm-pipeline-pushed: teardown should succeed once the actual remote confirms the branch"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "nm-pipeline-pushed: teardown printed a REFUSED line: $(cat "$case_dir/stderr")"
+  pass "no-mistakes worktree pushed by a separate pipeline copy is torn down (stale local ref fix)"
+}
+
+# Same genuinely-unlanded setup as nm-unpushed, but now with the new remote
+# verification wired in: origin is reachable and correctly reports it has no
+# such branch, so the check must still refuse exactly as before (the fix must
+# never open a false ALLOW for real unlanded work).
+test_no_mistakes_truly_unpushed_still_refuses_with_remote_check() {
+  local case_dir rc
+  case_dir=$(make_case nm-unpushed-verified)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "unpushed work"
+  # No push anywhere; origin is reachable but genuinely lacks this branch.
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "nm-unpushed-verified: teardown should still refuse"
+  grep -q REFUSED "$case_dir/stderr" || fail "nm-unpushed-verified: no REFUSED line in stderr"
+  pass "genuinely unlanded work still refuses once the remote is actually reachable and checked"
+}
+
+# Fail-safe requirement: if the remote cannot even be verified (network, auth,
+# whatever), teardown must refuse - never treat "cannot tell" as "must be fine".
+# The branch here IS actually on origin (so a working ls-remote would confirm
+# it), which is exactly what makes this test meaningful: only the injected
+# ls-remote failure should be standing between this worktree and teardown.
+test_no_mistakes_unreachable_remote_refuses() {
+  local case_dir rc
+  case_dir=$(make_case nm-unreachable-remote)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "pipeline-pushed work"
+  push_branch_via_other_clone "$case_dir" fm/task-x1
+  add_git_ls_remote_failure "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "nm-unreachable-remote: teardown should refuse when the remote cannot be verified"
+  grep -q REFUSED "$case_dir/stderr" || fail "nm-unreachable-remote: no REFUSED line in stderr"
+  [ -f "$case_dir/state/.ls-remote-attempted" ] \
+    || fail "nm-unreachable-remote: the remote-verification path was never exercised"
+  pass "an unreachable remote refuses rather than silently permitting teardown (fail-safe)"
 }
 
 test_squash_merged_branch_deleted_allows() {
@@ -2763,6 +2888,9 @@ test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
+test_no_mistakes_pipeline_pushed_stale_local_ref_allows
+test_no_mistakes_truly_unpushed_still_refuses_with_remote_check
+test_no_mistakes_unreachable_remote_refuses
 test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line
 test_secondmate_home_teardown_delivers_final_line_or_refuses

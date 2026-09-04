@@ -38,6 +38,14 @@
 # already present in the up-to-date default branch. This recognizes the common
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
 # on a remote yet the change is fully in main.
+# "Reachable from any remote-tracking branch" is checked against the ACTUAL
+# remote, not just this worktree's cached refs/remotes/* - a no-mistakes run
+# commits and pushes from its own pipeline copy, never fetching back into this
+# worktree, so the cache alone can look unpushed for a branch that is genuinely
+# on the remote. branch_confirmed_on_remote asks the remote directly (git
+# ls-remote) before trusting that cache, and fails safe: a remote it cannot
+# verify at all refuses exactly like genuinely unlanded work, never like landed
+# work.
 # The PR itself is resolved from the task's recorded pr= when present, or - when
 # no pr= was ever recorded (e.g. a yolo-authorized merge on a repo with no PR CI,
 # where the usual "checks green" fm-pr-check.sh trigger never fires) - by looking
@@ -1183,6 +1191,63 @@ work_is_landed() {
   content_in_default
 }
 
+# Does remote $2 confirm that $1's current commit is really there? This worktree's
+# own cached remote-tracking refs (what "--not --remotes" below reads) can lag the
+# ACTUAL remote: a no-mistakes run commits and pushes from its own pipeline copy,
+# never fetching back into this worktree, so a branch that is genuinely pushed can
+# still look unpushed here. Ask the remote directly instead of trusting the cache.
+#
+# Returns 0 when the remote confirms the branch landed, 1 when the remote was
+# reached and genuinely does not have it, 2 when the remote could not be verified
+# at all (network, auth, anything else). `git ls-remote --exit-code` is what makes
+# 1 and 2 distinguishable: it exits 0 when the ref is found, exactly 2 when the
+# remote was reached but has no matching ref, and anything else when the remote
+# itself could not be contacted (see git-ls-remote(1)). Callers must treat 2
+# exactly like "not confirmed", never like 0: a check that opens on a remote it
+# cannot verify is worse than one that occasionally over-refuses.
+branch_confirmed_on_remote() {
+  local branch=$1 remote=$2 ls_out rc=0 remote_sha current
+  ls_out=$(git -C "$WT" ls-remote --exit-code "$remote" "refs/heads/$branch" 2>/dev/null) || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    return 1
+  elif [ "$rc" -ne 0 ]; then
+    return 2
+  fi
+  remote_sha=$(printf '%s\n' "$ls_out" | awk '{print $1}' | head -1)
+  [ -n "$remote_sha" ] || return 2
+  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 2
+  [ "$remote_sha" != "$current" ] || return 0
+  # HEAD may be an ancestor of a remote head that has moved further still (the
+  # pipeline's own copy can add commits on top before pushing); fetch just that
+  # one ref so ancestry can be checked without trusting a stale tracking ref.
+  git -C "$WT" fetch --quiet "$remote" "$branch" >/dev/null 2>&1 || return 2
+  git -C "$WT" merge-base --is-ancestor "$current" "$remote_sha" 2>/dev/null && return 0
+  return 1
+}
+
+# Checks every remote configured on the worktree (a fork counts as a remote, same
+# as the reachability rule in the script header) and returns 0 the moment one
+# confirms the branch landed. Returns 2 (cannot verify) when no remote confirmed
+# it and at least one could not be reached, so a temporarily unreachable remote
+# never gets silently treated as "this branch isn't there". Returns 1 only when
+# every configured remote was actually reached and genuinely lacks it - including
+# the trivial case of no remotes configured at all.
+remote_confirms_branch_pushed() {
+  local branch=$1 remote had_verify_failure=0 rc
+  while IFS= read -r remote; do
+    [ -n "$remote" ] || continue
+    rc=0
+    branch_confirmed_on_remote "$branch" "$remote" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      return 0
+    elif [ "$rc" -eq 2 ]; then
+      had_verify_failure=1
+    fi
+  done < <(git -C "$WT" remote 2>/dev/null)
+  [ "$had_verify_failure" -eq 0 ] || return 2
+  return 1
+}
+
 # The completion links this teardown already holds locally. A scout's
 # deliverable is its report, a local-only ship lands on local main, and every
 # other ship carries the PR recorded on its own record.
@@ -1443,6 +1508,7 @@ teardown_treehouse_return() {
 
 validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
+  local remote_confirm_rc
   [ -d "$WT" ] || return 0
   [ "$FORCE" != "--force" ] || return 0
   case "$KIND" in
@@ -1468,6 +1534,26 @@ validate_worktree_teardown_safety() {
     return 1
   fi
   unpushed=$(printf '%s\n' "$unpushed_raw" | head -5)
+
+  if [ -n "$unpushed" ]; then
+    branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
+    if [ -z "$branch" ]; then
+      branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+      TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
+    fi
+    # This worktree's local remote-tracking refs (what produced $unpushed above)
+    # can lag the actual remote - see branch_confirmed_on_remote. Ask the real
+    # remote before treating $unpushed as proof the work never landed.
+    remote_confirm_rc=0
+    remote_confirms_branch_pushed "$branch" || remote_confirm_rc=$?
+    if [ "$remote_confirm_rc" -eq 0 ]; then
+      unpushed=
+    elif [ "$remote_confirm_rc" -eq 2 ]; then
+      echo "REFUSED: cannot verify worktree $WT's branch $branch against its actual remote state." >&2
+      echo "Push the branch, land its PR, or get the captain's explicit OK to discard, then --force." >&2
+      return 1
+    fi
+  fi
 
   if [ -n "$unpushed" ] && [ "$MODE" = local-only ]; then
     DEFAULT=$(default_branch) || { echo "REFUSED: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master." >&2; return 1; }
