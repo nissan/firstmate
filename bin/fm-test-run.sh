@@ -1337,6 +1337,11 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
       ;;
+    .agents/skills/pause-and-learn/*)
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' __script__:fm-pause-and-learn-inventory.test.sh
+      printf '%s\n' __script__:fm-shared-brain-skill.test.sh
+      ;;
     .agents/skills/*/SKILL.md)
       printf '%s\n' pure-contract-unit
       ;;

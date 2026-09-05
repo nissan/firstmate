@@ -71,7 +71,7 @@ PROJECT_ROOT=$(cd -P -- "$PROJECT" 2>/dev/null && pwd -P) || refuse_unreadable
 # git walks past an unusable `.git` and keeps searching upward, and a Firstmate
 # home is itself a repository, so an interrupted clone would otherwise be
 # answered for by the home around it.
-TOPLEVEL=$(git_local rev-parse --show-toplevel) || refuse_unreadable
+TOPLEVEL=$(git_local rev-parse --show-toplevel 2>/dev/null) || refuse_unreadable
 [ "$TOPLEVEL" = "$PROJECT_ROOT" ] || refuse_unreadable
 # One status answers tracked, staged, unmerged, and untracked state together,
 # and it answers in three ways, not two: it fails when the copy cannot be read
@@ -80,7 +80,10 @@ TOPLEVEL=$(git_local rev-parse --show-toplevel) || refuse_unreadable
 # the second is dirtiness. The other two leave part of the copy uninspected, so
 # they take the repair prerequisite - and take it without repeating git's
 # diagnostic, which names paths inside the captain's home.
-STATUS_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-shared-brain-status.XXXXXX") || refuse_unreadable
+STATUS_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-shared-brain-status.XXXXXX" 2>/dev/null) || {
+  echo "error: make a writable temporary directory available before loading /pause-and-learn: inspecting the shared-brain local copy needs one" >&2
+  exit 1
+}
 trap 'rm -f "$STATUS_ERR"' EXIT
 WORKTREE_STATE=$(git_local status --porcelain=v1 --untracked-files=normal --ignore-submodules=none \
   2>"$STATUS_ERR") || refuse_unreadable

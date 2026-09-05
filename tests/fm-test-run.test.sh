@@ -147,9 +147,11 @@ init_changed_fixture_repo() {
   printf '# .pi/extensions/fm-primary-pi-watch.ts\n' >>"$repo/tests/fm-pi-watch-extension.test.sh"
   mkdir -p \
     "$repo/.agents/skills/example" \
+    "$repo/.agents/skills/pause-and-learn" \
     "$repo/.agents/skills/harness-adapters/references/common" \
     "$repo/.claude" "$repo/.pi/extensions" "$repo/docs" "$repo/src"
   : >"$repo/.agents/skills/example/SKILL.md"
+  : >"$repo/.agents/skills/pause-and-learn/SKILL.md"
   : >"$repo/.agents/skills/harness-adapters/SKILL.md"
   : >"$repo/.agents/skills/harness-adapters/references/common/dispatch.md"
   : >"$repo/.claude/settings.json"
@@ -291,6 +293,17 @@ test_changed_dependency_selection_and_unmapped_failure() {
     "shared-brain skill resolver must not select the unrelated secondmate family"
   git -C "$repo" add bin/fm-shared-brain-skill.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm shared-brain-skill-change
+
+  printf '\n' >>"$repo/.agents/skills/pause-and-learn/SKILL.md"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-pause-and-learn-inventory.test.sh" \
+    "the discovery stub selects the ownership guard that polices its own directory"
+  assert_contains "$listed" "tests/fm-shared-brain-skill.test.sh" \
+    "the discovery stub selects the resolver it routes to"
+  assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" \
+    "the discovery stub keeps the generic skill contract coverage"
+  git -C "$repo" add .agents/skills/pause-and-learn/SKILL.md
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm pause-and-learn-stub-change
 
   printf '\n' >>"$repo/bin/fm-control-lib.sh"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)

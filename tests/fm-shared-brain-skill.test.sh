@@ -193,6 +193,7 @@ cat > "$warnbin/git" <<'SH'
 #!/usr/bin/env bash
 for arg in "$@"; do
   if [ "$arg" = status ]; then
+    : >"$FM_TEST_STATUS_MARKER"
     printf '%s\n' "warning: could not open directory 'helpers/': Permission denied" >&2
     exit 0
   fi
@@ -200,12 +201,19 @@ done
 exec "$FM_TEST_REAL_GIT" "$@"
 SH
 chmod +x "$warnbin/git"
+partial_marker="$TMP_ROOT/status-intercepted"
+rm -f "$partial_marker"
 set +e
 partial_out=$(env PATH="$warnbin:$PATH" FM_TEST_REAL_GIT="$(command -v git)" \
+  FM_TEST_STATUS_MARKER="$partial_marker" \
   FM_HOME="$partial" FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$partial_head" \
   "$RESOLVER" pause-and-learn 2>&1)
 partial_rc=$?
 set -e
+# Without this the case would also pass when the stub never ran at all: every
+# inspection failure, including one from the earlier identity query, refuses
+# with the same sentence.
+[ -f "$partial_marker" ] || fail "the stub never intercepted a status query, so the warning path was never reached"
 [ "$partial_rc" -ne 0 ] || fail "a copy git could only partly inspect was accepted as an authoritative source"
 assert_contains "$partial_out" 'repair or re-clone' "a partly inspectable copy did not name its prerequisite"
 assert_not_contains "$partial_out" 'clean the shared-brain local copy' \
@@ -214,6 +222,20 @@ assert_not_contains "$partial_out" 'Permission denied' \
   "the refusal repeated git's own diagnostic instead of a private-safe prerequisite"
 assert_not_contains "$partial_out" 'SKILL.md' "a partly inspectable copy still emitted a source path"
 pass "a copy git could only partly inspect is refused instead of read as clean"
+
+# Somewhere to hold the inspection's diagnostics is this run's own prerequisite,
+# not the clone's: re-cloning a clean, current copy would not supply one.
+set +e
+tmpdir_out=$(env TMPDIR="$TMP_ROOT/absent-tmpdir" FM_HOME="$partial" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$partial_head" "$RESOLVER" pause-and-learn 2>&1)
+tmpdir_rc=$?
+set -e
+[ "$tmpdir_rc" -ne 0 ] || fail "an unusable temporary directory was accepted as an authoritative source"
+assert_contains "$tmpdir_out" 'temporary directory' "the temporary-directory blocker did not name itself"
+assert_not_contains "$tmpdir_out" 'repair or re-clone' \
+  "a temporary-directory failure was blamed on the shared-brain local copy"
+assert_not_contains "$tmpdir_out" 'absent-tmpdir' "the refusal echoed the temporary directory it was given"
+pass "a temporary directory the inspection cannot use is refused on its own terms"
 
 # A copy git cannot read at all is a distinct blocker from a dirty one: its
 # worktree may be pristine, so the cleanliness prerequisite would be unactionable.
