@@ -65,6 +65,22 @@ relative_out=$(cd "$TMP_ROOT" && env FM_HOME=good FM_TESTING=1 \
 [ "$relative_out" = "$SOURCE" ] || fail "a relative FM_HOME did not resolve to the absolute authoritative path"
 pass "a relative FM_HOME still prints the absolute authoritative source path"
 
+# The stub tells the captain to run the resolver "from the Firstmate code root",
+# and an installed Firstmate home is that code root, so the ordinary invocation
+# sets no FM_HOME at all. That default has to name the home the resolver was
+# installed into rather than whatever directory the caller happens to be in.
+installed="$TMP_ROOT/installed"
+new_home "$installed"
+mkdir -p "$installed/bin"
+cp "$RESOLVER" "$installed/bin/fm-shared-brain-skill.sh"
+installed_head=$(git -C "$installed/projects/shared-brain" rev-parse HEAD)
+default_out=$(cd "$TMP_ROOT" && env -u FM_HOME FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$installed_head" \
+  "$installed/bin/fm-shared-brain-skill.sh" pause-and-learn)
+[ "$default_out" = "$installed/projects/shared-brain/skills/pause-and-learn/SKILL.md" ] \
+  || fail "with no FM_HOME set the resolver did not discover the home it is installed in"
+pass "with no FM_HOME set discovery falls back to the installed Firstmate home"
+
 run_expect_failure "$PRODUCTION_COMMIT" env FM_HOME="$home" "$RESOLVER" pause-and-learn
 pass "a local copy below the required merge is refused"
 
