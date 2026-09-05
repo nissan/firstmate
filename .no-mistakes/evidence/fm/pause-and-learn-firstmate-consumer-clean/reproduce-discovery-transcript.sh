@@ -9,7 +9,8 @@ RESOLVER="$ROOT/bin/fm-shared-brain-skill.sh"
 export GIT_AUTHOR_NAME=evidence GIT_AUTHOR_EMAIL=evidence@example.invalid
 export GIT_COMMITTER_NAME=evidence GIT_COMMITTER_EMAIL=evidence@example.invalid
 
-redact() { sed "s#$WORK#<HOME-ROOT>#g; s#${FM_HOME:-__no_fm_home__}#<CAPTAIN-FM_HOME>#g; s#$ROOT#<FIRSTMATE-CODE-ROOT>#g"; }
+REALHOME_FOR_REDACT=${2:-${FM_HOME:-$HOME/firstmate}}
+redact() { sed "s#$WORK#<HOME-ROOT>#g; s#$REALHOME_FOR_REDACT#<CAPTAIN-FM_HOME>#g; s#$ROOT#<FIRSTMATE-CODE-ROOT>#g; s#$HOME#<HOME>#g"; }
 
 run() {
   local label=$1; shift
@@ -53,6 +54,22 @@ printf '\n$ cd <HOME-ROOT> && FM_HOME=good bin/fm-shared-brain-skill.sh pause-an
 printf '[exit 0]  # the path stays absolute, so the agent can follow it in place\n'
 
 echo
+echo "--- 2b. the stub's own instruction: run it from the code root, no FM_HOME set ---"
+echo "     (an installed Firstmate home IS the code root, so this is the ordinary case)"
+installed="$WORK/installed"; clone_fixture "$installed"
+mkdir -p "$installed/bin"; cp "$RESOLVER" "$installed/bin/fm-shared-brain-skill.sh"
+ihead=$(git -C "$installed/projects/shared-brain" rev-parse HEAD)
+printf '\n$ cd <installed Firstmate home> && bin/fm-shared-brain-skill.sh pause-and-learn\n'
+set +e
+def_out=$( cd "$installed" && env -u FM_HOME FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$ihead" \
+  bin/fm-shared-brain-skill.sh pause-and-learn 2>&1 )
+def_rc=$?
+set -e
+printf '%s\n' "$def_out" | redact
+printf '[exit %s]  # discovery needs no environment at all in an installed home\n' "$def_rc"
+
+echo
 echo "--- 3. no shared-brain registration in this home ---"
 noreg="$WORK/no-registry"; mkdir -p "$noreg/data" "$noreg/projects"
 run "stops with the registration prerequisite" env FM_HOME="$noreg" "$RESOLVER" pause-and-learn
@@ -85,6 +102,87 @@ run "stops with the repair prerequisite, never answered by the surrounding home 
   env FM_HOME="$nested" FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$head" "$RESOLVER" pause-and-learn
 
 echo
+
+echo
+echo "--- 7a. git could only partly inspect the copy (warns, reports nothing, exits 0) ---"
+echo "     an unreadable subdirectory makes 'clean' and 'uninspectable' look identical"
+partial="$WORK/partly-inspectable"; clone_fixture "$partial"
+phead=$(git -C "$partial/projects/shared-brain" rev-parse HEAD)
+warnbin="$WORK/warnbin"; mkdir -p "$warnbin"
+cat > "$warnbin/git" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = status ]; then
+    printf '%s\n' "warning: could not open directory 'helpers/': Permission denied" >&2
+    exit 0
+  fi
+done
+exec "$FM_TEST_REAL_GIT" "$@"
+SH
+chmod +x "$warnbin/git"
+printf '\n$ # git status warns on stderr, prints nothing on stdout, exits 0\n'
+printf '$ PATH=<stub-git>:$PATH FM_HOME=<HOME-ROOT>/partly-inspectable bin/fm-shared-brain-skill.sh pause-and-learn\n'
+set +e
+partial_out=$(env PATH="$warnbin:$PATH" FM_TEST_REAL_GIT="$(command -v git)" \
+  FM_HOME="$partial" FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$phead" \
+  "$RESOLVER" pause-and-learn 2>&1)
+partial_rc=$?
+set -e
+printf '%s\n' "$partial_out" | redact
+printf '[exit %s]  # refused as uninspectable, NOT accepted as clean\n' "$partial_rc"
+printf '$ # was it mislabeled as merely dirty, or did the git diagnostic leak?\n'
+case "$partial_out" in
+  *"clean the shared-brain local copy"*) echo "MISLABELED as dirty (unexpected)" ;;
+  *) echo "no: an uninspectable copy takes the repair prerequisite, not the cleanliness one" ;;
+esac
+case "$partial_out" in
+  *"Permission denied"*) echo "LEAKED git diagnostic (unexpected)" ;;
+  *) echo "no: git's own warning naming a path in the copy is not repeated" ;;
+esac
+
+echo
+echo "--- 7b. no usable temporary directory (clone itself is clean and current) ---"
+run "blames the temporary directory, not the clone, and does not echo TMPDIR back" \
+  env TMPDIR="$WORK/absent-tmpdir" FM_HOME="$partial" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$phead" "$RESOLVER" pause-and-learn
+
+echo
+echo "--- 7c. refusals never echo the captain's private home layout back ---"
+echo "     git's own fatal names absolute paths inside the home; the refusal must not"
+leakbin="$WORK/leakbin"; mkdir -p "$leakbin"
+cat > "$leakbin/git" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = rev-parse ]; then
+    printf 'fatal: detected dubious ownership in repository at %s\n' "$FM_TEST_LEAK_PATH" >&2
+    printf '%s\n' "  git config --global --add safe.directory $FM_TEST_LEAK_PATH" >&2
+    exit 128
+  fi
+done
+exec "$FM_TEST_REAL_GIT" "$@"
+SH
+chmod +x "$leakbin/git"
+leak_path="$partial/projects/shared-brain"
+printf '\n$ # underlying git emits: fatal: detected dubious ownership in repository at <private path>\n'
+set +e
+leak_out=$(env PATH="$leakbin:$PATH" FM_TEST_REAL_GIT="$(command -v git)" \
+  FM_TEST_LEAK_PATH="$leak_path" FM_HOME="$partial" FM_TESTING=1 \
+  FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT="$phead" "$RESOLVER" pause-and-learn 2>&1)
+leak_rc=$?
+set -e
+printf '%s\n' "$leak_out" | redact
+printf '[exit %s]  # only the one-line prerequisite reaches the captain\n' "$leak_rc"
+printf '$ # does the refusal contain the private path git named?\n'
+case "$leak_out" in
+  *"$leak_path"*) echo "LEAKED (unexpected)" ;;
+  *) echo "no: the private home path git printed does not appear in the refusal" ;;
+esac
+case "$leak_out" in
+  *safe.directory*) echo "LEAKED git hint (unexpected)" ;;
+  *) echo "no: git's own diagnostic is not repeated" ;;
+esac
+
+echo
 echo "--- 8. no bundled or global fallback exists after a refusal ---"
 printf '\n$ ls <FIRSTMATE-CODE-ROOT>/skills/pause-and-learn\n'
 if [ -e "$ROOT/skills/pause-and-learn" ]; then echo "PRESENT (unexpected)"; else
@@ -106,7 +204,7 @@ printf '[exit %s]  # resolves with no network reachable\n' "$netrc"
 echo
 echo "--- 10. the captain's real registered home, real required merge 29099a5f... ---"
 echo "     (paths redacted: a Firstmate home layout is private machine data)"
-REALHOME=${FM_HOME:-}
+REALHOME=${2:-${FM_HOME:-$HOME/firstmate}}
 if [ -r "$REALHOME/data/projects.md" ]; then
   printf '\n$ FM_HOME=<CAPTAIN-FM_HOME> bin/fm-shared-brain-skill.sh pause-and-learn\n'
   set +e

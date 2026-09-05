@@ -3,7 +3,7 @@
 
 --- 1. registered, clean, at or above the required merge ---
 
-$ env FM_HOME=<HOME-ROOT>/good FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=0849d59d1a01cb4834971eaba1a6ee0391cbba48 bin/fm-shared-brain-skill.sh pause-and-learn
+$ env FM_HOME=<HOME-ROOT>/good FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=128453953f00e9cd861b5f3e7525deea9cb043c3 bin/fm-shared-brain-skill.sh pause-and-learn
 <HOME-ROOT>/good/projects/shared-brain/skills/pause-and-learn/SKILL.md
 [exit 0]  # resolves the authoritative source, absolute path on stdout
 
@@ -12,6 +12,13 @@ $ env FM_HOME=<HOME-ROOT>/good FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT
 $ cd <HOME-ROOT> && FM_HOME=good bin/fm-shared-brain-skill.sh pause-and-learn
 <HOME-ROOT>/good/projects/shared-brain/skills/pause-and-learn/SKILL.md
 [exit 0]  # the path stays absolute, so the agent can follow it in place
+
+--- 2b. the stub's own instruction: run it from the code root, no FM_HOME set ---
+     (an installed Firstmate home IS the code root, so this is the ordinary case)
+
+$ cd <installed Firstmate home> && bin/fm-shared-brain-skill.sh pause-and-learn
+<HOME-ROOT>/installed/projects/shared-brain/skills/pause-and-learn/SKILL.md
+[exit 0]  # discovery needs no environment at all in an installed home
 
 --- 3. no shared-brain registration in this home ---
 
@@ -27,7 +34,7 @@ error: clone the registered shared-brain project into this Firstmate home's proj
 
 --- 5. local copy has uncommitted edits ---
 
-$ env FM_HOME=<HOME-ROOT>/dirty FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=0849d59d1a01cb4834971eaba1a6ee0391cbba48 bin/fm-shared-brain-skill.sh pause-and-learn
+$ env FM_HOME=<HOME-ROOT>/dirty FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=128453953f00e9cd861b5f3e7525deea9cb043c3 bin/fm-shared-brain-skill.sh pause-and-learn
 error: clean the shared-brain local copy before loading /pause-and-learn so its source identity is unambiguous
 [exit 1]  # stops with the cleanliness prerequisite
 
@@ -39,9 +46,37 @@ error: update the registered shared-brain local copy to include merge 29099a5f40
 
 --- 7. clone git cannot read (interrupted clone inside a Firstmate home repo) ---
 
-$ env FM_HOME=<HOME-ROOT>/nested FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=0849d59d1a01cb4834971eaba1a6ee0391cbba48 bin/fm-shared-brain-skill.sh pause-and-learn
+$ env FM_HOME=<HOME-ROOT>/nested FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=128453953f00e9cd861b5f3e7525deea9cb043c3 bin/fm-shared-brain-skill.sh pause-and-learn
 error: repair or re-clone this Firstmate home's projects/shared-brain so git can read it before loading /pause-and-learn
 [exit 1]  # stops with the repair prerequisite, never answered by the surrounding home repo
+
+
+--- 7a. git could only partly inspect the copy (warns, reports nothing, exits 0) ---
+     an unreadable subdirectory makes 'clean' and 'uninspectable' look identical
+
+$ # git status warns on stderr, prints nothing on stdout, exits 0
+$ PATH=<stub-git>:$PATH FM_HOME=<HOME-ROOT>/partly-inspectable bin/fm-shared-brain-skill.sh pause-and-learn
+error: repair or re-clone this Firstmate home's projects/shared-brain so git can read it before loading /pause-and-learn
+[exit 1]  # refused as uninspectable, NOT accepted as clean
+$ # was it mislabeled as merely dirty, or did the git diagnostic leak?
+no: an uninspectable copy takes the repair prerequisite, not the cleanliness one
+no: git's own warning naming a path in the copy is not repeated
+
+--- 7b. no usable temporary directory (clone itself is clean and current) ---
+
+$ env TMPDIR=<HOME-ROOT>/absent-tmpdir FM_HOME=<HOME-ROOT>/partly-inspectable FM_TESTING=1 FM_TEST_SHARED_BRAIN_REQUIRED_COMMIT=128453953f00e9cd861b5f3e7525deea9cb043c3 bin/fm-shared-brain-skill.sh pause-and-learn
+error: make a writable temporary directory available before loading /pause-and-learn: inspecting the shared-brain local copy needs one
+[exit 1]  # blames the temporary directory, not the clone, and does not echo TMPDIR back
+
+--- 7c. refusals never echo the captain's private home layout back ---
+     git's own fatal names absolute paths inside the home; the refusal must not
+
+$ # underlying git emits: fatal: detected dubious ownership in repository at <private path>
+error: repair or re-clone this Firstmate home's projects/shared-brain so git can read it before loading /pause-and-learn
+[exit 1]  # only the one-line prerequisite reaches the captain
+$ # does the refusal contain the private path git named?
+no: the private home path git printed does not appear in the refusal
+no: git's own diagnostic is not repeated
 
 --- 8. no bundled or global fallback exists after a refusal ---
 

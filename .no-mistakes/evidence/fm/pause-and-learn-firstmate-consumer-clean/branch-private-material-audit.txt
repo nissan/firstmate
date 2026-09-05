@@ -1,6 +1,6 @@
 objects reachable from HEAD but not origin/main:
-  10 commits, 68 total objects (commits+trees+blobs)
-  27 blobs scanned
+  14 commits, 88 total objects (commits+trees+blobs)
+  34 blobs scanned
 
 leak checks over blob contents, introduced path names, and commit messages
 (git authorship metadata is the change's expected author and is not scanned):

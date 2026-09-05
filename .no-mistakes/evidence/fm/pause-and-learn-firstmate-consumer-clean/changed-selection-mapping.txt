@@ -1,0 +1,13 @@
+=== changed-file test selection for the /pause-and-learn integration ===
+--- edit .agents/skills/pause-and-learn/SKILL.md (the captain-invocable routing stub) ---
+$ bin/fm-test-run.sh --list --changed --base HEAD
+tests/fm-pause-and-learn-inventory.test.sh
+tests/fm-shared-brain-skill.test.sh
+--- edit bin/fm-shared-brain-skill.sh (the discovery resolver) ---
+$ bin/fm-test-run.sh --list --changed --base HEAD
+tests/fm-pause-and-learn-inventory.test.sh
+tests/fm-shared-brain-skill.test.sh
+
+[both owned files select fm-shared-brain-skill.test.sh (behavior) and
+ fm-pause-and-learn-inventory.test.sh (ownership/privacy), so neither the
+ resolver's contract nor the stub's one-owner inventory can change unguarded]
