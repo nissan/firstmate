@@ -340,9 +340,14 @@ if [ "$STEAL_LIVE" = 1 ]; then
   # explicitly accepted here, but only as a BOUNDED one: the restore backstop
   # must have put the anchor back exactly, and the whole exposure must end with
   # the operation rather than parking the captain somewhere else.
-  [ "$C_WRONG" -ge 1 ] \
-    || fail 'Part C reached the fallback on a defective release but observed no wrong-focus sample at all, so the sampler proved nothing'
-  pass "fallback on a defective release: a bounded wrong-focus window of $C_WRONG samples was fully restored to the anchor"
+  # That window is shorter than one sampler cycle on a loaded machine, so
+  # whether the sampler lands inside it is a race and cannot be asserted. The
+  # deterministic evidence is the corrective focus the adapter itself had to
+  # issue: the restore backstop only calls tab focus when it observed focus off
+  # the pre-operation anchor, exactly as Part B asserts on this same release.
+  grep -q '^tab focus' "$C_CALL_LOG" \
+    || fail 'Part C reached the fallback on a defective release without the corrective focus restore, so no wrong-focus window was bounded'
+  pass "fallback on a defective release: the restore backstop bounded the wrong-focus window (sampler caught $C_WRONG of it) and put the anchor back"
 else
   [ "$C_WRONG" -eq 0 ] \
     || fail "a focus-preserving release exposed $C_WRONG wrong-focus samples on the fallback path"
