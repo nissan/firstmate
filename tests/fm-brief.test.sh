@@ -846,7 +846,6 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
-<<<<<<< HEAD
 # A scout must write its report incrementally, so an interrupted run still
 # leaves evidence, and must not report a terminal state without one.
 test_scout_report_is_incremental_and_gates_terminal_status() {
@@ -885,7 +884,6 @@ test_briefs_require_absolute_path_reads() {
   pass "fm-brief.sh: ship and scout briefs require absolute-path reads"
 }
 
-=======
 test_worker_role_scope() {
   local kind home brief
   home="$TMP_ROOT/worker-role"
@@ -909,7 +907,6 @@ test_worker_role_scope() {
 }
 
 test_worker_role_scope
->>>>>>> upstream/main
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header

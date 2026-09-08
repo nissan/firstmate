@@ -41,7 +41,6 @@
 # already present in the up-to-date default branch. This recognizes the common
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
 # on a remote yet the change is fully in main.
-<<<<<<< HEAD
 # "Reachable from any remote-tracking branch" is checked against the ACTUAL
 # remote, not just this worktree's cached refs/remotes/* - a no-mistakes run
 # commits and pushes from its own pipeline copy, never fetching back into this
@@ -50,7 +49,6 @@
 # ls-remote) before trusting that cache, and fails safe: a remote it cannot
 # verify at all refuses exactly like genuinely unlanded work, never like landed
 # work.
-=======
 # Squash merges collapse the branch's commits, so per-commit patch ids against main
 # no longer match, and a pipeline rebase can leave the local worktree diverged from
 # the PR head. A diverged copy is not treated as landed: path-set coverage, git
@@ -58,7 +56,6 @@
 # accepting unlanded edits to the same paths. Teardown still accepts a merged PR
 # whose head contains the current local work (ancestor or equivalent patch ids),
 # or a clean content-in-default tree match. Anything else refuses.
->>>>>>> upstream/main
 # The PR itself is resolved from the task's recorded pr= when present, or - when
 # no pr= was ever recorded (e.g. a yolo-authorized merge on a repo with no PR CI,
 # where the usual "checks green" fm-pr-check.sh trigger never fires) - by looking

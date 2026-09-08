@@ -44,18 +44,15 @@
 #   (o) fm-pr-check rerun after HEAD moved                      -> no stale pr_head
 #   (p) fm-pr-check when local HEAD lags                        -> record remote PR head
 #   (q) no-mistakes + NO pr= recorded, PR discovered by branch  -> ALLOW  (yolo/no-CI merge)
-<<<<<<< HEAD
 #   (z1) no-mistakes + branch pushed via a separate pipeline clone, this
 #        worktree's own remote-tracking ref never refreshed          -> ALLOW  (stale-ref fix)
 #   (z2) no-mistakes + truly unpushed, origin reachable and checked   -> REFUSE (safety preserved)
 #   (z3) no-mistakes + branch pushed via a separate clone, but the
 #        remote cannot be verified at all (ls-remote fails)           -> REFUSE (fail-safe)
-=======
 #   (q2) no-mistakes + squash-merged, local followed pipeline rebase -> ALLOW
 #   (q3) no-mistakes + squash-merged, same file, different content   -> REFUSE
 #   (q4) no-mistakes + squash-merged rebased local plus extra commit -> REFUSE
 #   (q5) gh down + squash-merged stale local, content not in default -> REFUSE
->>>>>>> upstream/main
 #
 # Also covers backlog teardown-lock-race: a git index.lock left in the worktree by a
 # killed crew process (bin/fm-teardown.sh's teardown_treehouse_return).
