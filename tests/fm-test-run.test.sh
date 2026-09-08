@@ -25,8 +25,8 @@ test_list_all_exact_suite_coverage() {
     done | LC_ALL=C sort
   )
   [ -n "$listed" ] || fail "--list --all printed nothing"
-  missing=$(comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$listed") || true)
-  extra=$(comm -13 <(printf '%s\n' "$expected") <(printf '%s\n' "$listed") || true)
+  missing=$(LC_ALL=C comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$listed") || true)
+  extra=$(LC_ALL=C comm -13 <(printf '%s\n' "$expected") <(printf '%s\n' "$listed") || true)
   [ -z "$missing" ] || fail "--list --all missing scripts: $missing"
   [ -z "$extra" ] || fail "--list --all unexpected scripts: $extra"
   # No duplicates.
@@ -105,6 +105,8 @@ init_changed_fixture_repo() {
     fm-harness-adapter-references.test.sh \
     fm-backend-herdr-smoke.test.sh \
     fm-secondmate-safety.test.sh \
+    fm-shared-brain-skill.test.sh \
+    fm-pause-and-learn-inventory.test.sh \
     fm-session-start.test.sh \
     fm-afk-pi-herdr-return-e2e.test.sh \
     fm-backend.test.sh \
@@ -130,6 +132,7 @@ init_changed_fixture_repo() {
   : >"$repo/bin/fm-procevent-quota.sh"
   : >"$repo/bin/fm-quota-axi-lib.sh"
   : >"$repo/bin/fm-quota-choose.sh"
+  : >"$repo/bin/fm-shared-brain-skill.sh"
   : >"$repo/bin/unmapped-source.sh"
   # A shared helper with no curated family of its own, named by exactly ONE
   # script of the expensive real-Herdr family and consumed by one curated
@@ -145,9 +148,11 @@ init_changed_fixture_repo() {
   printf '# .pi/extensions/fm-primary-pi-watch.ts\n' >>"$repo/tests/fm-pi-watch-extension.test.sh"
   mkdir -p \
     "$repo/.agents/skills/example" \
+    "$repo/.agents/skills/pause-and-learn" \
     "$repo/.agents/skills/harness-adapters/references/common" \
     "$repo/.claude" "$repo/.pi/extensions" "$repo/docs" "$repo/src"
   : >"$repo/.agents/skills/example/SKILL.md"
+  : >"$repo/.agents/skills/pause-and-learn/SKILL.md"
   : >"$repo/.agents/skills/harness-adapters/SKILL.md"
   : >"$repo/.agents/skills/harness-adapters/references/common/dispatch.md"
   : >"$repo/.claude/settings.json"
@@ -365,6 +370,28 @@ test_changed_dependency_selection_and_unmapped_failure() {
     "shared quota validator selects chooser coverage"
   git -C "$repo" add bin/fm-quota-axi-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm quota-validator-change
+
+  printf '\n' >>"$repo/bin/fm-shared-brain-skill.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-shared-brain-skill.test.sh" \
+    "shared-brain skill resolver selects its discovery and refusal test"
+  assert_contains "$listed" "tests/fm-pause-and-learn-inventory.test.sh" \
+    "shared-brain skill resolver selects its ownership inventory test"
+  assert_not_contains "$listed" "tests/fm-secondmate-safety.test.sh" \
+    "shared-brain skill resolver must not select the unrelated secondmate family"
+  git -C "$repo" add bin/fm-shared-brain-skill.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm shared-brain-skill-change
+
+  printf '\n' >>"$repo/.agents/skills/pause-and-learn/SKILL.md"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-pause-and-learn-inventory.test.sh" \
+    "the discovery stub selects the ownership guard that polices its own directory"
+  assert_contains "$listed" "tests/fm-shared-brain-skill.test.sh" \
+    "the discovery stub selects the resolver it routes to"
+  assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" \
+    "the discovery stub keeps the generic skill contract coverage"
+  git -C "$repo" add .agents/skills/pause-and-learn/SKILL.md
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm pause-and-learn-stub-change
 
   printf '\n' >>"$repo/bin/fm-control-lib.sh"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
@@ -971,7 +998,7 @@ test_portable_shard_union_and_coverage_guard() {
   herdr=$("$RUNNER" --list --family real-herdr-gated)
   [ -n "$s1" ] && [ -n "$s2" ] || fail "portable parallel shards must be non-empty"
   # Shards disjoint.
-  overlap=$(comm -12 <(printf '%s\n' "$s1" | LC_ALL=C sort) <(printf '%s\n' "$s2" | LC_ALL=C sort) || true)
+  overlap=$(LC_ALL=C comm -12 <(printf '%s\n' "$s1" | LC_ALL=C sort) <(printf '%s\n' "$s2" | LC_ALL=C sort) || true)
   [ -z "$overlap" ] || fail "portable parallel shards overlap: $overlap"
   # Union of shards equals proven-isolated.
   [ "$(printf '%s\n' "$s1" "$s2" | LC_ALL=C sort -u)" = \
@@ -984,6 +1011,23 @@ test_portable_shard_union_and_coverage_guard() {
     || fail "herdr family must include smoke"
   out=$("$RUNNER" --check-coverage)
   assert_contains "$out" "FM_TEST_COVERAGE ok" "coverage guard success marker"
+  # The guard builds every lane listing with LC_ALL=C sort, so its set
+  # comparisons must read them back under the same collation. Under a locale
+  # that collates punctuation differently (en_US.UTF-8 orders fm-backend.test.sh
+  # after fm-backend-tmux-smoke.test.sh, C orders it last), an unpinned comm
+  # rejected the guard's own C-sorted input and failed a correct partition.
+  # Probe for such a locale rather than naming one, and skip where none exists.
+  local loc c_order alt_order
+  c_order=$(printf 'a-c\nab\n' | LC_ALL=C sort)
+  while IFS= read -r loc; do
+    alt_order=$(printf 'a-c\nab\n' | LC_ALL="$loc" sort 2>/dev/null) || continue
+    [ "$alt_order" != "$c_order" ] || continue
+    out=$(LC_ALL="$loc" "$RUNNER" --check-coverage) \
+      || fail "coverage guard must not depend on the ambient collation locale ($loc)"
+    assert_contains "$out" "FM_TEST_COVERAGE ok" \
+      "coverage guard success marker under $loc"
+    break
+  done <<<"$(locale -a 2>/dev/null || true)"
   all_count=$("$RUNNER" --list --all | wc -l | tr -d ' ')
   union_count=$(printf '%s\n' "$s1" "$s2" "$serial" "$herdr" | LC_ALL=C sort -u | wc -l | tr -d ' ')
   [ "$union_count" = "$all_count" ] \
