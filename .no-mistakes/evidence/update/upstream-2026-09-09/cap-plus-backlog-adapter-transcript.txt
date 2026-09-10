@@ -1,0 +1,29 @@
+=== home with 2 live worker(s), default cap, markdown backlog adapter pinned in .tasks.toml
+$ tasks-axi show demo-under-new   # before
+  state: queued
+$ fm-spawn.sh demo-under-new <project> --mode local-only --yolo off
+warning: <home>/data/demo-under-new/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+spawned demo-under-new harness=claude kind=ship mode=local-only yolo=off window=firstmate:fm-demo-under-new worktree=/tmp/fm-crew-cap.Rz3aqI/demo-under/wt
+[exit 0]
+$ cat config/crew-concurrency-cap
+  3
+$ tasks-axi show demo-under-new   # after
+  state: in_flight
+  state/demo-under-new.meta: present
+
+=== home with 3 live worker(s), default cap, markdown backlog adapter pinned in .tasks.toml
+$ tasks-axi show demo-over-new   # before
+  state: queued
+$ fm-spawn.sh demo-over-new <project> --mode local-only --yolo off
+error: spawn refused: this home already has 3 worker(s) running and its cap is 3 (config/crew-concurrency-cap):
+demo-over-live1 (backend=tmux window=firstmate:fm-demo-over-live1)
+demo-over-live2 (backend=tmux window=firstmate:fm-demo-over-live2)
+demo-over-live3 (backend=tmux window=firstmate:fm-demo-over-live3)
+Finish or tear one down, raise the cap, or re-run with FM_CREW_CAP_OVERRIDE=1 to spawn past it.
+[exit 1]
+$ cat config/crew-concurrency-cap
+  3
+$ tasks-axi show demo-over-new   # after
+  state: queued
+  state/demo-over-new.meta: absent
+
