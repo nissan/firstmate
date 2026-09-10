@@ -184,6 +184,8 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   cp "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/fm-hook-host-lib.sh"
+  cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"
+  cp "$ROOT/bin/fm-cursor-lib.sh" "$dir/bin/fm-cursor-lib.sh"
   mkdir -p "$dir/docs"
   cp -R "$ROOT/docs/supervision-protocols" "$dir/docs/supervision-protocols"
   chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh"
@@ -1865,6 +1867,82 @@ make_away_home_between_cycles() {  # <dir-path>
   printf '%s\n' "$dir"
 }
 
+# The 2026-09-10 incident regression: a Claude session whose home lock was held
+# by a LIVE Codex app-server (not in the Claude session's ancestry) was blocked
+# 15+ consecutive turns. bin/fm-claude-stop-autoarm.sh is inert there by
+# identity, so no failed epoch is ever recorded, the budget never advances past
+# count=1 for the unchanged epoch, and the attended fail-open is unreachable;
+# Claude Code desktop 2.1.260's own 8-block override did not fire either. The
+# guard must stand down for a live foreign lock owner with one notice per
+# (session, owner), and must NOT stand down for a dead or non-harness owner.
+start_fake_harness() {  # <dir> <name> ; prints pid of a live fake harness
+  local dir=$1 name=$2
+  ln -sf /bin/bash "$dir/$name"
+  # Two commands, so bash stays resident as the named process instead of
+  # exec-ing sleep in place of itself; ps then reports the harness-shaped name.
+  # Detach stdio: callers capture this function's output, and a background
+  # child holding that pipe open would make the capture wait for it to exit.
+  "$dir/$name" -c 'sleep 60; exit 0' >/dev/null 2>&1 &
+  printf '%s\n' "$!"
+}
+
+test_hook_claude_mode_stands_down_for_live_foreign_lock_owner() {
+  local dir pid out out2 out3 out4 status status2 status3 status4
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-foreign-owner")
+  : > "$dir/state/task1.meta"
+  pid=$(start_fake_harness "$dir" fake-codex)
+  printf '%s\n' "$pid" > "$dir/state/.lock"
+  # A leftover budget record from the unbounded incident shape must not matter.
+  seed_claude_budget "$dir" 1 197
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status=$?
+  out2=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status2=$?
+  out3=$(printf '{"stop_hook_active":true,"session_id":"sess-other"}' \
+    | CLAUDECODE=1 FM_HOME="$dir" bash "$dir/bin/fm-turnend-guard.sh" --claude 2>&1); status3=$?
+  out4=$(run_hook "$dir" false); status4=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "--claude must stand down when a live foreign harness holds the home lock"
+  assert_contains "$out" 'systemMessage' "foreign-owner stand-down must carry one stdout notice"
+  assert_contains "$out" 'TURN-END GUARD STANDING DOWN' "foreign-owner notice must name the stand-down"
+  assert_contains "$out" "pid $pid" "foreign-owner notice must name the live owner pid"
+  assert_contains "$out" 'fake-codex' "foreign-owner notice must name the owner process"
+  assert_not_contains "$out" 'TURN WOULD END BLIND' "foreign-owner stand-down must not print the block banner"
+  expect_code 0 "$status2" "repeated foreign-owner stop must keep standing down"
+  [ -z "$out2" ] || fail "foreign-owner notice repeated for the same session and owner: $out2"
+  expect_code 0 "$status3" "another session in the same home must also stand down"
+  assert_contains "$out3" 'systemMessage' "a different session must get its own one notice"
+  expect_code 2 "$status4" "default (codex) mode is untouched by the --claude foreign-owner stand-down"
+  assert_contains "$out4" 'TURN WOULD END BLIND' "default-mode block lost its banner under a foreign owner"
+  [ "$(sed -n '2s/^count=//p' "$dir/state/.turnend-claude-blocks")" = 1 ] \
+    || fail "foreign-owner stand-down must not touch the block budget"
+  assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "foreign-owner stand-down recorded an attended alarm"
+  pass "fm-turnend-guard --claude: a live foreign lock owner bounds the guard to one notice (incident regression)"
+}
+
+test_hook_claude_mode_dead_or_non_harness_lock_owner_still_blocks() {
+  local dead alien pid out status
+  dead=$(make_primary_dir "$TMP_ROOT/hook-claude-dead-owner")
+  : > "$dead/state/task1.meta"
+  nonexistent_pid > "$dead/state/.lock"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dead" true); status=$?
+  expect_code 2 "$status" "a dead lock owner is the auto-arm's own recovery case and must still block"
+  assert_contains "$out" 'TURN WOULD END BLIND' "dead-owner stop lost the block banner"
+  assert_absent "$dead/state/.turnend-claude-foreign-owner" "dead lock owner recorded a foreign-owner notice"
+
+  alien=$(make_primary_dir "$TMP_ROOT/hook-claude-alien-owner")
+  : > "$alien/state/task1.meta"
+  sleep 60 &
+  pid=$!
+  printf '%s\n' "$pid" > "$alien/state/.lock"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$alien" true); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "a live pid that is not a verified harness is not a foreign owner and must still block"
+  assert_absent "$alien/state/.turnend-claude-foreign-owner" "non-harness lock owner recorded a foreign-owner notice"
+
+  pass "fm-turnend-guard --claude: dead or non-harness lock owners keep the cooperative re-block"
+}
+
 test_hook_away_daemon_allows_between_watcher_cycles() {
   local dir pid out status
   dir=$(make_away_home_between_cycles "$TMP_ROOT/hook-afk-daemon-live")
@@ -2145,6 +2223,8 @@ test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open
 test_hook_claude_mode_allow_resets_budget
 test_hook_claude_mode_waits_for_late_claim
 test_hook_claude_mode_secondmate_reblocks_like_primary
+test_hook_claude_mode_stands_down_for_live_foreign_lock_owner
+test_hook_claude_mode_dead_or_non_harness_lock_owner_still_blocks
 test_hook_away_daemon_allows_between_watcher_cycles
 test_hook_away_daemon_allows_over_dead_watcher_lock
 test_hook_away_mode_blocks_without_any_supervisor

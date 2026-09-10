@@ -8,6 +8,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$REPO_ROOT}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DOC_DIR="$REPO_ROOT/docs/supervision-protocols"
 
 HARNESS=
@@ -194,6 +195,44 @@ ordinary_wake_line() {
   esac
 }
 
+# The "Lock:" stanza reflects bin/fm-lock.sh status plus this process's own
+# harness ancestry, never the caller's assumption. --read-only 1 is the
+# session-start refusal and always wins; otherwise "held by this session" is
+# printed only when the recorded owner is a live harness pid in THIS process's
+# ancestry. A lock held by another live harness (the 2026-09-10 case: a Codex
+# app-server owning the home a Claude session was started in) renders as
+# foreign, and a free or stale lock says so, because a session that reads
+# "held by this session" while it is not the owner will try to repair
+# supervision it cannot repair.
+lock_line() {
+  local status
+  if [ "$READ_ONLY" -eq 1 ]; then
+    printf '%s\n' '- Lock: read-only; do not drain, arm, spawn, steer, merge, or repair fleet state here.'
+    return 0
+  fi
+  status=$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-lock.sh" status 2>/dev/null) || status=''
+  case "$status" in
+    'lock: held by live harness pid '*)
+      # shellcheck source=bin/fm-session-lock-lib.sh
+      if [ -f "$SCRIPT_DIR/fm-session-lock-lib.sh" ] \
+        && ( . "$SCRIPT_DIR/fm-session-lock-lib.sh" && fm_session_lock_owned_by_self "$STATE" ) 2>/dev/null; then
+        printf '%s\n' '- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.'
+      else
+        printf -- '- Lock: held by another live session (pid %s); that session owns supervision here - operate read-only and do not drain, arm, spawn, steer, merge, or repair fleet state.\n' "${status##* }"
+      fi
+      ;;
+    'lock: free')
+      printf '%s\n' '- Lock: free; this session has not acquired the fleet lock, so it does not own supervision until bin/fm-lock.sh succeeds.'
+      ;;
+    'lock: stale'*)
+      printf -- '- Lock: %s; this session does not own supervision until bin/fm-lock.sh reclaims it.\n' "${status#lock: }"
+      ;;
+    *)
+      printf '%s\n' '- Lock: status unknown (bin/fm-lock.sh status unavailable); treat this session as not owning supervision until verified.'
+      ;;
+  esac
+}
+
 if [ "$REPAIR_LINE" -eq 1 ]; then
   repair_line
   exit 0
@@ -204,11 +243,7 @@ printf '%s\n' "$RULE"
 printf 'SUPERVISION OPERATING INSTRUCTIONS - primary harness: %s\n' "$HARNESS"
 printf '%s\n' "$RULE"
 printf 'Current state:\n'
-if [ "$READ_ONLY" -eq 1 ]; then
-  printf '%s\n' '- Lock: read-only; do not drain, arm, spawn, steer, merge, or repair fleet state here.'
-else
-  printf '%s\n' '- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.'
-fi
+lock_line
 if [ "$AFK" -eq 1 ]; then
   printf '%s\n' '- Away mode: active; load /afk and keep normal harness supervision paused while the daemon owns the watcher.'
 else
