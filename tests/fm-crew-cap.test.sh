@@ -397,6 +397,64 @@ EOF
   pass "fm-spawn: a broken cap surface warns and never blocks a spawn"
 }
 
+# add_backlog_item <home> <id>
+# Gives a spawn home a real markdown backlog, pins its adapter so the ambient
+# tasks-axi config cannot select another path, and queues <id> in it.
+add_backlog_item() {
+  local home=$1 id=$2
+  printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' \
+    > "$home/data/backlog.md"
+  printf '%s\n' 'backend = "markdown"' '' '[markdown]' 'path = "data/backlog.md"' \
+    > "$home/.tasks.toml"
+  tasks-axi add "$id" "item for $id" --kind ship --file "$home/data/backlog.md" >/dev/null \
+    || fail "could not queue backlog item $id"
+}
+
+backlog_row_state() {  # <home> <id>
+  tasks-axi show "$2" --file "$1/data/backlog.md" 2>/dev/null |
+    sed -n 's/^  state: *//p' | head -1
+}
+
+# The cap and the backlog lifecycle transition share one spawn path. A spawn the
+# cap admits must still move its configured-adapter row In flight, and a spawn
+# the cap refuses must leave that row exactly where it was.
+test_cap_and_backlog_adapter_transition_share_one_spawn() {
+  local rec home wt fakebin proj out status unset_backend
+  command -v tasks-axi >/dev/null 2>&1 || {
+    printf 'ok - skipped (tasks-axi is not installed; the backlog transition is inert without it)\n'
+    return 0
+  }
+  unset_backend=(-u TASKS_AXI_BACKEND)
+
+  rec=$(make_spawn_home backlog-under 2)
+  IFS='|' read -r home wt fakebin proj <<EOF
+$rec
+EOF
+  add_backlog_item "$home" backlog-under-new
+  [ "$(backlog_row_state "$home" backlog-under-new)" = queued ] \
+    || fail "the admitted item must start queued, or this case proves nothing"
+  out=$(run_capped_spawn "$home" "$wt" "$fakebin" "$proj" backlog-under-new "${unset_backend[@]}")
+  status=$?
+  expect_code 0 "$status" "an under-cap spawn with a backlog item must succeed: $out"
+  assert_contains "$out" "spawned backlog-under-new" "the under-cap spawn did not report success"
+  [ "$(backlog_row_state "$home" backlog-under-new)" = in_flight ] \
+    || fail "an admitted spawn left its backlog item $(backlog_row_state "$home" backlog-under-new)"
+
+  rec=$(make_spawn_home backlog-over 3)
+  IFS='|' read -r home wt fakebin proj <<EOF
+$rec
+EOF
+  add_backlog_item "$home" backlog-over-new
+  out=$(run_capped_spawn "$home" "$wt" "$fakebin" "$proj" backlog-over-new "${unset_backend[@]}")
+  status=$?
+  [ "$status" -ne 0 ] || fail "a fourth worker past the cap must be refused even with a backlog item: $out"
+  assert_contains "$out" "spawn refused" "the refusal must say the spawn was refused"
+  assert_absent "$home/state/backlog-over-new.meta" "a refused spawn must not create task state"
+  [ "$(backlog_row_state "$home" backlog-over-new)" = queued ] \
+    || fail "a refused spawn moved its backlog item to $(backlog_row_state "$home" backlog-over-new)"
+  pass "fm-spawn: the cap and the configured backlog adapter transition coexist on one spawn"
+}
+
 test_absent_cap_file_uses_and_publishes_the_default
 test_only_verified_live_local_workers_are_counted
 test_established_count_refuses_and_losing_a_signal_never_does
@@ -404,3 +462,4 @@ test_no_unsafe_or_malformed_cap_surface_can_refuse
 test_spawn_permits_under_the_cap_and_refuses_past_it
 test_documented_override_spawns_past_the_cap_loudly
 test_a_broken_cap_surface_never_blocks_a_spawn
+test_cap_and_backlog_adapter_transition_share_one_spawn
