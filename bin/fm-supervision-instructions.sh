@@ -210,7 +210,11 @@ lock_line() {
     printf '%s\n' '- Lock: read-only; do not drain, arm, spawn, steer, merge, or repair fleet state here.'
     return 0
   fi
-  status=$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-lock.sh" status 2>/dev/null) || status=''
+  if [ ! -d "$STATE" ]; then
+    status='lock: free'
+  else
+    status=$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-lock.sh" status 2>/dev/null) || status=''
+  fi
   case "$status" in
     'lock: held by live harness pid '*)
       # shellcheck source=bin/fm-session-lock-lib.sh

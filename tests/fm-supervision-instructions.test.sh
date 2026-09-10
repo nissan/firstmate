@@ -46,7 +46,13 @@ test_conditional_stanzas() {
 # ancestry, never the caller's assumption: on 2026-09-10 a Claude session in a
 # home whose lock a live Codex app-server held was told "held by this session".
 test_lock_stanza_reflects_lock_status() {
-  local home out pid own
+  local home out pid own fresh
+  fresh="$TMP_ROOT/lock-home-nostate"
+  mkdir -p "$fresh/config"
+  out=$(FM_HOME="$fresh" "$RENDER" --harness claude)
+  assert_contains "$out" "- Lock: free" "a home with no state dir did not render a free lock"
+  assert_absent "$fresh/state" "rendering supervision text created the state directory"
+
   home="$TMP_ROOT/lock-home"
   mkdir -p "$home/state" "$home/config"
   out=$(FM_HOME="$home" "$RENDER" --harness claude)
