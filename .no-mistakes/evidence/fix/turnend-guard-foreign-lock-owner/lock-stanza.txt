@@ -1,0 +1,39 @@
+==============================================================================
+  Session-start 'Current state:' block - the '- Lock:' line the session reads
+==============================================================================
+------------------------------------------------------------------------------
+SCENARIO: no lock file at all (nobody holds the home)
+  BEFORE : - Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+  AFTER  : - Lock: free; this session has not acquired the fleet lock, so it does not own supervision until bin/fm-lock.sh succeeds.
+------------------------------------------------------------------------------
+SCENARIO: lock held by a LIVE foreign harness, pid 5126 (the 2026-09-10 incident shape)
+  BEFORE : - Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+  AFTER  : - Lock: held by another live session (pid 5126); that session owns supervision here - operate read-only and do not drain, arm, spawn, steer, merge, or repair fleet state.
+------------------------------------------------------------------------------
+SCENARIO: same lock file, owner now dead (stale lock)
+  BEFORE : - Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+  AFTER  : - Lock: stale (pid 5126 dead or not a harness); this session does not own supervision until bin/fm-lock.sh reclaims it.
+------------------------------------------------------------------------------
+SCENARIO: --read-only 1 refusal still wins
+  BEFORE : - Lock: read-only; do not drain, arm, spawn, steer, merge, or repair fleet state here.
+  AFTER  : - Lock: read-only; do not drain, arm, spawn, steer, merge, or repair fleet state here.
+------------------------------------------------------------------------------
+SCENARIO: lock held by THIS session's own harness ancestor (the genuine owner)
+  BEFORE : - Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+  AFTER  : - Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+------------------------------------------------------------------------------
+
+Full AFTER session-start block in the incident shape (live foreign owner):
+
+================================================================================
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+================================================================================
+Current state:
+- Lock: held by another live session (pid 5422); that session owns supervision here - operate read-only and do not drain, arm, spawn, steer, merge, or repair fleet state.
+- Away mode: inactive.
+- X mode: inactive; use the default watcher cadence.
+- Ordinary wake: the Stop-owned auto-arm (bin/fm-claude-stop-autoarm.sh) already owns watcher continuity; drain and handle the wake, and do not arm another cycle yourself.
+
+Mode: Claude Stop-hook-owned supervision.
+
+When this session owns supervision and away mode is not active:

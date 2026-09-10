@@ -1,0 +1,69 @@
+==============================================================================
+  BEFORE the fix (base c6e8bd0c967b397c4e67b0e107028ec166f8b59c) - the incident
+  home lock owner: pid 78954 (live 'fake-codex' harness, foreign to this session)
+==============================================================================
+--- turn 1: hook exit=2 (TURN BLOCKED - session forced to continue) ---
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher holds this home lock (last beat: never).
+●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+--- turn 2: hook exit=2 (TURN BLOCKED - session forced to continue) ---
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher holds this home lock (last beat: never).
+●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+... turns 3-14 elided ...
+
+--- turn 15: hook exit=2 (TURN BLOCKED - session forced to continue) ---
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher holds this home lock (last beat: never).
+●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+>> over 15 consecutive turn-ends: 15 blocked, 0 allowed, 15 carried output
+>> block budget ledger state/.turnend-claude-blocks:
+     session=sess-claude-desktop
+     count=16
+     epoch=
+
+==============================================================================
+  AFTER the fix (branch fix/turnend-guard-foreign-lock-owner)
+  home lock owner: pid 78954 (live 'fake-codex' harness, foreign to this session)
+==============================================================================
+--- turn 1: hook exit=0 (turn allowed to end) ---
+{"systemMessage":"FIRSTMATE TURN-END GUARD STANDING DOWN: this session does not hold this home's fleet lock - a live fake-codex process (pid 78954) does - so watcher supervision here is that session's responsibility and the Stop-owned auto-arm is inert in this session by design. Operate read-only in this home and do not arm a watcher yourself; this notice is shown once per session while that owner is alive."}
+
+--- turn 2: hook exit=0 (turn allowed to end) ---
+(no output shown to the session)
+
+... turns 3-14 elided ...
+
+--- turn 15: hook exit=0 (turn allowed to end) ---
+(no output shown to the session)
+
+>> over 15 consecutive turn-ends: 0 blocked, 15 allowed, 1 carried output
+>> block budget ledger state/.turnend-claude-blocks:
+     session=sess-claude-desktop
+     count=1
+     epoch=197
+
+==============================================================================
+  Negative control: the guard did NOT just go permissive
+==============================================================================
+--- same home, same pid, but the owner is now DEAD: hook exit=2 ---
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher holds this home lock (last beat: never).
+●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+>> dead owner => no stand-down ledger entry; the cooperative re-block is preserved

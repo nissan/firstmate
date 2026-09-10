@@ -1,0 +1,12 @@
+sess-A   turn-end -> exit=0  NOTICE shown to the session
+sess-A   turn-end -> exit=0  (silent)
+sess-B   turn-end -> exit=0  NOTICE shown to the session
+sess-A   turn-end -> exit=0  (silent)
+sess-B   turn-end -> exit=0  (silent)
+
+persisted ledger  state/.turnend-claude-foreign-owner:
+  session=sess-A owner=5587
+  session=sess-B owner=5587
+
+block budget untouched by the stand-down (state/.turnend-claude-blocks):
+  (never created - the guard never re-blocked)
