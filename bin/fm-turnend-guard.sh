@@ -291,7 +291,9 @@ block_stop() {
 # block this stand-down exists to end, not a recovery.
 # The notice ledger is append-only, one line per (session, owner), so several
 # non-owner sessions in one home each get their own single notice instead of
-# overwriting one another's record.
+# overwriting one another's record - except that sessions whose payload carries
+# no readable session_id all collapse onto the SESSION_ID fallback `unknown` and
+# share one record, a residual tracked as nissan/firstmate issue #7.
 FOREIGN_OWNER_NOTICE="$STATE/.turnend-claude-foreign-owner"
 foreign_owner_stand_down() {
   local lock_pid owner_desc record

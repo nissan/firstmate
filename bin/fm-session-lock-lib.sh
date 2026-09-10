@@ -3,9 +3,10 @@
 #
 # ONE owner of the "which verified-harness process holds this home's session
 # lock, and does the current process descend from that same harness?" decision.
-# bin/fm-lock.sh uses it to acquire and inspect state/.lock;
-# bin/fm-claude-stop-autoarm.sh uses it to prove a Stop hook fires inside the
-# lock-owning primary session before it may arm or rewake.
+# Every script that must prove who owns the home's session lock goes through it;
+# the two shapes are bin/fm-lock.sh, which acquires and inspects state/.lock, and
+# hooks such as bin/fm-claude-stop-autoarm.sh, which prove they fire inside the
+# lock-owning primary session before they may arm, rewake, or supervise.
 # This file is sourced by scripts and has no side effects on source.
 
 # Cursor process identity is NOT expressible as a command-name pattern and is
