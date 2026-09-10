@@ -133,6 +133,8 @@ The same equivalence covers an ancestry walk that cannot reach a genuine owner's
 An unwritable state directory degrades the once-per-session bound to a notice on every stop, never to a block or a loop.
 Supervision of that home is the lock owner's responsibility, which is what the read-only session-start block already tells the session; the `Lock:` stanza in that block is rendered from `bin/fm-lock.sh status` and the same ownership proof, so a session that is not the owner is told so rather than told it holds the lock.
 A dead, malformed, or missing lock is not this case: a stale owner is the auto-arm's own recovery path, a live pid that is not a verified harness proves nothing, and both keep the cooperative re-block above.
+The stand-down therefore covers the live-foreign-owner case, which is one of the states where the auto-arm is inert by identity, not every such state: a missing or malformed `state/.lock`, and a dead owner whose reclaim fails because this session's own ancestry cannot be resolved, leave the auto-arm equally inert yet deliberately keep the cooperative re-block, so they can still block without bound.
+That residual is tracked as a follow-up issue on nissan/firstmate.
 The default cross-harness mode is unchanged, because `stop_hook_active` already bounds it to one forced continuation per turn.
 
 OpenCode, Pi, and pi-signed expose passive callbacks for this purpose.

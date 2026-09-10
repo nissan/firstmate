@@ -46,7 +46,7 @@ test_conditional_stanzas() {
 # ancestry, never the caller's assumption: on 2026-09-10 a Claude session in a
 # home whose lock a live Codex app-server held was told "held by this session".
 test_lock_stanza_reflects_lock_status() {
-  local home out pid
+  local home out pid own
   home="$TMP_ROOT/lock-home"
   mkdir -p "$home/state" "$home/config"
   out=$(FM_HOME="$home" "$RENDER" --harness claude)
@@ -70,6 +70,16 @@ test_lock_stanza_reflects_lock_status() {
   assert_contains "$out" "- Lock: held by another live session (pid $pid)" "live foreign harness owner not rendered as another session"
   assert_contains "$out" "operate read-only" "foreign-owner lock stanza did not direct read-only operation"
   assert_not_contains "$out" "held by this session" "foreign live owner claimed session ownership"
+
+  own=$(bash -c '. "$1"; fm_harness_ancestry_pid' _ "$ROOT/bin/fm-session-lock-lib.sh" 2>/dev/null) || own=''
+  if [ -n "$own" ]; then
+    printf '%s\n' "$own" > "$home/state/.lock"
+    out=$(FM_HOME="$home" "$RENDER" --harness claude)
+    assert_contains "$out" "- Lock: held by this session" "a lock held by this session's own harness ancestor was not rendered as held by this session"
+    assert_not_contains "$out" "held by another live session" "the actual lock owner was told another session owns supervision"
+  else
+    pass "renderer Lock stanza owner case (skip: no verified harness in this process ancestry)"
+  fi
 
   out=$(FM_HOME="$home" "$RENDER" --harness claude --read-only 1)
   assert_contains "$out" "- Lock: read-only" "explicit read-only refusal must still win"

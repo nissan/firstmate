@@ -90,6 +90,13 @@
 #      budget never advances past its first count, and the attended fail-open
 #      is unreachable - the 2026-09-10 incident: a Claude session in a home
 #      whose lock a live Codex app-server held was blocked 15+ turns in a row.
+#      The stand-down covers that live-foreign-owner case, which is one of the
+#      states where the auto-arm is inert by identity - not every such state.
+#      A missing or malformed state/.lock, and a dead owner whose reclaim fails
+#      because this session's ancestry cannot be resolved, leave the auto-arm
+#      equally inert yet deliberately keep the cooperative re-block, so they
+#      can still block without bound; that residual is tracked as a follow-up
+#      issue on nissan/firstmate.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
