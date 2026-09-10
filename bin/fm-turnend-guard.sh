@@ -275,8 +275,11 @@ block_stop() {
 # already tells this session, so stand down like the Cursor and child-worktree
 # scope cases: exit 0, with one notice per (session, owner) on stdout.
 # stderr is deliberately not used - the harness discards it on exit 0.
-# A dead, malformed, or missing lock is NOT this case: the auto-arm recovers a
-# stale lock itself, so the cooperative path below still applies there.
+# A dead, malformed, or missing lock is NOT this case: a stale owner is the
+# auto-arm's own recovery path only when this session's ancestry resolves, and a
+# missing or malformed lock leaves the auto-arm inert with nothing to recover.
+# All of them keep the cooperative path below and so can still block without
+# bound - the deliberate residual tracked as nissan/firstmate issue #4.
 # The lock pid is read ONCE and every test - own ancestry, harness liveness -
 # is made on that same value. Testing self-ownership by re-reading the file
 # would race the Stop-owned auto-arm's stale-lock reclaim on the same event: it

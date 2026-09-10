@@ -1929,16 +1929,17 @@ test_hook_claude_mode_stands_down_for_live_foreign_lock_owner() {
 # the auto-arm's stale-lock reclaim on the same Stop event writes exactly that
 # pid, and a re-read-then-liveness test would stand down for its own session.
 test_hook_claude_mode_own_ancestry_lock_owner_is_not_foreign() {
-  local dir own out status
-  own=$(bash -c '. "$1"; fm_harness_ancestry_pid' _ "$ROOT/bin/fm-session-lock-lib.sh" 2>/dev/null) || own=''
-  if [ -z "$own" ]; then
-    pass "fm-turnend-guard --claude: own-ancestry lock owner (skip: no verified harness in this process ancestry)"
-    return 0
-  fi
+  local dir home out status
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-own-owner")
   : > "$dir/state/task1.meta"
-  printf '%s\n' "$own" > "$dir/state/.lock"
-  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status=$?
+  home=$(cd "$dir" && pwd)
+  ln -sf /bin/bash "$dir/fake-claude"
+  # shellcheck disable=SC2016 # the fake harness expands FM_HOME inside its child shell.
+  out=$(printf '{"stop_hook_active":true,"session_id":"sess-claude-mode"}' \
+    | CLAUDECODE=1 FM_HOME="$home" FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 "$dir/fake-claude" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        "$FM_HOME/bin/fm-turnend-guard.sh" --claude
+      ' 2>&1); status=$?
   expect_code 2 "$status" "a lock held by this session's own harness ancestor must keep the cooperative re-block"
   assert_contains "$out" 'TURN WOULD END BLIND' "own-ancestry owner lost the block banner"
   assert_absent "$dir/state/.turnend-claude-foreign-owner" "own-ancestry lock owner recorded a foreign-owner notice"
