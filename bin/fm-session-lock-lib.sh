@@ -154,25 +154,35 @@ fm_harness_pid_alive() {
   fm_harness_process_matches "$comm" "$args"
 }
 
-# True when state dir $1 holds a session lock whose pid is ANY harness ancestor
-# of the current process: this script runs inside the session that owns the
-# home's fleet lock. Membership is the honest test of that question, because the
-# lock owner sits at an unknown depth in a contiguous Claude run - it is the
-# outermost pid when the hook fires inside the session's own nested worker chain,
-# and an inner pid when a harness-named daemon parents the session. A missing
-# lock, a malformed lock, a lock held by a harness outside this ancestry, or an
-# ancestry that cannot be resolved all fail closed.
-fm_session_lock_owned_by_self() {
-  local state=$1 lock_pid pids pid
-  lock_pid=$(cat "$state/.lock" 2>/dev/null || true)
-  case "$lock_pid" in
-    ''|*[!0-9]*) return 1 ;;
-  esac
+# True when pid $1 is ANY harness ancestor of the current process. Membership is
+# the honest test, because the lock owner sits at an unknown depth in a
+# contiguous Claude run - it is the outermost pid when the hook fires inside the
+# session's own nested worker chain, and an inner pid when a harness-named daemon
+# parents the session. An ancestry that cannot be resolved, and a pid absent from
+# it, both fail closed. Taking the pid as an argument lets a caller that has
+# ALREADY read state/.lock test its one read value instead of reading the file a
+# second time - a second read races a concurrent stale-lock reclaim, which
+# rewrites .lock with the reclaiming session's own pid.
+fm_pid_in_harness_ancestry() {  # <pid>
+  local pids pid
   pids=$(fm_harness_ancestry_pids) || return 1
   while IFS= read -r pid; do
-    [ "$pid" = "$lock_pid" ] && return 0
+    [ "$pid" = "$1" ] && return 0
   done <<EOF
 $pids
 EOF
   return 1
+}
+
+# True when state dir $1 holds a session lock whose pid is ANY harness ancestor
+# of the current process: this script runs inside the session that owns the
+# home's fleet lock. A missing lock, a malformed lock, a lock held by a harness
+# outside this ancestry, or an ancestry that cannot be resolved all fail closed.
+fm_session_lock_owned_by_self() {
+  local state=$1 lock_pid
+  lock_pid=$(cat "$state/.lock" 2>/dev/null || true)
+  case "$lock_pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  fm_pid_in_harness_ancestry "$lock_pid"
 }

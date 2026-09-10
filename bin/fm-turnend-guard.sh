@@ -293,22 +293,12 @@ block_stop() {
 # non-owner sessions in one home each get their own single notice instead of
 # overwriting one another's record.
 FOREIGN_OWNER_NOTICE="$STATE/.turnend-claude-foreign-owner"
-lock_pid_in_own_ancestry() {  # <pid>
-  local pids pid
-  pids=$(fm_harness_ancestry_pids) || return 1
-  while IFS= read -r pid; do
-    [ "$pid" = "$1" ] && return 0
-  done <<EOF
-$pids
-EOF
-  return 1
-}
 foreign_owner_stand_down() {
   local lock_pid owner_desc record
   [ "$CLAUDE_MODE" -eq 1 ] || return 1
   lock_pid=$(cat "$STATE/.lock" 2>/dev/null || true)
   case "$lock_pid" in ''|*[!0-9]*) return 1 ;; esac
-  lock_pid_in_own_ancestry "$lock_pid" && return 1
+  fm_pid_in_harness_ancestry "$lock_pid" && return 1
   fm_harness_pid_alive "$lock_pid" || return 1
   record="session=$SESSION_ID owner=$lock_pid"
   if grep -qxF -- "$record" "$FOREIGN_OWNER_NOTICE" 2>/dev/null; then
