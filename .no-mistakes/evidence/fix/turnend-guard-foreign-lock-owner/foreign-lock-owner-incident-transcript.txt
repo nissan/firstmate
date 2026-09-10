@@ -1,0 +1,97 @@
+SCENARIO  Claude Code desktop session ends its turn in ~/Advanced.
+          state/.lock is held by pid 7315 - a LIVE foreign harness (fake-codex),
+          not in this Claude session's ancestry. One task is in flight, no watcher beacon.
+          Stop hook: bin/fm-turnend-guard.sh --claude, stop_hook_active=true.
+
+================================================================================
+ BEFORE  (base 4f9db910abcb9cd3f332df9962b6e92147345b5e) - 15 consecutive turn ends
+================================================================================
+--- turn 1  BLOCKED (exit 2) ---
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+    ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: never).
+    ●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and 
+    startup status before ending the turn.
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--- turn 2  BLOCKED (exit 2) ---
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+    ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: never).
+    ●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and 
+    startup status before ending the turn.
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--- turns 3..14: BLOCKED (exit 2), output identical to turn 2 ---
+--- turn 15 BLOCKED (exit 2) ---
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+    ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: never).
+    ●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and 
+    startup status before ending the turn.
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+RESULT  before: 15 of 15 turn ends BLOCKED, 0 allowed.
+        block budget record after 15 turns: session=sess-desktop count=16 epoch= 
+        stand-down ledger state/.turnend-claude-foreign-owner: (absent)
+
+================================================================================
+ AFTER   (this branch) - the same 15 consecutive turn ends
+================================================================================
+--- turn 1  allowed (exit 0) ---
+    {"systemMessage":"FIRSTMATE TURN-END GUARD STANDING DOWN: this session does not hold this 
+    home's fleet lock - a live fake-codex process (pid 7315) does - so watcher supervision here is 
+    that session's responsibility and the Stop-owned auto-arm is inert in this session by design. 
+    Operate read-only in this home and do not arm a watcher yourself; this notice is shown once per 
+    session while that owner is alive."}
+--- turn 2  allowed (exit 0) ---
+    (no output - the turn simply ends)
+--- turns 3..14: allowed (exit 0), output identical to turn 2 ---
+--- turn 15 allowed (exit 0) ---
+    (no output - the turn simply ends)
+
+RESULT  after: 0 of 15 turn ends BLOCKED, 15 allowed.
+        block budget record after 15 turns: session=sess-desktop count=1 epoch=197 
+        stand-down ledger state/.turnend-claude-foreign-owner: session=sess-desktop owner=7315
+
+================================================================================
+ SESSION START  bin/fm-supervision-instructions.sh Lock stanza, same home
+================================================================================
+--- before ---
+    - Lock: held by this session; this session owns normal supervision unless away mode says 
+    otherwise.
+--- after ---
+    - Lock: held by another live session (pid 7315); that session owns supervision here - operate 
+    read-only and do not drain, arm, spawn, steer, merge, or repair fleet state.
+
+================================================================================
+ DEFAULT (codex) MODE unchanged, and non-foreign owners still re-block (after)
+================================================================================
+    default mode, live foreign owner   -> exit 2  (TURN WOULD END BLIND banner shown)
+    --claude, DEAD lock owner          -> exit 2  (cooperative re-block kept)
+    --claude, live NON-harness owner   -> exit 2  (cooperative re-block kept)
+================================================================================
+ NEGATIVE CONTROL  the lock owner's OWN session (this branch)
+================================================================================
+          state/.lock names the live harness process that is this session's own
+          ancestor. The stand-down must NOT fire, or supervision silently turns
+          off for the one session that is responsible for it.
+
+--- turn end, guard run under its own harness ancestor -> exit 2 ---
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+    ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: never).
+    ●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.
+    ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and 
+    startup status before ending the turn.
+    ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    stand-down ledger state/.turnend-claude-foreign-owner: (absent, correct)
+
+--- session start, same ownership shape ---
+    - Lock: held by this session; this session owns normal supervision unless away mode says 
+    otherwise.
+
+--- session start, --read-only 1 still wins over any derived status ---
+    - Lock: read-only; do not drain, arm, spawn, steer, merge, or repair fleet state here.
