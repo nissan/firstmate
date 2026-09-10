@@ -1934,12 +1934,15 @@ test_hook_claude_mode_own_ancestry_lock_owner_is_not_foreign() {
   : > "$dir/state/task1.meta"
   home=$(cd "$dir" && pwd)
   ln -sf /bin/bash "$dir/fake-claude"
+  # The trailing `exit` keeps the guard off the end of the -c script, so bash
+  # always forks it instead of exec-replacing the fake harness: the lock pid
+  # must stay a live harness-shaped ANCESTOR of the guard, not the guard itself.
   # shellcheck disable=SC2016 # the fake harness expands FM_HOME inside its child shell.
   out=$(printf '{"stop_hook_active":true,"session_id":"sess-claude-mode"}' \
     | CLAUDECODE=1 FM_HOME="$home" FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 "$dir/fake-claude" -c '
         printf "%s\n" "$$" > "$FM_HOME/state/.lock"
-        "$FM_HOME/bin/fm-turnend-guard.sh" --claude
-      ' 2>&1); status=$?
+        "$FM_HOME/bin/fm-turnend-guard.sh" --claude; rc=$?
+        exit "$rc"' 2>&1); status=$?
   expect_code 2 "$status" "a lock held by this session's own harness ancestor must keep the cooperative re-block"
   assert_contains "$out" 'TURN WOULD END BLIND' "own-ancestry owner lost the block banner"
   assert_absent "$dir/state/.turnend-claude-foreign-owner" "own-ancestry lock owner recorded a foreign-owner notice"

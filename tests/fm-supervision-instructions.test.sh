@@ -78,11 +78,14 @@ test_lock_stanza_reflects_lock_status() {
   assert_not_contains "$out" "held by this session" "foreign live owner claimed session ownership"
 
   ln -sf /bin/bash "$home/fake-claude"
+  # The trailing `exit` keeps the renderer off the end of the -c script, so bash
+  # always forks it instead of exec-replacing the fake harness: the lock pid
+  # must stay a live harness-shaped ANCESTOR of the renderer, not the renderer.
   # shellcheck disable=SC2016 # the fake harness expands FM_HOME and RENDER inside its child shell.
   out=$(FM_HOME="$home" RENDER="$RENDER" "$home/fake-claude" -c '
         printf "%s\n" "$$" > "$FM_HOME/state/.lock"
-        "$RENDER" --harness claude
-      ' 2>&1)
+        "$RENDER" --harness claude; rc=$?
+        exit "$rc"' 2>&1)
   assert_contains "$out" "- Lock: held by this session" "a lock held by this session's own harness ancestor was not rendered as held by this session"
   assert_not_contains "$out" "held by another live session" "the actual lock owner was told another session owns supervision"
 
