@@ -81,9 +81,11 @@
 #      fail-open only for an already verified failure episode. Do NOT rely on
 #      Claude Code's own 8-consecutive-block override as the outer bound: it
 #      did not fire in Claude Code desktop 2.1.260 (2026-09-10, 15+ blocks).
-#   0. before any of that, a session that is NOT the lock owner while a live
-#      harness process of another session holds state/.lock stands down with
-#      one notice (foreign_owner_stand_down below). The auto-arm is inert by
+#   1b. between the healthy/away allows of step 1 and the claim wait of step
+#      2, a session that is NOT the lock owner while a live harness process of
+#      another session holds state/.lock stands down with one notice
+#      (foreign_owner_stand_down below): a healthy home never reaches it, an
+#      unhealthy non-owner home never reaches the re-block. The auto-arm is inert by
 #      identity in that session, so no failed epoch is ever recorded, the
 #      budget never advances past its first count, and the attended fail-open
 #      is unreachable - the 2026-09-10 incident: a Claude session in a home
@@ -268,25 +270,45 @@ block_stop() {
 # stderr is deliberately not used - the harness discards it on exit 0.
 # A dead, malformed, or missing lock is NOT this case: the auto-arm recovers a
 # stale lock itself, so the cooperative path below still applies there.
+# The lock pid is read ONCE and every test - own ancestry, harness liveness -
+# is made on that same value. Testing self-ownership by re-reading the file
+# would race the Stop-owned auto-arm's stale-lock reclaim on the same event: it
+# could reject the stale pid, then read the pid the auto-arm just wrote for
+# THIS session, find it alive, and stand down for its own session. Residual:
+# a dead owner's pid reused by an unrelated verified harness reads as a live
+# foreign owner, exactly as it does for the auto-arm's identity gate, which
+# stays inert in the same case - so the alternative there is the unbounded
+# block this stand-down exists to end, not a recovery.
+# The notice ledger is append-only, one line per (session, owner), so several
+# non-owner sessions in one home each get their own single notice instead of
+# overwriting one another's record.
 FOREIGN_OWNER_NOTICE="$STATE/.turnend-claude-foreign-owner"
+lock_pid_in_own_ancestry() {  # <pid>
+  local pids pid
+  pids=$(fm_harness_ancestry_pids) || return 1
+  while IFS= read -r pid; do
+    [ "$pid" = "$1" ] && return 0
+  done <<EOF
+$pids
+EOF
+  return 1
+}
 foreign_owner_stand_down() {
-  local lock_pid owner_desc old_session old_owner tmp
+  local lock_pid owner_desc record
   [ "$CLAUDE_MODE" -eq 1 ] || return 1
-  fm_session_lock_owned_by_self "$STATE" && return 1
   lock_pid=$(cat "$STATE/.lock" 2>/dev/null || true)
   case "$lock_pid" in ''|*[!0-9]*) return 1 ;; esac
+  lock_pid_in_own_ancestry "$lock_pid" && return 1
   fm_harness_pid_alive "$lock_pid" || return 1
-  old_session=$(sed -n '1s/^session=//p' "$FOREIGN_OWNER_NOTICE" 2>/dev/null || true)
-  old_owner=$(sed -n '2s/^owner=//p' "$FOREIGN_OWNER_NOTICE" 2>/dev/null || true)
-  if [ "$old_session" = "$SESSION_ID" ] && [ "$old_owner" = "$lock_pid" ]; then
+  record="session=$SESSION_ID owner=$lock_pid"
+  if grep -qxF -- "$record" "$FOREIGN_OWNER_NOTICE" 2>/dev/null; then
     exit 0
   fi
-  tmp="$FOREIGN_OWNER_NOTICE.tmp.$$"
-  if printf 'session=%s\nowner=%s\n' "$SESSION_ID" "$lock_pid" > "$tmp" 2>/dev/null; then
-    mv -f "$tmp" "$FOREIGN_OWNER_NOTICE" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
-  fi
+  printf '%s\n' "$record" >> "$FOREIGN_OWNER_NOTICE" 2>/dev/null || true
   owner_desc=$(basename -- "$(ps -o comm= -p "$lock_pid" 2>/dev/null)" 2>/dev/null || true)
   [ -n "$owner_desc" ] || owner_desc=harness
+  # JSON-safe: the process name is interpolated into a systemMessage string.
+  owner_desc=$(printf '%s' "$owner_desc" | jq -Rr '@json | .[1:-1]' 2>/dev/null || printf 'harness')
   printf '{"systemMessage":"FIRSTMATE TURN-END GUARD STANDING DOWN: this session does not hold this home'"'"'s fleet lock - a live %s process (pid %s) does - so watcher supervision here is that session'"'"'s responsibility and the Stop-owned auto-arm is inert in this session by design. Operate read-only in this home and do not arm a watcher yourself; this notice is shown once per session while that owner is alive."}\n' "$owner_desc" "$lock_pid"
   exit 0
 }

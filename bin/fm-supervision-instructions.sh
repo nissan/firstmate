@@ -214,9 +214,11 @@ lock_line() {
   case "$status" in
     'lock: held by live harness pid '*)
       # shellcheck source=bin/fm-session-lock-lib.sh
-      if [ -f "$SCRIPT_DIR/fm-session-lock-lib.sh" ] \
+      if [ -f "$SCRIPT_DIR/fm-session-lock-lib.sh" ] && [ -f "$SCRIPT_DIR/fm-cursor-lib.sh" ] \
         && ( . "$SCRIPT_DIR/fm-session-lock-lib.sh" && fm_session_lock_owned_by_self "$STATE" ) 2>/dev/null; then
         printf '%s\n' '- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.'
+      elif [ ! -f "$SCRIPT_DIR/fm-session-lock-lib.sh" ] || [ ! -f "$SCRIPT_DIR/fm-cursor-lib.sh" ]; then
+        printf -- '- Lock: held by live harness pid %s, ownership unverifiable (identity library missing); treat this session as not owning supervision until verified.\n' "${status##* }"
       else
         printf -- '- Lock: held by another live session (pid %s); that session owns supervision here - operate read-only and do not drain, arm, spawn, steer, merge, or repair fleet state.\n' "${status##* }"
       fi

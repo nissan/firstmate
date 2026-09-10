@@ -1887,7 +1887,7 @@ start_fake_harness() {  # <dir> <name> ; prints pid of a live fake harness
 }
 
 test_hook_claude_mode_stands_down_for_live_foreign_lock_owner() {
-  local dir pid out out2 out3 out4 status status2 status3 status4
+  local dir pid out out2 out3 out4 out5 status status2 status3 status4 status5
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-foreign-owner")
   : > "$dir/state/task1.meta"
   pid=$(start_fake_harness "$dir" fake-codex)
@@ -1899,6 +1899,8 @@ test_hook_claude_mode_stands_down_for_live_foreign_lock_owner() {
   out3=$(printf '{"stop_hook_active":true,"session_id":"sess-other"}' \
     | CLAUDECODE=1 FM_HOME="$dir" bash "$dir/bin/fm-turnend-guard.sh" --claude 2>&1); status3=$?
   out4=$(run_hook "$dir" false); status4=$?
+  # Alternating non-owner sessions: A's record must survive B's, so A stays quiet.
+  out5=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status5=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   expect_code 0 "$status" "--claude must stand down when a live foreign harness holds the home lock"
@@ -1911,12 +1913,36 @@ test_hook_claude_mode_stands_down_for_live_foreign_lock_owner() {
   [ -z "$out2" ] || fail "foreign-owner notice repeated for the same session and owner: $out2"
   expect_code 0 "$status3" "another session in the same home must also stand down"
   assert_contains "$out3" 'systemMessage' "a different session must get its own one notice"
+  expect_code 0 "$status5" "the first session must keep standing down after another session was noticed"
+  [ -z "$out5" ] || fail "foreign-owner notice repeated for session A after session B's notice overwrote nothing: $out5"
   expect_code 2 "$status4" "default (codex) mode is untouched by the --claude foreign-owner stand-down"
   assert_contains "$out4" 'TURN WOULD END BLIND' "default-mode block lost its banner under a foreign owner"
   [ "$(sed -n '2s/^count=//p' "$dir/state/.turnend-claude-blocks")" = 1 ] \
     || fail "foreign-owner stand-down must not touch the block budget"
   assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "foreign-owner stand-down recorded an attended alarm"
   pass "fm-turnend-guard --claude: a live foreign lock owner bounds the guard to one notice (incident regression)"
+}
+
+# The lock pid is tested against this process's OWN harness ancestry on the one
+# value read from the file. A lock naming this session's own harness pid is the
+# owner case, never a foreign one, even though that pid is a live harness:
+# the auto-arm's stale-lock reclaim on the same Stop event writes exactly that
+# pid, and a re-read-then-liveness test would stand down for its own session.
+test_hook_claude_mode_own_ancestry_lock_owner_is_not_foreign() {
+  local dir own out status
+  own=$(bash -c '. "$1"; fm_harness_ancestry_pid' _ "$ROOT/bin/fm-session-lock-lib.sh" 2>/dev/null) || own=''
+  if [ -z "$own" ]; then
+    pass "fm-turnend-guard --claude: own-ancestry lock owner (skip: no verified harness in this process ancestry)"
+    return 0
+  fi
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-own-owner")
+  : > "$dir/state/task1.meta"
+  printf '%s\n' "$own" > "$dir/state/.lock"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status=$?
+  expect_code 2 "$status" "a lock held by this session's own harness ancestor must keep the cooperative re-block"
+  assert_contains "$out" 'TURN WOULD END BLIND' "own-ancestry owner lost the block banner"
+  assert_absent "$dir/state/.turnend-claude-foreign-owner" "own-ancestry lock owner recorded a foreign-owner notice"
+  pass "fm-turnend-guard --claude: a lock held by this session's own harness ancestor is never a foreign owner"
 }
 
 test_hook_claude_mode_dead_or_non_harness_lock_owner_still_blocks() {
@@ -2225,6 +2251,7 @@ test_hook_claude_mode_waits_for_late_claim
 test_hook_claude_mode_secondmate_reblocks_like_primary
 test_hook_claude_mode_stands_down_for_live_foreign_lock_owner
 test_hook_claude_mode_dead_or_non_harness_lock_owner_still_blocks
+test_hook_claude_mode_own_ancestry_lock_owner_is_not_foreign
 test_hook_away_daemon_allows_between_watcher_cycles
 test_hook_away_daemon_allows_over_dead_watcher_lock
 test_hook_away_mode_blocks_without_any_supervisor
