@@ -194,6 +194,12 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$FM_DAEMON_DIR/fm-busy-lib.sh"
 
+# The spend-without-artifact guard, for FM_NOPROGRESS_REASON_PREFIX alone: this
+# daemon must recognise that guard's escalation to route it, and the phrase has
+# exactly one definition, in the library that builds the reason.
+# shellcheck source=bin/fm-noprogress-lib.sh
+. "$FM_DAEMON_DIR/fm-noprogress-lib.sh"
+
 # --- tunables ---------------------------------------------------------------
 # Supervisor backends this daemon knows how to inject into today. zellij, orca,
 # and cmux are real backends elsewhere in firstmate (bin/fm-backend.sh) but this
@@ -1382,10 +1388,21 @@ handle_wake() {  # <reason> <state>
               # once per STALE_ESCALATE_SECS for as long as the wait lasted.
               # Housekeeping (2b) then owns the re-surface, so the wait is still
               # bounded - by one recheck per PAUSE_RESURFACE_SECS instead.
+              #
+              # The spend-without-artifact guard's escalation outranks the same
+              # absorption, for a reason the wedge spelling does not cover: that
+              # guard's signal is SPEND, not idleness, and a status log is not
+              # evidence about spend. Left to the lines above, a burning crew
+              # whose last line is a nonterminal `working:` classifies as
+              # `self|transient stale`, housekeeping's recheck finds the pane
+              # busy (a climbing token counter is busy), drops the marker, and
+              # the wake is acked without ever reaching the escalation buffer -
+              # so the guard was permanently silent in away mode, which is the
+              # exact posture the 18-hour burn it exists to catch ran in.
               case "${decision%%|*}" in
                 pause) : ;;
                 *) case "$stale_detail" in
-                     idle\ *s,\ possible\ wedge,\ escalation\ *)
+                     idle\ *s,\ possible\ wedge,\ escalation\ *|"$FM_NOPROGRESS_REASON_PREFIX"*)
                        last=$(last_status_line "$state/$task.status")
                        status_is_paused_or_captain_held "$last" \
                          || decision="escalate|${reason#stale: }"

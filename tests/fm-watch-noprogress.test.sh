@@ -472,63 +472,105 @@ test_artifact_fingerprint_tracks_each_signal() {
   pass "the artifact fingerprint moves on a commit, a report write, and a status append, and is stable when unreadable"
 }
 
-# A WORKTREE THAT NEVER ANSWERS. The fingerprint is read on every poll for every
-# task, and the task worktree is the only part of it that lives outside the home
-# - a treehouse on an unresponsive mount answers neither the stat nor the
-# rev-parse. Unbounded, that blocks the poll, and the watcher whose whole job is
-# noticing wedged work is itself wedged for the entire fleet. So the read is
-# bounded, and hitting the bound has to read as an unreadable worktree: the fixed
-# placeholder, never a changing value, with the escalation schedule untouched.
-test_a_hanging_worktree_cannot_stall_the_poll() {
-  local dir state data wt hangbin oldpath a b started elapsed
-  local n poll verdict escalated
-  dir=$(make_case hung-worktree); state="$dir/state"; data="$dir/data"
-  wt="$dir/wt"; hangbin="$dir/hangbin"; mkdir -p "$wt" "$data/t" "$hangbin"
+# NOTHING ON THE POLL PATH MAY FORK. The fingerprint is recomputed for every
+# task on every poll, so its cost is multiplied by the fleet. Deriving the head
+# component with `git rev-parse` under a timeout cost roughly four processes and
+# a temp file EACH TIME; the builtin ref walk costs none. This asserts that on
+# behaviour, not on source: a recorder for every external the old path used is
+# put first on PATH, the real function is called against a real worktree, and
+# the recorder must come back untouched while the fingerprint is still right.
+test_the_fingerprint_read_spawns_no_subprocess() {
+  local dir state data wt recbin oldpath log a b real
+  dir=$(make_case no-fork); state="$dir/state"; data="$dir/data"
+  wt="$dir/wt"; recbin="$dir/recbin"; log="$dir/spawned.log"
+  mkdir -p "$wt" "$data/t" "$recbin"
   printf 'window=test:fm-t\nkind=ship\nworktree=%s\n' "$wt" > "$state/t.meta"
-  # A worktree whose every git access hangs, which is what an unresponsive mount
-  # looks like from here.
-  printf '#!/usr/bin/env bash\nsleep 60\n' > "$hangbin/git"
-  chmod +x "$hangbin/git"
-  export FM_NOPROGRESS_TIMEOUT=1
+  git -C "$wt" init -q
+  git -C "$wt" config user.email t@example.com
+  git -C "$wt" config user.name t
+  printf 'one\n' > "$wt/f"
+  git -C "$wt" add f >/dev/null
+  git -C "$wt" commit -qm one >/dev/null
+  real=$(git -C "$wt" rev-parse HEAD)
+
+  for tool in git timeout gtimeout mktemp; do
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s $*" >> "%s"\nexit 1\n' "$tool" "$log" \
+      > "$recbin/$tool"
+    chmod +x "$recbin/$tool"
+  done
 
   oldpath=$PATH
-  PATH="$hangbin:$PATH"
-  started=$(date +%s)
+  PATH="$recbin:$PATH"
   a=$(fm_noprogress_artifact_sig "$state" t "$data")
-  elapsed=$(( $(date +%s) - started ))
   PATH=$oldpath
-  [ "$elapsed" -lt 30 ] \
-    || fail "one fingerprint read of a hung worktree took ${elapsed}s, so the poll is not bounded"
-  [ "${a%%:*}" = '-' ] \
-    || fail "a hung worktree produced a head component of '${a%%:*}' rather than the unreadable placeholder"
 
-  # Stable, not merely unreadable: a value that changed per poll would read as
-  # continuous progress and silence the guard forever.
-  PATH="$hangbin:$PATH"
+  [ ! -s "$log" ] \
+    || fail "the per-poll fingerprint read spawned a subprocess: [$(cat "$log")]"
+  # Non-vacuous: the read has to have actually resolved the worktree's HEAD,
+  # or "no subprocess" would just mean "did nothing".
+  [ "${a%%:*}" = "$real" ] \
+    || fail "the builtin HEAD read returned '${a%%:*}' rather than the worktree's real HEAD $real"
+
+  # ...and it still tracks a landed commit, which is the whole point of the
+  # component - through the recorder, so that stays fork-free too.
+  printf 'two\n' > "$wt/f"
+  git -C "$wt" commit -qam two >/dev/null
+  real=$(git -C "$wt" rev-parse HEAD)
+  PATH="$recbin:$PATH"
   b=$(fm_noprogress_artifact_sig "$state" t "$data")
   PATH=$oldpath
-  [ "$a" = "$b" ] || fail "a hung worktree's fingerprint changed between polls: $a vs $b"
+  [ "$a" != "$b" ] || fail "a landed commit did not move the fork-free fingerprint"
+  [ "${b%%:*}" = "$real" ] \
+    || fail "after a commit the builtin HEAD read returned '${b%%:*}' rather than $real"
+  [ ! -s "$log" ] \
+    || fail "the fingerprint read spawned a subprocess after the commit: [$(cat "$log")]"
 
-  # ...and the schedule is untouched: a climbing counter against that stable
-  # fingerprint still crosses both gates and escalates.
-  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
-  escalated=
-  n=100
-  poll=0
-  while [ "$poll" -lt 4 ] && [ -z "$escalated" ]; do
-    PATH="$hangbin:$PATH"
-    b=$(fm_noprogress_artifact_sig "$state" t "$data")
-    PATH=$oldpath
-    verdict=$(fm_noprogress_observe "$state" t "$n" "$b" "$(( 1000000 + poll * 60 ))")
-    case "$verdict" in escalate\ *) escalated=$verdict ;; esac
-    n=$(( n + 500 ))
-    poll=$(( poll + 1 ))
-  done
-  [ -n "$escalated" ] \
-    || fail "a burn against a hung worktree never escalated, so the bound changed the schedule: record=[$(cat "$(fm_noprogress_record "$state" t)")]"
+  pass "the per-poll fingerprint read resolves HEAD with builtins and spawns nothing"
+}
 
-  unset FM_NOPROGRESS_TIMEOUT FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
-  pass "a worktree that never answers is bounded, reads as the stable placeholder, and leaves the escalation schedule intact"
+# A LINKED WORKTREE resolves through a gitdir pointer file and keeps refs/heads
+# in the COMMON directory, which is what every treehouse worktree looks like -
+# so it is the normal case here, not an exotic one. A detached HEAD writes the
+# sha into HEAD directly instead of a "ref:" line.
+test_linked_worktree_and_detached_head_resolve() {
+  local dir state data main wt real sig
+  dir=$(make_case linked-wt); state="$dir/state"; data="$dir/data"
+  main="$dir/main"; wt="$dir/linked"
+  mkdir -p "$main" "$data/t" "$data/d"
+  git -C "$main" init -q
+  git -C "$main" config user.email t@example.com
+  git -C "$main" config user.name t
+  printf 'one\n' > "$main/f"
+  git -C "$main" add f >/dev/null
+  git -C "$main" commit -qm one >/dev/null
+  git -C "$main" worktree add -q -b feature "$wt" >/dev/null 2>&1 \
+    || fail "could not create the linked worktree fixture"
+
+  printf 'window=test:fm-t\nkind=ship\nworktree=%s\n' "$wt" > "$state/t.meta"
+  real=$(git -C "$wt" rev-parse HEAD)
+  sig=$(fm_noprogress_artifact_sig "$state" t "$data")
+  [ "${sig%%:*}" = "$real" ] \
+    || fail "a linked worktree's HEAD read as '${sig%%:*}' rather than $real"
+
+  # A commit in the linked worktree moves it, which is the branch whose ref
+  # lives in the common directory rather than beside HEAD.
+  printf 'two\n' > "$wt/f"
+  git -C "$wt" commit -qam two >/dev/null
+  real=$(git -C "$wt" rev-parse HEAD)
+  sig=$(fm_noprogress_artifact_sig "$state" t "$data")
+  [ "${sig%%:*}" = "$real" ] \
+    || fail "a commit in a linked worktree left HEAD at '${sig%%:*}' rather than $real"
+
+  # Detached HEAD: the sha is in HEAD itself, with no ref to follow.
+  git -C "$wt" checkout -q --detach >/dev/null 2>&1 \
+    || fail "could not detach the linked worktree fixture"
+  real=$(git -C "$wt" rev-parse HEAD)
+  printf 'window=test:fm-d\nkind=ship\nworktree=%s\n' "$wt" > "$state/d.meta"
+  sig=$(fm_noprogress_artifact_sig "$state" d "$data")
+  [ "${sig%%:*}" = "$real" ] \
+    || fail "a detached HEAD read as '${sig%%:*}' rather than $real"
+
+  pass "the builtin HEAD read resolves a linked worktree's common-dir ref and a detached HEAD"
 }
 
 # --- the wiring, against a real bin/fm-watch.sh -----------------------------
@@ -650,8 +692,8 @@ test_climbing_tokens_without_artifact_escalate() {
   assert_no_worker_control_issued "$WIRED_TMUXLOG"
   # The wake has to be actionable: the reason names what to inspect rather than
   # just reporting "stale", and says plainly that nothing was stopped.
-  grep -qF 'demand-deep-inspection' "$WIRED_STATE/.wake-queue" \
-    || fail "the escalation did not demand inspection, so it can be re-absorbed on pane state alone"
+  grep -qF 'read the pane before absorbing' "$WIRED_STATE/.wake-queue" \
+    || fail "the escalation did not tell the reader what to inspect"
   grep -qF "captain's call" "$WIRED_STATE/.wake-queue" \
     || fail "the escalation did not state that stopping the worker is the captain's call"
   # An actionable wake exits the watcher so firstmate is woken.
@@ -743,7 +785,8 @@ test_reescalation_and_counter_reset
 test_recorded_per_turn_footers_accumulate_across_turns
 test_frozen_counter_gate_is_the_only_thing_keeping_this_silent
 test_artifact_fingerprint_tracks_each_signal
-test_a_hanging_worktree_cannot_stall_the_poll
+test_the_fingerprint_read_spawns_no_subprocess
+test_linked_worktree_and_detached_head_resolve
 test_climbing_tokens_without_artifact_escalate
 test_frozen_token_wait_stays_silent
 test_growing_report_stays_silent

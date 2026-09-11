@@ -676,6 +676,71 @@ test_stale_diagnostic_wedge_survives_busy_housekeeping() {
   pass "enriched stale wedges bypass status absorption except under a declared wait, without disturbing busy workers"
 }
 
+# THE SPEND-WITHOUT-ARTIFACT GUARD MUST SURVIVE AWAY-MODE TRIAGE. The watcher's
+# guard (bin/fm-noprogress-lib.sh) escalates a pane that is spending tokens and
+# producing nothing. In away mode this daemon owns triage, and its cheaper
+# status-log classification absorbed that escalation outright: a burning crew's
+# last line is a nonterminal `working:`, so classify_stale returns
+# `self|transient stale`, handle_wake records a wedge marker, and housekeeping's
+# recheck finds the pane BUSY - a climbing token counter is busy - drops the
+# marker, and acks the wake. Nothing ever reached the escalation buffer, so the
+# guard was permanently silent in exactly the unattended posture the motivating
+# 18-hour burn ran in. The guard's signal is SPEND, and a status log is not
+# evidence about spend, so its verdict outranks that absorption.
+test_spend_without_artifact_survives_away_mode_triage() {
+  local dir state fakebin task win pane key reason
+  dir=$(make_supercase noprogress-away-triage)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task=burn-w1; win="sess:fm-$task"; pane="$dir/pane.txt"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  # The burning crew: still reporting progress, so the status log offers this
+  # daemon nothing actionable and its own classifier wants to absorb.
+  printf 'working: still working through the audit\n' > "$state/$task.status"
+  # A pane that is BUSY, which is what made housekeeping drop the marker.
+  printf 'esc to interrupt\n' > "$pane"
+  case "$(FM_STATE_OVERRIDE="$state" classify_stale "$win" "$state")" in
+    self\|*) ;;
+    *) fail "the fixture's own classifier verdict is not an absorb, so this case pins nothing about the override" ;;
+  esac
+
+  reason="stale: $win ($FM_NOPROGRESS_REASON_PREFIX: 60000 tokens with no commit, report write, or status line for the last 1800s - read the pane before absorbing; nothing was stopped, killing this worker is the captain's call)"
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    handle_wake "$reason" "$state"
+
+  [ -s "$state/.subsuper-escalations" ] \
+    || fail "a spend-without-artifact wake was absorbed in away mode and never reached the escalation buffer"
+  grep -qF "$FM_NOPROGRESS_REASON_PREFIX" "$state/.subsuper-escalations" \
+    || fail "the escalation buffer holds something other than the guard's reason: $(cat "$state/.subsuper-escalations")"
+  # ...and it must not also be left aging as a wedge, or housekeeping would drop
+  # it on the busy pane and re-escalate the same burn later as a false wedge.
+  [ ! -e "$state/.subsuper-stale-$key" ] \
+    || fail "the guard escalation also left wedge aging in place"
+
+  # The control: an ORDINARY transient stale on the identical fixture is still
+  # absorbed, so the override is scoped to this guard rather than defeating the
+  # daemon's status-log classification wholesale.
+  : > "$state/.subsuper-escalations"
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    handle_wake "stale: $win (idle 250s)" "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "a plain transient stale escalated too, so the override is not scoped: $(cat "$state/.subsuper-escalations")"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "a plain transient stale did not record wedge aging, so the control proves nothing"
+
+  # And a crew that DECLARED a wait keeps the declaration's precedence: the
+  # daemon routes it to the pause cadence exactly as it does for a wedge.
+  : > "$state/.subsuper-escalations"
+  rm -f "$state/.subsuper-stale-$key"
+  printf 'paused: the audit engine is running to completion\n' >> "$state/$task.status"
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    handle_wake "$reason" "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "a declared wait lost its precedence to the guard override: $(cat "$state/.subsuper-escalations")"
+
+  pass "a spend-without-artifact escalation survives away-mode triage while plain stale and declared waits are unchanged"
+}
+
 # The second half of issue #3149. The watcher's wedge timer emits an enriched
 # "idle Ns, possible wedge, escalation N" reason for any pane it reads as frozen -
 # including one whose crew has a CURRENT declared wait, because the watcher's own
@@ -2674,6 +2739,7 @@ test_classify_check_and_unknown_escalate
 test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
+test_spend_without_artifact_survives_away_mode_triage
 test_stale_terminal_escalates
 test_stale_actionable_wait_escalates_and_keeps_pause_cadence
 test_stale_paused_classifies_pause

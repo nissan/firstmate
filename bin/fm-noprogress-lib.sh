@@ -32,10 +32,12 @@
 # ARTIFACTS. What counts as production is deliberately the same set a
 # supervisor would look at: a commit landing in the task worktree, the scout
 # report growing, a status line appended, or files written in the worktree.
-# The first three are cheap stats read every poll; the worktree write probe is
-# the bounded walk bin/fm-classify-lib.sh already owns
+# The first three are plain file reads taken every poll - two stats in the home
+# and a builtin walk of the worktree's HEAD ref, no subprocess among them; the
+# worktree write probe is the bounded walk bin/fm-classify-lib.sh already owns
 # (crew_worktree_written_since) and, like the wedge timer, it runs ONLY at the
-# moment this guard would otherwise escalate - never per poll.
+# moment this guard would otherwise escalate - never per poll. That split is the
+# whole cost model: nothing that forks may sit on the poll path.
 #
 # ESCALATE, NEVER KILL. This guard raises a flag and stops. It never
 # interrupts, signals, restarts, or tears down a worker. Two workers on one
@@ -88,17 +90,6 @@
 # Callers: bin/fm-watch.sh, bin/fm-teardown.sh.
 set -u
 
-# fm_run_timed, the shared hard bound this library puts around the one thing it
-# touches outside the home: the task worktree. bin/fm-timeout-lib.sh owns bounded
-# execution for this repo, so nothing here re-derives the coreutils/BSD/perl
-# selection. It declares `set -u` as this library already does, so it is sourced
-# plainly. Resolved from BASH_SOURCE so it works whether a bin/ script or a test
-# sourced this file.
-_FM_NOPROGRESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_NOPROGRESS_LIB_DIR="."
-# shellcheck source=bin/fm-timeout-lib.sh
-# shellcheck disable=SC1091
-. "$_FM_NOPROGRESS_LIB_DIR/fm-timeout-lib.sh"
-
 # Tokens accumulated across turns against one unchanged artifact fingerprint
 # before the guard escalates - about 55 of Claude's recorded ~1.1k-token turns,
 # or a fifth of the 292.7k the motivating burn spent, all of it against a
@@ -118,17 +109,12 @@ FM_NOPROGRESS_SPEND=${FM_NOPROGRESS_SPEND:-60000}
 # artifact minutes later is not the shape being caught.
 FM_NOPROGRESS_SECS=${FM_NOPROGRESS_SECS:-1800}
 
-# Wall-clock seconds one fingerprint read of the task worktree may take. The
-# wedge detector's write probe runs only at the moment it would escalate and can
-# afford FM_WORKTREE_WRITE_TIMEOUT; this read runs on EVERY poll for EVERY task,
-# so it gets its own, much shorter bound. Without one, a worktree on a hung mount
-# (NFS, sshfs, a stale automount) would block the poll and wedge the watcher this
-# guard exists to keep watching - for the whole fleet, not just that task.
-# Hitting the bound reads as an unreadable worktree, which contributes the fixed
-# placeholder fm_noprogress_artifact_sig already defines and so leaves the
-# escalation schedule exactly as it was. A value that is not a positive integer
-# falls back to the default.
-FM_NOPROGRESS_TIMEOUT=${FM_NOPROGRESS_TIMEOUT:-5}
+# The phrase every escalation this guard raises is built around, and the one
+# every consumer routes on. It lives here alone: the watcher queues the wake
+# (bin/fm-watch.sh), the away-mode daemon has to recognise it to escalate rather
+# than absorb it (bin/fm-supervise-daemon.sh), and a second spelling of it in
+# either place is how this guard silently goes back to being absorbed.
+FM_NOPROGRESS_REASON_PREFIX='spending without producing'
 
 # fm_noprogress_record: absolute path of a task's guard record.
 fm_noprogress_record() {  # <state> <task>
@@ -255,6 +241,71 @@ EOF
   printf '%s' "$last"
 }
 
+# _fm_noprogress_git_head: the commit a worktree's HEAD resolves to, read with
+# SHELL BUILTINS ONLY - no git, no subprocess, no temp file. This runs on every
+# poll for every task, and the surrounding design defers exactly this kind of
+# cost (see the header: the bounded worktree walk runs only at the moment the
+# guard would otherwise escalate). Spawning `git rev-parse` under a timeout cost
+# roughly four processes and a temp file per task per poll; three `read`s cost
+# none.
+#
+# What it walks, all of it plain file reads:
+#
+#   <wt>/.git      a directory in an ordinary clone, or - in every treehouse
+#                  worktree, which is the normal case here - a file holding
+#                  "gitdir: <path>" pointing at .git/worktrees/<name>.
+#   <gitdir>/HEAD  "ref: refs/heads/<branch>", or a raw sha when detached.
+#   the ref file   under <gitdir> first (per-worktree refs live there), then
+#                  under <gitdir>/commondir (refs/heads/* live in the common
+#                  directory for a linked worktree).
+#
+# A branch whose ref is PACKED rather than loose reads as unresolvable, and that
+# is deliberate rather than a gap: git writes a loose ref on every commit, so a
+# packed-only ref means nothing has been committed on that branch since it was
+# packed, and the caller's fixed placeholder is then both stable and true. The
+# first commit writes the loose ref, which moves the fingerprint and reads as
+# production exactly as it should. Reading packed-refs would need a grep - a
+# subprocess, on the hot path, to learn nothing this guard acts on.
+_fm_noprogress_git_head() {  # <worktree>
+  local wt=$1 dot gitdir common line ref sha=''
+  dot="$wt/.git"
+  if [ -d "$dot" ]; then
+    gitdir=$dot
+  elif [ -r "$dot" ]; then
+    IFS= read -r line < "$dot" || return 1
+    case "$line" in
+      'gitdir: '*) gitdir=${line#gitdir: } ;;
+      *) return 1 ;;
+    esac
+    case "$gitdir" in /*) ;; *) gitdir="$wt/$gitdir" ;; esac
+  else
+    return 1
+  fi
+  [ -r "$gitdir/HEAD" ] || return 1
+  IFS= read -r line < "$gitdir/HEAD" || return 1
+  case "$line" in
+    'ref: '*)
+      ref=${line#ref: }
+      if [ -r "$gitdir/$ref" ]; then
+        IFS= read -r sha < "$gitdir/$ref" || sha=''
+      elif [ -r "$gitdir/commondir" ] && IFS= read -r common < "$gitdir/commondir"; then
+        case "$common" in
+          ''|/*) ;;
+          *) common="$gitdir/$common" ;;
+        esac
+        if [ -n "$common" ] && [ -r "$common/$ref" ]; then
+          IFS= read -r sha < "$common/$ref" || sha=''
+        fi
+      fi
+      ;;
+    *) sha=$line ;;
+  esac
+  case "$sha" in
+    ''|*[!0-9a-fA-F]*) return 1 ;;
+  esac
+  printf '%s' "$sha"
+}
+
 # fm_noprogress_artifact_sig: the cheap artifact fingerprint for a task - the
 # head commit of its worktree, the size of its report, and the size of its
 # status log, joined. Any of the three moving means the worker produced
@@ -262,21 +313,16 @@ EOF
 # rather than a changing value, so an unreadable worktree can never masquerade
 # as continuous progress.
 #
-# The worktree is the only component outside the home, so it is the only one
-# that can hang, and every touch of it - existence included - happens inside the
-# FM_NOPROGRESS_TIMEOUT bound. There is deliberately no separate `-d` test: a
-# stat is exactly as blockable as the read it would guard, and git already
-# reports a missing or unreadable worktree as a failure, which is the same
-# placeholder either way. The other two components are stats inside the home,
-# which is the filesystem the watcher is already running on.
+# Every component is a plain file read, which is what lets this run per poll:
+# two stats inside the home, and the builtin HEAD walk above. Nothing here
+# forks, so a fleet of ten tasks costs ten reads a poll rather than forty
+# processes.
 fm_noprogress_artifact_sig() {  # <state> <task> <data>
-  local state=$1 task=$2 data=$3 wt head report status bound
+  local state=$1 task=$2 data=$3 wt head report status
   wt=$(grep '^worktree=' "$state/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-  bound=$FM_NOPROGRESS_TIMEOUT
-  case "$bound" in ''|*[!0-9]*|0) bound=5 ;; esac
   head='-'
   if [ -n "$wt" ]; then
-    head=$(fm_run_timed "$bound" git -C "$wt" rev-parse HEAD 2>/dev/null) || head='-'
+    head=$(_fm_noprogress_git_head "$wt") || head='-'
     [ -n "$head" ] || head='-'
   fi
   report='-'
@@ -403,6 +449,6 @@ _fm_noprogress_write() {  # <record> <tokens> <spend> <sig> <since> <flagged>
 # that has not moved for hours, so the number is a floor, and the sentence says
 # only what it can stand behind: nothing was produced for at least that long.
 fm_noprogress_reason() {  # <window> <spend> <secs>
-  printf 'stale: %s (spending without producing: %s tokens with no commit, report write, or status line for the last %ss, demand-deep-inspection: read the pane before absorbing - nothing was stopped, killing this worker is the captain'\''s call)' \
-    "$1" "$2" "$3"
+  printf 'stale: %s (%s: %s tokens with no commit, report write, or status line for the last %ss - read the pane before absorbing; nothing was stopped, killing this worker is the captain'\''s call)' \
+    "$1" "$FM_NOPROGRESS_REASON_PREFIX" "$2" "$3"
 }
