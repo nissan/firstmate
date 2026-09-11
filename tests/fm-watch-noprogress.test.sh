@@ -539,6 +539,115 @@ test_a_hanging_worktree_cannot_stall_the_poll() {
   pass "a worktree that never answers is bounded, reads as the stable placeholder, and leaves the escalation schedule intact"
 }
 
+# A WORKTREE THAT ANSWERS ONLY SOMETIMES. The bound above means a flaky mount
+# produces a head component that alternates between a real sha and the
+# placeholder, poll after poll. Compared whole-string, every flip reads as a
+# moved artifact: the window restarts, spend resets to 0 and since resets to
+# now, on EVERY OTHER POLL, so accumulated spend can never reach the gate and
+# the guard goes permanently silent for exactly the task whose worktree is
+# sick - while docs/architecture.md still says the shape is covered. This drives
+# the real function against a git shim that succeeds and times out alternately,
+# with a climbing counter and no artifact growth, and requires an escalation.
+test_an_intermittently_readable_worktree_still_escalates() {
+  local dir state data wt flakybin oldpath real
+  local n poll verdict escalated sig saw_sha saw_placeholder
+  dir=$(make_case flaky-worktree); state="$dir/state"; data="$dir/data"
+  wt="$dir/wt"; flakybin="$dir/flakybin"; mkdir -p "$wt" "$data/t" "$flakybin"
+  printf 'window=test:fm-t\nkind=ship\nworktree=%s\n' "$wt" > "$state/t.meta"
+  git -C "$wt" init -q
+  git -C "$wt" config user.email t@example.com
+  git -C "$wt" config user.name t
+  printf 'one\n' > "$wt/f"
+  git -C "$wt" add f >/dev/null
+  git -C "$wt" commit -qm one >/dev/null
+  real=$(git -C "$wt" rev-parse HEAD)
+
+  # Succeeds on even invocations, hangs past the bound on odd ones - an
+  # intermittently-slow mount, which is the case the bound exists for.
+  # shellcheck disable=SC2016  # The $ expansions belong to the generated shim.
+  printf '#!/usr/bin/env bash\nn=$(cat "%s/n" 2>/dev/null || echo 0)\nprintf "%%s" "$((n+1))" > "%s/n"\nif [ $((n %% 2)) -eq 1 ]; then sleep 120; fi\nexec /usr/bin/git "$@"\n' \
+    "$dir" "$dir" > "$flakybin/git"
+  chmod +x "$flakybin/git"
+  export FM_NOPROGRESS_TIMEOUT=1 FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  oldpath=$PATH
+  escalated=
+  saw_sha=1
+  saw_placeholder=1
+  n=100
+  poll=0
+  while [ "$poll" -lt 10 ] && [ -z "$escalated" ]; do
+    PATH="$flakybin:$PATH"
+    sig=$(fm_noprogress_artifact_sig "$state" t "$data")
+    PATH=$oldpath
+    case "${sig%%:*}" in
+      "$real") saw_sha=0 ;;
+      -)       saw_placeholder=0 ;;
+    esac
+    verdict=$(fm_noprogress_observe "$state" t "$n" "$sig" "$(( 1000000 + poll * 60 ))")
+    case "$verdict" in escalate\ *) escalated=$verdict ;; esac
+    n=$(( n + 500 ))
+    poll=$(( poll + 1 ))
+  done
+
+  # Non-vacuous: the fixture has to have actually produced BOTH readings, or
+  # this is just the always-readable case wearing a different name.
+  [ "$saw_sha" -eq 0 ] \
+    || fail "the flaky fixture never once read the real HEAD, so it never exercised the flip"
+  [ "$saw_placeholder" -eq 0 ] \
+    || fail "the flaky fixture never once timed out, so it never exercised the flip"
+  [ -n "$escalated" ] \
+    || fail "a burn against an intermittently-readable worktree never escalated - the flapping head reset the window: record=[$(cat "$(fm_noprogress_record "$state" t)")]"
+
+  unset FM_NOPROGRESS_TIMEOUT FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "a head that flips between a sha and the placeholder is no evidence, so a burn behind a flaky mount still escalates"
+}
+
+# A MISTYPED KNOB MUST NOT BECOME A WAKE STORM. docs/configuration.md invites
+# operators to retune both gates, and `${VAR:-default}` catches only unset and
+# empty. Unvalidated, `60k` makes `[ "$spend" -lt "60k" ]` error and return
+# false, which sails past BOTH gates and escalates on whatever trivial spend the
+# worker happened to have, quoting that figure to a human as a burn.
+test_a_malformed_gate_knob_falls_back_to_its_default() {
+  local dir state verdict
+  dir=$(make_case bad-knob); state="$dir/state"
+
+  # 200 tokens of spend against a window well past any sane age gate. Under the
+  # 60000 default this is nowhere near escalating; unvalidated it escalates.
+  export FM_NOPROGRESS_SPEND=60k FM_NOPROGRESS_SECS=1800
+  fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
+  fm_noprogress_observe "$state" t 200 sig-a 1100 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
+  [ "$verdict" = ok ] \
+    || fail "a malformed FM_NOPROGRESS_SPEND escalated on trivial spend: $verdict"
+
+  # The same for the age gate, and for the shapes a careless edit actually
+  # produces: a thousands separator and a trailing space.
+  for bad in '60,000' '60000 ' 'lots'; do
+    fm_noprogress_clear "$state" t
+    export FM_NOPROGRESS_SPEND="$bad" FM_NOPROGRESS_SECS="$bad"
+    fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
+    fm_noprogress_observe "$state" t 200 sig-a 1100 >/dev/null
+    verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
+    [ "$verdict" = ok ] \
+      || fail "the malformed knob value '$bad' escalated on trivial spend: $verdict"
+  done
+
+  # ...and the fallback is a FALLBACK, not a mute: a well-formed low gate still
+  # escalates, so this test cannot pass by making the guard silent.
+  fm_noprogress_clear "$state" t
+  export FM_NOPROGRESS_SPEND=150 FM_NOPROGRESS_SECS=100
+  fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
+  case "$verdict" in
+    escalate\ *) ;;
+    *) fail "a well-formed gate did not escalate, so the malformed cases prove nothing: $verdict" ;;
+  esac
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "a malformed spend or age gate falls back to its default instead of escalating on trivial spend"
+}
+
 # EVERY TREEHOUSE WORKTREE IS A LINKED WORKTREE, so that is the normal case for
 # this guard, not an exotic one: its .git is a pointer file and its branch ref
 # lives in the common directory rather than beside HEAD. A detached HEAD is the
@@ -582,7 +691,7 @@ test_linked_worktree_and_detached_head_resolve() {
   [ "${sig%%:*}" = "$real" ] \
     || fail "a detached HEAD read as '${sig%%:*}' rather than $real"
 
-  pass "the builtin HEAD read resolves a linked worktree's common-dir ref and a detached HEAD"
+  pass "the artifact fingerprint tracks HEAD in a linked worktree and on a detached HEAD"
 }
 
 # --- the wiring, against a real bin/fm-watch.sh -----------------------------
@@ -798,6 +907,8 @@ test_recorded_per_turn_footers_accumulate_across_turns
 test_frozen_counter_gate_is_the_only_thing_keeping_this_silent
 test_artifact_fingerprint_tracks_each_signal
 test_a_hanging_worktree_cannot_stall_the_poll
+test_an_intermittently_readable_worktree_still_escalates
+test_a_malformed_gate_knob_falls_back_to_its_default
 test_linked_worktree_and_detached_head_resolve
 test_climbing_tokens_without_artifact_escalate
 test_frozen_token_wait_stays_silent

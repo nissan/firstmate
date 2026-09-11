@@ -274,9 +274,18 @@ EOF
 # fm_noprogress_artifact_sig: the cheap artifact fingerprint for a task - the
 # head commit of its worktree, the size of its report, and the size of its
 # status log, joined. Any of the three moving means the worker produced
-# something. A component that cannot be read contributes a fixed placeholder
-# rather than a changing value, so an unreadable worktree can never masquerade
-# as continuous progress.
+# something. A component that cannot be read contributes the fixed placeholder
+# '-' rather than a changing value, so an unreadable worktree can never
+# masquerade as continuous progress.
+#
+# The placeholder alone is not enough, though, and fm_noprogress_observe owns
+# the other half of that invariant. A fixed placeholder is stable only while the
+# component stays unreadable; the HEAD read below is bounded, so on a flaky
+# mount it can succeed on one poll and time out on the next, and the head
+# component then FLIPS between a sha and '-'. Compared whole-string that reads
+# as production twice per flap. See the placeholder rule in
+# fm_noprogress_observe, which is where a '-' head is resolved to "no evidence"
+# rather than to a moved artifact.
 #
 # This is cheap relative to the bounded worktree WALK the guard defers, not
 # cheap in absolute terms: the meta read is a `grep|tail|cut`, each size is a
@@ -337,7 +346,7 @@ fm_noprogress_artifact_sig() {  # <state> <task> <data>
 # and above all a counter that did not move at all.
 fm_noprogress_observe() {  # <state> <task> <tokens> <artifact-sig> <now>
   local state=$1 task=$2 tokens=$3 sig=$4 now=$5
-  local rec prev_tokens prev_sig spend since flagged delta age
+  local rec prev_tokens prev_sig spend since flagged delta age spend_gate secs_gate
 
   rec=$(fm_noprogress_record "$state" "$task")
   case "$tokens" in
@@ -352,6 +361,26 @@ fm_noprogress_observe() {  # <state> <task> <tokens> <artifact-sig> <now>
   spend=$(_fm_noprogress_uint "$(_fm_noprogress_field "$rec" spend)" '')
   since=$(_fm_noprogress_uint "$(_fm_noprogress_field "$rec" since)" '')
   flagged=$(_fm_noprogress_uint "$(_fm_noprogress_field "$rec" flagged)" 0)
+
+  # AN UNREADABLE HEAD IS NO EVIDENCE, NOT A MOVED ARTIFACT. The worktree HEAD
+  # read is bounded, so on a flaky mount it succeeds on one poll and times out
+  # on the next, and the head component flips sha -> '-' -> sha. Compared
+  # whole-string, every flip looks like production: the window restarts, spend
+  # resets to 0 and since resets to now, on every other poll. Accumulated spend
+  # could then never reach the gate, so the guard would go permanently silent
+  # for precisely the task whose worktree is sick - while docs/architecture.md
+  # still said the shape was covered. So a '-' head carries the LAST KNOWN head
+  # forward instead of overwriting it. Nothing new is stored for this: the
+  # carried value goes into the same art= field the record already has. Only a
+  # real sha-to-different-sha transition is production, which also means a
+  # commit that lands DURING an outage is still seen the moment the read
+  # recovers, rather than being swallowed as "no evidence".
+  case "${sig%%:*}" in
+    -) case "$prev_sig" in
+         ''|-:*) ;;
+         *) sig="${prev_sig%%:*}:${sig#*:}" ;;
+       esac ;;
+  esac
 
   # A moved fingerprint is production: restart the window outright, and the
   # spend the previous window accumulated goes with it. This is the branch that
@@ -382,15 +411,26 @@ fm_noprogress_observe() {  # <state> <task> <tokens> <artifact-sig> <now>
   # the wait runs and however much was spent before it began.
   [ "$delta" -gt 0 ] || { printf 'ok\n'; return 0; }
 
+  # Both gates go through the same fall-back-to-default contract every other
+  # number this library reads gets, because `${VAR:-default}` catches only unset
+  # and empty - not a typo. docs/configuration.md invites operators to retune
+  # exactly these two, and an unvalidated `60k` makes `[ -lt ]` error and return
+  # false, which sails past BOTH gates and escalates on whatever trivial spend
+  # the worker happened to have: a per-poll wake storm quoting a fabricated
+  # figure, which is the false-alarm shape this guard exists to avoid. Zero is
+  # a legal setting here (unlike the timeout, where it would disable the bound).
+  spend_gate=$(_fm_noprogress_uint "${FM_NOPROGRESS_SPEND:-}" 60000)
+  secs_gate=$(_fm_noprogress_uint "${FM_NOPROGRESS_SECS:-}" 1800)
+
   age=$(( now - since ))
   [ "$age" -ge 0 ] || age=0
-  if [ "$spend" -lt "$FM_NOPROGRESS_SPEND" ] || [ "$age" -lt "$FM_NOPROGRESS_SECS" ]; then
+  if [ "$spend" -lt "$spend_gate" ] || [ "$age" -lt "$secs_gate" ]; then
     printf 'ok\n'
     return 0
   fi
   # Re-escalation is paced by further spend, not by the clock: a flagged burn
   # that keeps burning earns another flag only after another full threshold.
-  if [ "$flagged" -gt 0 ] && [ "$(( spend - flagged ))" -lt "$FM_NOPROGRESS_SPEND" ]; then
+  if [ "$flagged" -gt 0 ] && [ "$(( spend - flagged ))" -lt "$spend_gate" ]; then
     printf 'ok\n'
     return 0
   fi
