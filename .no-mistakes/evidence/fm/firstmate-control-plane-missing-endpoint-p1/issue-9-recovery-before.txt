@@ -1,0 +1,48 @@
+=== firstmate issue #9: recovering a task after a Herdr server restart ===
+implementation under test: BEFORE the fix (base commit b88911a)
+(hermetic: stubbed session provider, no real agent; the recorded window
+ 'fmses:fm-fm-noprogress-review' is structurally absent, exactly as every
+ task's endpoint reads after 'herdr server stop')
+
+------------------------------------------------------------
+$ bin/fm-control.sh rev1 exit
+error: task rev1's recorded endpoint is gone, so there is no agent to stop; reconcile the task before any further control action
+[exit status 1]
+------------------------------------------------------------
+$ bin/fm-spawn.sh rev1 --relaunch --harness claude
+error: task rev1's endpoint reads 'missing'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh rev1 exit)
+[exit status 1]
+------------------------------------------------------------
+recorded endpoint after the recovery attempt:
+  window=fmses:fm-rev1
+recorded worktree after the recovery attempt:
+  worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.QtxXqf/evidence-30519/wt  (recorded: /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.QtxXqf/evidence-30519/wt)
+live windows in the session container:
+uncommitted work still in the recorded worktree:
+  PRESERVED byte-identically: uncommitted investigation notes the captain must not lose
+------------------------------------------------------------
+
+$ bin/fm-control.sh rev2 relaunch --note "herdr server restarted; resume where you left off"
+error: task rev2's recorded endpoint is gone, so there is no agent to stop; reconcile the task before any further control action
+error: relaunch of rev2 failed while stopping the old agent and its state is 'missing'; the durable record and progress note were retained for recovery
+[exit status 1]
+  window=fmses:fm-rev2
+  worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.QtxXqf/evidence2-29962/wt
+  uncommitted file still present: half-written adapter change
+  transaction journal:
+    v1
+    task=rev2
+    phase=failed:stopping
+    ts=2026-09-11T10:07:50Z
+    backend=tmux
+    endpoint=fmses:fm-rev2
+    worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.QtxXqf/evidence2-29962/wt
+    kind=ship
+    from_harness=claude
+    from_model=default
+    from_effort=default
+    to_harness=claude
+    to_model=default
+    to_effort=default
+    rollback=none-agent-state-missing
+------------------------------------------------------------

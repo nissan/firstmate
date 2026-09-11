@@ -1,0 +1,33 @@
+=== firstmate issue #9: returning a stranded report-less scout slot ===
+implementation under test: AFTER the fix (target commit 15a23a0)
+(the scout's recorded window is structurally gone, as after 'herdr server
+ stop', and it never wrote data/<id>/report.md)
+
+state before:
+  window=window=firstmate:fm-sc-stranded
+  report.md present: no
+  worktree present:  yes
+------------------------------------------------------------
+$ bin/fm-teardown.sh sc-stranded
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: scout task sc-stranded has no report at /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-teardown-scout-report.fNKc2k/evidence/home/data/sc-stranded/report.md.
+The report is the work product. Have the crewmate write it, or use --force after explicit discard approval.
+[exit status 1]
+------------------------------------------------------------
+$ bin/fm-teardown.sh sc-stranded --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+NOTICE: FORCED teardown of scout task sc-stranded with NO report at /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-teardown-scout-report.fNKc2k/evidence/home/data/sc-stranded/report.md - its investigation is being discarded and cannot be recovered.
+teardown sc-stranded complete (window firstmate:fm-sc-stranded, worktree /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-teardown-scout-report.fNKc2k/evidence/worktree)
+Backlog: sc-stranded just finished (this home keeps no markdown backlog at /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-teardown-scout-report.fNKc2k/evidence/home/data/backlog.md). Update /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-teardown-scout-report.fNKc2k/evidence/home/data/backlog.md - move sc-stranded to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+[exit status 0]
+------------------------------------------------------------
+state after:
+  task record state/sc-stranded.meta present: no - slot returned
+  worktree present: yes
+------------------------------------------------------------

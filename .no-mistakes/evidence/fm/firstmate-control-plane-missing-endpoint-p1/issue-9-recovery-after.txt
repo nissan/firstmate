@@ -1,0 +1,54 @@
+=== firstmate issue #9: recovering a task after a Herdr server restart ===
+implementation under test: AFTER the fix (target commit 15a23a0)
+(hermetic: stubbed session provider, no real agent; the recorded window
+ 'fmses:fm-fm-noprogress-review' is structurally absent, exactly as every
+ task's endpoint reads after 'herdr server stop')
+
+------------------------------------------------------------
+$ bin/fm-control.sh rev1 exit
+already-stopped rev1 harness=claude backend=tmux endpoint=fmses:fm-rev1 worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence-20904/wt
+[exit status 0]
+------------------------------------------------------------
+$ bin/fm-spawn.sh rev1 --relaunch --harness claude
+warning: /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence-20904/home/data/rev1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned rev1 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-rev1 worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence-20904/wt
+[exit status 0]
+------------------------------------------------------------
+recorded endpoint after the recovery attempt:
+  window=firstmate:fm-rev1
+recorded worktree after the recovery attempt:
+  worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence-20904/wt  (recorded: /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence-20904/wt)
+live windows in the session container:
+  fm-rev1
+uncommitted work still in the recorded worktree:
+  PRESERVED byte-identically: uncommitted investigation notes the captain must not lose
+------------------------------------------------------------
+
+$ bin/fm-control.sh rev2 relaunch --note "herdr server restarted; resume where you left off"
+warning: /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence2-27477/home/data/rev2/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+relaunched rev2 harness=claude from=claude model=default effort=default backend=tmux endpoint=firstmate:fm-rev2 worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence2-27477/wt
+[exit status 0]
+  window=firstmate:fm-rev2
+  worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence2-27477/wt
+  uncommitted file still present: half-written adapter change
+  transaction journal:
+    v1
+    task=rev2
+    phase=complete
+    ts=2026-09-11T10:08:02Z
+    backend=tmux
+    endpoint=firstmate:fm-rev2
+    worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence2-27477/wt
+    kind=ship
+    from_harness=claude
+    from_model=default
+    from_effort=default
+    to_harness=claude
+    to_model=default
+    to_effort=default
+    worktree_head=603e490a555245e598fe2fea76a877780b385466
+    worktree_dirty=yes
+    pre_exit_endpoint_state=missing
+    note_file=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-control-relaunch.8nuDA8/evidence2-27477/home/state/rev2.control-relaunch.note
+    exit_result=already-stopped
+------------------------------------------------------------
