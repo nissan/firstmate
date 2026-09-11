@@ -1378,35 +1378,50 @@ handle_wake() {  # <reason> <state>
               else
                 decision=$(classify_stale "$arg" "$state" "$span_record" "$span_rc")
               fi
+              # THE SPEND-WITHOUT-ARTIFACT GUARD OUTRANKS EVERY STATUS-LOG
+              # ABSORPTION, so it is routed FIRST, before any of the precedence
+              # below can see it. That guard's signal is SPEND, and no status
+              # line is evidence about spend: `working:`, `paused:` and `held:`
+              # are all the crew's own prose, written once and true or not ever
+              # after. Left to the lines below, a burning crew whose last line
+              # was a nonterminal `working:` classified as `self|transient
+              # stale`, housekeeping's recheck found the pane busy (a climbing
+              # token counter is busy), dropped the marker and acked the wake;
+              # one whose last line was a three-hour-old `paused:` was absorbed
+              # outright by the `pause` arm. Either way the guard was silent in
+              # away mode, which is the exact posture the 18-hour burn it exists
+              # to catch ran in. Neither the declared wait nor the captain hold
+              # survives as an exception here: the hold read at this point is
+              # the same unverified status line (the verified form pairs it with
+              # fm_afk_contract_present, as the afk path below does), and the
+              # attended watcher path escalates this pane whatever its status
+              # says, so absorbing it here would only be the two triage paths
+              # disagreeing about one signal. Repeats stay bounded because the
+              # guard itself paces re-escalation by further spend, and the
+              # declaration's own pause tracking is reconciled below either way.
+              #
               # An enriched wedge reason carries the watcher's own escalation count
               # and its "do not re-absorb on the run-step/pane state alone" demand,
               # so it outranks this daemon's cheaper status-log absorption - EXCEPT
               # under a current declared wait. A `pause` verdict is not run-step or
               # pane state at all: it is the crew's own declaration that this pane
               # waits by design, which is the one question the wedge timer cannot
-              # answer for itself. Overriding it escalated healthy declared waits
-              # once per STALE_ESCALATE_SECS for as long as the wait lasted.
+              # answer for itself, and unlike spend it is the very question the
+              # wedge asks. Overriding it escalated healthy declared waits once
+              # per STALE_ESCALATE_SECS for as long as the wait lasted.
               # Housekeeping (2b) then owns the re-surface, so the wait is still
               # bounded - by one recheck per PAUSE_RESURFACE_SECS instead.
-              #
-              # The spend-without-artifact guard's escalation outranks the same
-              # absorption, for a reason the wedge spelling does not cover: that
-              # guard's signal is SPEND, not idleness, and a status log is not
-              # evidence about spend. Left to the lines above, a burning crew
-              # whose last line is a nonterminal `working:` classifies as
-              # `self|transient stale`, housekeeping's recheck finds the pane
-              # busy (a climbing token counter is busy), drops the marker, and
-              # the wake is acked without ever reaching the escalation buffer -
-              # so the guard was permanently silent in away mode, which is the
-              # exact posture the 18-hour burn it exists to catch ran in.
-              case "${decision%%|*}" in
-                pause) : ;;
-                *) case "$stale_detail" in
-                     idle\ *s,\ possible\ wedge,\ escalation\ *|"$FM_NOPROGRESS_REASON_PREFIX"*)
-                       last=$(last_status_line "$state/$task.status")
-                       status_is_paused_or_captain_held "$last" \
-                         || decision="escalate|${reason#stale: }"
-                       ;;
+              case "$stale_detail" in
+                "$FM_NOPROGRESS_REASON_PREFIX"*) decision="escalate|${reason#stale: }" ;;
+                *) case "${decision%%|*}" in
+                     pause) : ;;
+                     *) case "$stale_detail" in
+                          idle\ *s,\ possible\ wedge,\ escalation\ *)
+                            last=$(last_status_line "$state/$task.status")
+                            status_is_paused_or_captain_held "$last" \
+                              || decision="escalate|${reason#stale: }"
+                            ;;
+                        esac ;;
                    esac ;;
               esac ;;
     check:*)  decision=$(classify_check "$reason") ;;

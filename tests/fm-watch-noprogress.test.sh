@@ -549,7 +549,7 @@ test_a_hanging_worktree_cannot_stall_the_poll() {
 # the real function against a git shim that succeeds and times out alternately,
 # with a climbing counter and no artifact growth, and requires an escalation.
 test_an_intermittently_readable_worktree_still_escalates() {
-  local dir state data wt flakybin oldpath real
+  local dir state data wt flakybin oldpath real real_git
   local n poll verdict escalated sig saw_sha saw_placeholder
   dir=$(make_case flaky-worktree); state="$dir/state"; data="$dir/data"
   wt="$dir/wt"; flakybin="$dir/flakybin"; mkdir -p "$wt" "$data/t" "$flakybin"
@@ -563,10 +563,13 @@ test_an_intermittently_readable_worktree_still_escalates() {
   real=$(git -C "$wt" rev-parse HEAD)
 
   # Succeeds on even invocations, hangs past the bound on odd ones - an
-  # intermittently-slow mount, which is the case the bound exists for.
+  # intermittently-slow mount, which is the case the bound exists for. The real
+  # binary is resolved from PATH before the shim shadows it, so this works on a
+  # host whose git is not under /usr/bin.
+  real_git=$(command -v git)
   # shellcheck disable=SC2016  # The $ expansions belong to the generated shim.
-  printf '#!/usr/bin/env bash\nn=$(cat "%s/n" 2>/dev/null || echo 0)\nprintf "%%s" "$((n+1))" > "%s/n"\nif [ $((n %% 2)) -eq 1 ]; then sleep 120; fi\nexec /usr/bin/git "$@"\n' \
-    "$dir" "$dir" > "$flakybin/git"
+  printf '#!/usr/bin/env bash\nn=$(cat "%s/n" 2>/dev/null || echo 0)\nprintf "%%s" "$((n+1))" > "%s/n"\nif [ $((n %% 2)) -eq 1 ]; then sleep 120; fi\nexec %s "$@"\n' \
+    "$dir" "$dir" "$real_git" > "$flakybin/git"
   chmod +x "$flakybin/git"
   export FM_NOPROGRESS_TIMEOUT=1 FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
 
@@ -633,6 +636,30 @@ test_a_malformed_gate_knob_falls_back_to_its_default() {
       || fail "the malformed knob value '$bad' escalated on trivial spend: $verdict"
   done
 
+  # A SPEND GATE OF ZERO IS REJECTED TOO, because re-escalation is paced in
+  # units of that same gate: at zero the pacing comparison can never hold, so
+  # every later poll with any spend at all escalates, and each escalation exits
+  # the watcher and restarts the whole single-threaded fleet poll loop. Taken
+  # literally, 200 tokens against a long-open window would escalate here.
+  fm_noprogress_clear "$state" t
+  export FM_NOPROGRESS_SPEND=0 FM_NOPROGRESS_SECS=100
+  fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
+  [ "$verdict" = ok ] \
+    || fail "a spend gate of 0 escalated on 200 tokens instead of falling back to the default: $verdict"
+
+  # ...and with the default in force, pacing does what it is there for: a burn
+  # that crosses the default still escalates once, and the very next poll's
+  # further spend is suppressed until another full threshold is spent.
+  verdict=$(fm_noprogress_observe "$state" t 60300 sig-a 9100)
+  case "$verdict" in
+    escalate\ *) ;;
+    *) fail "a spend gate of 0 did not escalate at the default threshold either, so the fallback muted the guard: $verdict" ;;
+  esac
+  verdict=$(fm_noprogress_observe "$state" t 61300 sig-a 9200)
+  [ "$verdict" = ok ] \
+    || fail "re-escalation was unpaced under a spend gate of 0: $verdict"
+
   # ...and the fallback is a FALLBACK, not a mute: a well-formed low gate still
   # escalates, so this test cannot pass by making the guard silent.
   fm_noprogress_clear "$state" t
@@ -645,7 +672,7 @@ test_a_malformed_gate_knob_falls_back_to_its_default() {
   esac
 
   unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
-  pass "a malformed spend or age gate falls back to its default instead of escalating on trivial spend"
+  pass "a malformed or zero spend gate, and a malformed age gate, fall back to the default instead of escalating on trivial spend"
 }
 
 # EVERY TREEHOUSE WORKTREE IS A LINKED WORKTREE, so that is the normal case for

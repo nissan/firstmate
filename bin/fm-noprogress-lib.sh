@@ -116,12 +116,15 @@ _FM_NOPROGRESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null
 # same day it starts rather than after a human finally looks. It is deliberately
 # far above what any single turn renders: one long reasoning turn that then
 # writes a file must not trip this, and with the time gate below it cannot,
-# because a window that young is never eligible.
+# because a window that young is never eligible. A value that is not a positive
+# integer falls back to the default; zero is rejected because re-escalation is
+# paced in units of this same gate (see fm_noprogress_observe).
 FM_NOPROGRESS_SPEND=${FM_NOPROGRESS_SPEND:-60000}
 
 # Seconds the artifact fingerprint must have been unchanged before the guard
 # escalates. Both gates must be crossed: a fast burst of spend that lands an
-# artifact minutes later is not the shape being caught.
+# artifact minutes later is not the shape being caught. A value that is not a
+# non-negative integer falls back to the default.
 FM_NOPROGRESS_SECS=${FM_NOPROGRESS_SECS:-1800}
 
 # The phrase every escalation this guard raises is built around, and the one
@@ -417,9 +420,16 @@ fm_noprogress_observe() {  # <state> <task> <tokens> <artifact-sig> <now>
   # exactly these two, and an unvalidated `60k` makes `[ -lt ]` error and return
   # false, which sails past BOTH gates and escalates on whatever trivial spend
   # the worker happened to have: a per-poll wake storm quoting a fabricated
-  # figure, which is the false-alarm shape this guard exists to avoid. Zero is
-  # a legal setting here (unlike the timeout, where it would disable the bound).
-  spend_gate=$(_fm_noprogress_uint "${FM_NOPROGRESS_SPEND:-}" 60000)
+  # figure, which is the false-alarm shape this guard exists to avoid.
+  #
+  # The spend gate rejects zero as well, exactly as the timeout does, because
+  # re-escalation below is paced in units of THIS gate: at zero the pacing
+  # comparison can never hold, so every subsequent poll with any spend at all
+  # escalates and each escalation exits the watcher, restarting the whole
+  # single-threaded fleet poll loop once per FM_POLL for as long as the burn
+  # runs. The age gate has no such second role, so zero remains legal there.
+  spend_gate=${FM_NOPROGRESS_SPEND:-}
+  case "$spend_gate" in ''|*[!0-9]*|0) spend_gate=60000 ;; esac
   secs_gate=$(_fm_noprogress_uint "${FM_NOPROGRESS_SECS:-}" 1800)
 
   age=$(( now - since ))

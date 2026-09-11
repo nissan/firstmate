@@ -688,7 +688,7 @@ test_stale_diagnostic_wedge_survives_busy_housekeeping() {
 # 18-hour burn ran in. The guard's signal is SPEND, and a status log is not
 # evidence about spend, so its verdict outranks that absorption.
 test_spend_without_artifact_survives_away_mode_triage() {
-  local dir state fakebin task win pane key reason
+  local dir state fakebin task win pane key reason sig verdict n poll
   dir=$(make_supercase noprogress-away-triage)
   state="$dir/state"; fakebin="$dir/fakebin"
   task=burn-w1; win="sess:fm-$task"; pane="$dir/pane.txt"
@@ -728,17 +728,68 @@ test_spend_without_artifact_survives_away_mode_triage() {
   [ -e "$state/.subsuper-stale-$key" ] \
     || fail "a plain transient stale did not record wedge aging, so the control proves nothing"
 
-  # And a crew that DECLARED a wait keeps the declaration's precedence: the
-  # daemon routes it to the pause cadence exactly as it does for a wedge.
+  # AND A STALE DECLARED WAIT DOES NOT ABSORB THE BURN EVIDENCE EITHER. A
+  # `paused:` line is the crew's own prose about idleness, written once and then
+  # true or not ever after; this guard's signal is SPEND. The motivating burn ran
+  # unattended, which is precisely the posture in which a declaration outlives
+  # the wait it named - so absorbing here left the guard silent in the one mode
+  # it was built for, while the attended watcher escalated the identical pane.
+  #
+  # Both halves below are driven through the REAL guard rather than a
+  # hand-written reason, so the escalating case and the silent control differ in
+  # the one thing that decides it: whether the counter moved.
   : > "$state/.subsuper-escalations"
   rm -f "$state/.subsuper-stale-$key"
   printf 'paused: the audit engine is running to completion\n' >> "$state/$task.status"
+  sig=$(fm_noprogress_artifact_sig "$state" "$task" "$dir/data")
+  fm_noprogress_clear "$state" "$task"
+  verdict=ok
+  n=20000
+  poll=0
+  while [ "$poll" -lt 8 ] && [ "${verdict%% *}" != escalate ]; do
+    verdict=$(fm_noprogress_observe "$state" "$task" "$n" "$sig" "$(( 1000000 + poll * 600 ))")
+    n=$(( n + 20000 ))
+    poll=$(( poll + 1 ))
+  done
+  case "$verdict" in
+    escalate\ *) ;;
+    *) fail "the guard itself never escalated on a climbing counter against an unchanged fingerprint, so this case pins nothing: $verdict" ;;
+  esac
+  verdict=${verdict#escalate }
+  reason=$(fm_noprogress_reason "$win" "${verdict%% *}" "${verdict##* }")
   LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
     handle_wake "$reason" "$state"
-  [ ! -s "$state/.subsuper-escalations" ] \
-    || fail "a declared wait lost its precedence to the guard override: $(cat "$state/.subsuper-escalations")"
+  grep -qF "$FM_NOPROGRESS_REASON_PREFIX" "$state/.subsuper-escalations" 2>/dev/null \
+    || fail "a declared wait absorbed the burn evidence in away mode: [$(cat "$state/.subsuper-escalations" 2>/dev/null)]"
 
-  pass "a spend-without-artifact escalation survives away-mode triage while plain stale and declared waits are unchanged"
+  # THE CONTROL: the same declared wait with a FROZEN counter. A frozen counter
+  # is a worker waiting, not burning, so the guard produces no verdict to route
+  # at all and nothing can reach the escalation buffer - however long the wait
+  # runs and however much was spent before it began.
+  : > "$state/.subsuper-escalations"
+  fm_noprogress_clear "$state" "$task"
+  poll=0
+  while [ "$poll" -lt 8 ]; do
+    verdict=$(fm_noprogress_observe "$state" "$task" 250000 "$sig" "$(( 1000000 + poll * 600 ))")
+    [ "$verdict" = ok ] \
+      || fail "a frozen counter under a declared wait produced a verdict at poll $poll: $verdict"
+    poll=$(( poll + 1 ))
+  done
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "a frozen counter under a declared wait still reached the escalation buffer: $(cat "$state/.subsuper-escalations")"
+
+  # ...and the declaration keeps its precedence over everything that is NOT this
+  # guard, so the override stays scoped to the one signal a status line cannot
+  # speak to: an ordinary stale on the same paused crew takes the pause cadence.
+  rm -f "$state/.subsuper-stale-$key" "$state/.subsuper-paused-$key"
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    handle_wake "stale: $win (idle 250s)" "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "a plain stale under a declared wait escalated, so the guard override is not scoped: $(cat "$state/.subsuper-escalations")"
+  [ -e "$state/.subsuper-paused-$key" ] \
+    || fail "a plain stale under a declared wait did not take the pause cadence, so the control proves nothing"
+
+  pass "a spend-without-artifact escalation survives away-mode triage even under a declared wait, while a frozen counter and a plain stale are unchanged"
 }
 
 # The second half of issue #3149. The watcher's wedge timer emits an enriched
