@@ -69,7 +69,7 @@ It is not deterministic across the verified adapters: codex, grok, and gemini re
    A ship or scout relaunch requires `--note`, because the replacement inherits the local copy but none of the conversation; the note is appended to the instructions it reads.
    A secondmate relaunch does not require one and never rewrites its standing charter.
 4. **Stop the old agent** through the `exit` verb, with its postcondition.
-5. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which adopts the recorded endpoint and worktree instead of creating either, clears the previous harness's per-task wiring, and arms a fresh busy generation.
+5. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which reuses the recorded worktree instead of acquiring one, adopts the recorded endpoint when it still exists and otherwise recreates it, clears the previous harness's per-task wiring, and arms a fresh busy generation.
 
 Switching harness is therefore one ordinary relaunch rather than a separate mechanism.
 
@@ -126,11 +126,8 @@ The notice is printed only after the worktree has actually been returned - past 
 ### What recovery does to Herdr presentation
 
 Presentation is a viewing arrangement, never endpoint authority: the durable record's endpoint fields are.
-So recovery is scoped to the endpoint, and the presentation layout it lands in follows from what is still on disk:
-
-- A recovered task whose presentation journal survived is reclaimed into its own nested workspace, exactly as a resume is.
-- A recovered task whose journal is gone is recreated in the ordinary **flat container layout**, because the fresh-projection path is only ever taken for a task that has no record yet and a relaunch always has one.
-  The task is fully recovered and fully controllable; it simply presents flat rather than nested until it is next spawned fresh.
+So recovery is scoped to the endpoint, and the layout a recovered Herdr task comes back in - its own nested workspace when its presentation journal survived, the ordinary flat container layout when that journal is gone - is owned by [`herdr-backend.md`](herdr-backend.md#restart-and-liveness-behavior).
+Either way the task is fully recovered and fully controllable.
 
 Behavioral coverage for the recreate path is tmux-only (`tests/fm-control-relaunch.test.sh`), since the hermetic suite stubs the session provider.
 The Herdr half belongs in the lab-guarded slot next to `tests/fm-control-herdr-smoke.test.sh`, which drives a real Herdr server; adding it is tracked as a follow-up rather than done here.
@@ -152,6 +149,7 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 ## Verification
 
-- `tests/fm-control.test.sh` - the adapter contract for every verified harness, the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
-- `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, and rollback after a failed launch.
+- `tests/fm-control.test.sh` - the adapter contract for every verified harness, the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, missing, and idempotent lifecycle cases - including the missing endpoint that `exit` accepts and `interrupt` still refuses - and marker non-regression, all against a stubbed session provider.
+- `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and the missing-endpoint recovery above, including the aborted recreate that leaves no orphan endpoint behind.
+- `tests/fm-teardown-scout-report.test.sh` - the report-less scout: the refusal without `--force`, the forced discard notice, and the refusals that must never print it.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.

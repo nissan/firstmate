@@ -28,7 +28,8 @@
 #   instruction files or a secondmate's charter.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
-#   task's own recorded endpoint and worktree instead of creating either. It is
+#   task's own recorded worktree instead of acquiring one, and into its recorded
+#   endpoint when that endpoint still exists. It is
 #   the launch half of the control plane (bin/fm-control.sh relaunch), which
 #   owns the checkpoint, the progress note, stopping the previous agent, and the
 #   transaction; call fm-control rather than this flag directly unless you are
@@ -40,9 +41,16 @@
 #   ordinary relaunch. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
-#   the new incarnation. The replacement still never starts outside the copy
-#   holding the work: a Herdr shell that has drifted out of the recorded
-#   worktree is told once to return, and only a shell that will not go refuses.
+#   the new incarnation. Both `dead` (the endpoint exists and holds no agent)
+#   and `missing` (the endpoint is structurally gone, as after a session-provider
+#   restart) are that proof: a dead endpoint is adopted, while a missing one is
+#   RECREATED in this launcher's own session container with the same per-task
+#   wiring a fresh spawn builds and published with the rest of the record
+#   (docs/agent-control.md owns that recovery). The replacement still never
+#   starts outside the copy holding the work: a recreated endpoint - which is
+#   built in the project directory - and a Herdr shell that has drifted out of
+#   the recorded worktree are each told once to go there, and only a shell that
+#   will not go refuses.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
