@@ -1,0 +1,45 @@
+================================================================================
+ REAL WATCHER (bin/fm-watch.sh), REAL PANE CAPTURE, THREE LIVE WORKERS
+================================================================================
+
+### 1. ops:fm-burn - token counter climbing, nothing produced
+
+  the pane the watcher last captured:
+    | ᐧ Editing src/engine/planner.rs (frame 12)
+    | ✢ Pollinating… (16s · ↓ 10000 tokens · thought for 1s)
+
+  what the watcher printed (this line is what wakes firstmate):
+    stale: ops:fm-burn (spending without producing: 7000 tokens with no commit, report write, or status line for the last 4s - read the pane before absorbing; nothing was stopped, killing this worker is the captain's call)
+
+  the durable wake queue a human reads (state/.wake-queue):
+    1789107610	1	stale	ops:fm-burn	stale: ops:fm-burn (spending without producing: 7000 tokens with no commit, report write, or status line for the last 4s - read the pane before absorbing; nothing was stopped, killing this worker is the captain's call)
+
+  every tmux command the watcher issued against that worker:
+    capture-pane -p -t ops:fm-burn -S -40
+    display-message -p -t ops:fm-burn #{pane_id}
+    ^ read-only. The guard escalated; it never interrupted, signalled, or killed.
+
+### 2. ops:fm-waiting - token counter FROZEN (a worker parked on a pipeline)
+  pane still churning, counter frozen at:
+    ↓ 900 tokens
+  guard record written (so the silence is an observation, not a no-op):
+    tokens=900
+    spend=0
+    art=-:-:-
+    since=1789107612
+    flagged=0
+  wake queue:
+    (empty - nothing was raised)
+  watcher still polling: yes
+
+### 3. ops:fm-producing - tokens climbing AND the report growing
+  report the scout wrote while spending:
+    finding 0: the retry path drops the correlation id
+    finding 1: the retry path drops the correlation id
+    finding 2: the retry path drops the correlation id
+    ... 25 findings
+  counter reached:
+    ↓ 18400 tokens
+  wake queue:
+    (empty - nothing was raised)
+  watcher still polling: yes

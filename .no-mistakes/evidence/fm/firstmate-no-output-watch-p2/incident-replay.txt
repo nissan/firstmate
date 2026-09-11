@@ -1,0 +1,36 @@
+================================================================================
+ THE INCIDENT, REPLAYED: 18 hours, 292.7k tokens, zero output
+================================================================================
+ pane footer replayed (recorded live, docs/verification/runtime-backends.md):
+   | ᐧ Reading src/engine/planner.rs
+   | ᐧ Thinking about the retry path
+   | ✢ Pollinating… (16s · ↓ 1.1k tokens · thought for 1s)
+   per-turn counter: restarts at every turn boundary (266 turns x 1.1k tokens)
+   artifacts: no commit, no report write, no status line - for the whole run
+   gates: FM_NOPROGRESS_SPEND=60000  FM_NOPROGRESS_SECS=1800  (production defaults)
+
+--------------------------------------------------------------------------------
+ BEFORE  bin/fm-noprogress-lib.sh @ dd431fc (this branch's first commit)
+--------------------------------------------------------------------------------
+   escalations over 17h44m of unproductive spend: 0
+   >> the burn runs all day and nobody is told.
+
+--------------------------------------------------------------------------------
+ AFTER   bin/fm-noprogress-lib.sh @ HEAD
+--------------------------------------------------------------------------------
+   escalations over 17h44m of unproductive spend: 4
+   first escalation at turn 55, 3h39m into the run, 60200 tokens accumulated
+
+   what the human is told:
+     stale: ops:fm-burner (spending without producing: 60200 tokens with no 
+     commit, report write, or status line for the last 13140s - read the pane 
+     before absorbing; nothing was stopped, killing this worker is the 
+     captain's call)
+
+================================================================================
+ THE TWO SHAPES THAT MUST STAY SILENT (same 18 hours, same library @ HEAD)
+================================================================================
+   frozen counter (a worker waiting on a background pipeline)
+     escalations: 0   -> a wait is never flagged
+   counter climbing AND the report growing (a scout writing findings)
+     escalations: 0   -> production is never flagged

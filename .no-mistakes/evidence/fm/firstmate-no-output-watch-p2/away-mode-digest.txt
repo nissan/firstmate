@@ -1,0 +1,57 @@
+================================================================================
+ AWAY MODE: what reaches the captain when nobody is watching
+================================================================================
+
+### A. burning crew, still reporting progress
+  crew status log (what the daemon's cheap classifier reads):
+      working: still working through the audit
+  that classifier's own verdict for this pane:
+      self|transient stale (sess:fm-w-progress): working: still working through the audit
+
+  >> what the captain receives while away:
+      Supervisor escalate (       1 event(s)): sess:fm-w-progress (spending 
+      without producing: 60000 tokens with no commit, report write, or status 
+      line for the last 1800s - read the pane before absorbing; nothing was 
+      stopped, killing this worker is the captain's call) (pre-read; re-arm not 
+      needed — watcher daemon-managed)
+
+### B. burning crew behind a DECLARED WAIT (the unattended posture)
+  crew status log (what the daemon's cheap classifier reads):
+      working: started the audit
+      paused: the audit engine is running to completion
+  that classifier's own verdict for this pane:
+      pause|paused (awaiting external), rechecked on a long cadence: paused: the audit engine is running to completion
+
+  >> what the captain receives while away:
+      Supervisor escalate (       1 event(s)): sess:fm-w-paused (spending without 
+      producing: 60000 tokens with no commit, report write, or status line for 
+      the last 1800s - read the pane before absorbing; nothing was stopped, 
+      killing this worker is the captain's call) (pre-read; re-arm not needed — 
+      watcher daemon-managed)
+
+### C. same declared wait, counter FROZEN - a real wait, not a burn
+  crew status log (what the daemon's cheap classifier reads):
+      working: started the audit
+      paused: the audit engine is running to completion
+  that classifier's own verdict for this pane:
+      pause|paused (awaiting external), rechecked on a long cadence: paused: the audit engine is running to completion
+  the guard's verdict: ok on every poll - nothing to route
+
+  >> what the captain receives while away:
+      (nothing - the captain is not paged)
+
+### D. burning crew with an UNREAD actionable status event
+    (the burn must not silently mark that event reported)
+  crew status log (what the daemon's cheap classifier reads):
+      blocked: need prod credentials
+  that classifier's own verdict for this pane:
+      escalate|stale + actionable status: blocked: need prod credentials
+
+  >> what the captain receives while away:
+      Supervisor escalate (       1 event(s)): stale + actionable status: 
+      blocked: need prod credentials + sess:fm-w-blocked (spending without 
+      producing: 60000 tokens with no commit, report write, or status line for 
+      the last 1800s - read the pane before absorbing; nothing was stopped, 
+      killing this worker is the captain's call) (pre-read; re-arm not needed — 
+      watcher daemon-managed)
+

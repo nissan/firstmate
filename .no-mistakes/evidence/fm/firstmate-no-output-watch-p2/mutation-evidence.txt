@@ -1,0 +1,61 @@
+DELETE-THE-GUARD MUTATION EVIDENCE
+==================================
+The captain's rule for this guard family: "a green suite that cannot fail is the
+failure mode this whole guard family exists to end." Each load-bearing line the
+review named was removed from a throwaway copy of the tree at 52fdc0a and the
+relevant suite re-run, to show the new coverage actually fails without it.
+
+--------------------------------------------------------------------------------
+MEDIUM 2 - the frozen-counter gate (the headline false-alarm defence)
+  mutation: bin/fm-noprogress-lib.sh:415
+            [ "$delta" -gt 0 ] || { printf 'ok\n'; return 0; }   ->   :
+  suite:    tests/fm-watch-noprogress.test.sh
+
+  ok - the pane counter grammar reads both recorded harness signatures and refuses to guess
+  ok - the live counter is the reading, so a constant beside it cannot pin the guard silent
+  ok - an inline API error naming a token limit is never read as spend
+  ok - observe: the burn escalates; frozen counter, moved artifact, one gate alone, and an unreadable counter stay silent
+  ok - escalations are paced by further spend, and a counter reset cannot launder a burn
+  ok - the recorded per-turn footers accumulate across turn boundaries, so an all-day burn escalates while a frozen footer stays silent
+  not ok - a worker that spent past the gate and then went quiet was flagged as a burn: escalate 4000 200
+
+  -> the gate is now isolated by a test of its own. Against the shipped code the
+     same case passes.
+
+--------------------------------------------------------------------------------
+LOW - the worktree-written absorb branch (an actively-writing crew is deferred)
+  mutation: bin/fm-watch.sh:946-950, the crew_worktree_written_since branch in
+            noprogress_check, deleted entirely
+  suite:    tests/fm-watch-noprogress.test.sh
+
+  not ok - a crew writing uncommitted source in its worktree was flagged as a burn:
+           queue=[... stale: test:fm-writing (spending without producing: 12000 tokens
+           with no commit, report write, or status line for the last 1s ...)]
+
+  -> deleting the branch now escalates a crew that is doing its job, and the
+     suite says so.
+
+--------------------------------------------------------------------------------
+LOW - fm_noprogress_clear on teardown (a retired id leaves no window behind)
+  mutation: bin/fm-teardown.sh:3436, fm_noprogress_clear "$STATE" "$ID", deleted
+  suite:    tests/fm-teardown.test.sh
+
+  not ok - noprogress-retire: teardown left the guard record behind for a reusable id
+
+  -> the docstring's promise is now wired AND covered; removing the wiring fails.
+
+--------------------------------------------------------------------------------
+MEDIUM 1 - spend must accumulate ACROSS turn boundaries
+  mutation: bin/fm-noprogress-lib.sh:403-408, the turn-boundary reset the review
+            found put back - a counter that dropped resets the accumulated spend
+            to what the new turn renders, instead of adding it
+  suite:    tests/fm-watch-noprogress.test.sh
+
+  not ok - 540 turns of real per-turn footers - 18 hours, 594000 tokens - against
+           an unchanged artifact never escalated at the shipped gates
+           (60000 tokens / 1800s)
+
+  -> the regression test fails against the pre-fix accounting and passes against
+     the shipped one, which is the "fail before, pass after" the captain asked
+     for. See incident-replay.txt for the same result measured on the pre-fix
+     library verbatim (dd431fc) rather than on a reintroduced mutation.
