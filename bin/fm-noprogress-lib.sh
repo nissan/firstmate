@@ -32,12 +32,16 @@
 # ARTIFACTS. What counts as production is deliberately the same set a
 # supervisor would look at: a commit landing in the task worktree, the scout
 # report growing, a status line appended, or files written in the worktree.
-# The first three are plain file reads taken every poll - two stats in the home
-# and a builtin walk of the worktree's HEAD ref, no subprocess among them; the
-# worktree write probe is the bounded walk bin/fm-classify-lib.sh already owns
-# (crew_worktree_written_since) and, like the wedge timer, it runs ONLY at the
-# moment this guard would otherwise escalate - never per poll. That split is the
-# whole cost model: nothing that forks may sit on the poll path.
+# The first three are read every poll: two size stats in the home and the
+# worktree's HEAD, the last of them a bounded `git rev-parse`. None of that is
+# fork-free - this library spends order twenty processes per task per poll, in
+# family with what the watcher's surrounding per-window path already spends. The
+# worktree write probe is the expensive one, the bounded WALK
+# bin/fm-classify-lib.sh already owns (crew_worktree_written_since), and like the
+# wedge timer it runs ONLY at the moment this guard would otherwise escalate -
+# never per poll. That split is the cost model: the walk is deferred, and what
+# does run per poll is bounded so no single worktree can stall the whole fleet's
+# polling.
 #
 # ESCALATE, NEVER KILL. This guard raises a flag and stops. It never
 # interrupts, signals, restarts, or tears down a worker. Two workers on one
@@ -90,6 +94,17 @@
 # Callers: bin/fm-watch.sh, bin/fm-teardown.sh.
 set -u
 
+# fm_run_timed, the shared hard bound around the one thing this library touches
+# outside the home: the task worktree. bin/fm-timeout-lib.sh owns bounded
+# execution for this repo, so nothing here re-derives the coreutils/BSD/perl
+# selection. It declares `set -u` as this library already does, so it is sourced
+# plainly. Resolved from BASH_SOURCE so it works whether a bin/ script or a test
+# sourced this file.
+_FM_NOPROGRESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_NOPROGRESS_LIB_DIR="."
+# shellcheck source=bin/fm-timeout-lib.sh
+# shellcheck disable=SC1091
+. "$_FM_NOPROGRESS_LIB_DIR/fm-timeout-lib.sh"
+
 # Tokens accumulated across turns against one unchanged artifact fingerprint
 # before the guard escalates - about 55 of Claude's recorded ~1.1k-token turns,
 # or a fifth of the 292.7k the motivating burn spent, all of it against a
@@ -115,6 +130,21 @@ FM_NOPROGRESS_SECS=${FM_NOPROGRESS_SECS:-1800}
 # than absorb it (bin/fm-supervise-daemon.sh), and a second spelling of it in
 # either place is how this guard silently goes back to being absorbed.
 FM_NOPROGRESS_REASON_PREFIX='spending without producing'
+
+# Wall-clock seconds the worktree HEAD read may take. This bound is the reason
+# that read is a subprocess rather than a handful of shell `read`s: a bound
+# needs a killable child, and a builtin read on a hung NFS/sshfs/container mount
+# blocks in uninterruptible I/O with nothing able to interrupt it. The watcher
+# is single-threaded and polls every window in one loop, so an unbounded read
+# against one bad mount stops wake emission for the WHOLE FLEET, not just that
+# task - a far worse failure than the fork costs. The repo already bounds this
+# exact hazard for the same reason (FM_WORKTREE_WRITE_TIMEOUT, and
+# crew_worktree_written_since in bin/fm-classify-lib.sh). Hitting the bound
+# reads as an unreadable worktree, which contributes the fixed placeholder
+# fm_noprogress_artifact_sig defines and so leaves the escalation schedule
+# exactly as it was. A value that is not a positive integer falls back to the
+# default.
+FM_NOPROGRESS_TIMEOUT=${FM_NOPROGRESS_TIMEOUT:-5}
 
 # fm_noprogress_record: absolute path of a task's guard record.
 fm_noprogress_record() {  # <state> <task>
@@ -241,71 +271,6 @@ EOF
   printf '%s' "$last"
 }
 
-# _fm_noprogress_git_head: the commit a worktree's HEAD resolves to, read with
-# SHELL BUILTINS ONLY - no git, no subprocess, no temp file. This runs on every
-# poll for every task, and the surrounding design defers exactly this kind of
-# cost (see the header: the bounded worktree walk runs only at the moment the
-# guard would otherwise escalate). Spawning `git rev-parse` under a timeout cost
-# roughly four processes and a temp file per task per poll; three `read`s cost
-# none.
-#
-# What it walks, all of it plain file reads:
-#
-#   <wt>/.git      a directory in an ordinary clone, or - in every treehouse
-#                  worktree, which is the normal case here - a file holding
-#                  "gitdir: <path>" pointing at .git/worktrees/<name>.
-#   <gitdir>/HEAD  "ref: refs/heads/<branch>", or a raw sha when detached.
-#   the ref file   under <gitdir> first (per-worktree refs live there), then
-#                  under <gitdir>/commondir (refs/heads/* live in the common
-#                  directory for a linked worktree).
-#
-# A branch whose ref is PACKED rather than loose reads as unresolvable, and that
-# is deliberate rather than a gap: git writes a loose ref on every commit, so a
-# packed-only ref means nothing has been committed on that branch since it was
-# packed, and the caller's fixed placeholder is then both stable and true. The
-# first commit writes the loose ref, which moves the fingerprint and reads as
-# production exactly as it should. Reading packed-refs would need a grep - a
-# subprocess, on the hot path, to learn nothing this guard acts on.
-_fm_noprogress_git_head() {  # <worktree>
-  local wt=$1 dot gitdir common line ref sha=''
-  dot="$wt/.git"
-  if [ -d "$dot" ]; then
-    gitdir=$dot
-  elif [ -r "$dot" ]; then
-    IFS= read -r line < "$dot" || return 1
-    case "$line" in
-      'gitdir: '*) gitdir=${line#gitdir: } ;;
-      *) return 1 ;;
-    esac
-    case "$gitdir" in /*) ;; *) gitdir="$wt/$gitdir" ;; esac
-  else
-    return 1
-  fi
-  [ -r "$gitdir/HEAD" ] || return 1
-  IFS= read -r line < "$gitdir/HEAD" || return 1
-  case "$line" in
-    'ref: '*)
-      ref=${line#ref: }
-      if [ -r "$gitdir/$ref" ]; then
-        IFS= read -r sha < "$gitdir/$ref" || sha=''
-      elif [ -r "$gitdir/commondir" ] && IFS= read -r common < "$gitdir/commondir"; then
-        case "$common" in
-          ''|/*) ;;
-          *) common="$gitdir/$common" ;;
-        esac
-        if [ -n "$common" ] && [ -r "$common/$ref" ]; then
-          IFS= read -r sha < "$common/$ref" || sha=''
-        fi
-      fi
-      ;;
-    *) sha=$line ;;
-  esac
-  case "$sha" in
-    ''|*[!0-9a-fA-F]*) return 1 ;;
-  esac
-  printf '%s' "$sha"
-}
-
 # fm_noprogress_artifact_sig: the cheap artifact fingerprint for a task - the
 # head commit of its worktree, the size of its report, and the size of its
 # status log, joined. Any of the three moving means the worker produced
@@ -313,16 +278,25 @@ _fm_noprogress_git_head() {  # <worktree>
 # rather than a changing value, so an unreadable worktree can never masquerade
 # as continuous progress.
 #
-# Every component is a plain file read, which is what lets this run per poll:
-# two stats inside the home, and the builtin HEAD walk above. Nothing here
-# forks, so a fleet of ten tasks costs ten reads a poll rather than forty
-# processes.
+# This is cheap relative to the bounded worktree WALK the guard defers, not
+# cheap in absolute terms: the meta read is a `grep|tail|cut`, each size is a
+# `wc|tr`, and the HEAD read is `git rev-parse` under fm_run_timed, which is
+# itself several processes. One poll of one task costs this function plus
+# fm_noprogress_observe's field reads and the parser pipeline - order twenty
+# processes, measured. That is in family with what the surrounding watcher path
+# already spends per window (window_kind, window_backend, window_to_task,
+# last_status_line, window_is_busy), and it is the price of the bound above,
+# which is worth paying: a fork is recoverable, a stalled single-threaded
+# watcher is not. What stays off the poll path is the unbounded WALK, which is
+# the expensive one and runs only in the branch about to escalate.
 fm_noprogress_artifact_sig() {  # <state> <task> <data>
-  local state=$1 task=$2 data=$3 wt head report status
+  local state=$1 task=$2 data=$3 wt head report status bound
   wt=$(grep '^worktree=' "$state/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  bound=${FM_NOPROGRESS_TIMEOUT:-}
+  case "$bound" in ''|*[!0-9]*|0) bound=5 ;; esac
   head='-'
   if [ -n "$wt" ]; then
-    head=$(_fm_noprogress_git_head "$wt") || head='-'
+    head=$(fm_run_timed "$bound" git -C "$wt" rev-parse HEAD 2>/dev/null) || head='-'
     [ -n "$head" ] || head='-'
   fi
   report='-'

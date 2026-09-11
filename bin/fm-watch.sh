@@ -917,11 +917,14 @@ clear_write_tracking() {  # <window-key>
 # how long it produces nothing. A real burn used exactly that gap: ~18 hours and
 # 292.7k tokens with no output, twice on one task, unnoticed both times.
 #
-# The observation is free: <tail40> is the capture already taken for hashing,
-# and the artifact fingerprint is three stats and one rev-parse. The bounded
-# worktree walk is NOT free, so - exactly like wedge_timer_check below - it runs
-# only in the branch that is about to escalate, and a written worktree turns
-# that escalation into a window restart instead.
+# <tail40> is free - it is the capture already taken for hashing. The artifact
+# fingerprint is not free but is bounded and small: two size stats in the home
+# and the worktree HEAD read through a hard timeout, so no worktree on a hung
+# mount can stall this single-threaded poll loop for the rest of the fleet. The
+# bounded worktree WALK is the expensive one, so - exactly like
+# wedge_timer_check below - it runs only in the branch that is about to
+# escalate, and a written worktree turns that escalation into a window restart
+# instead.
 #
 # This never stops anything. It appends one stale wake for a human to read.
 noprogress_check() {  # <window> <task> <tail40>
