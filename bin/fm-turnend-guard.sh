@@ -77,9 +77,26 @@
 #      while later fresh failed epochs consume it instead of resetting it;
 #   3. only when neither materializes is the auto-arm genuinely absent: re-block
 #      with the repair banner, bounded to FM_CLAUDE_TURNEND_BLOCK_BUDGET
-#      (default 3) consecutive blocks per session - safely below Claude Code's
-#      hard 8-consecutive-block override - then allow one loud attended
-#      fail-open only for an already verified failure episode.
+#      (default 3) consecutive blocks per session, then allow one loud attended
+#      fail-open only for an already verified failure episode. Do NOT rely on
+#      Claude Code's own 8-consecutive-block override as the outer bound: it
+#      did not fire in Claude Code desktop 2.1.260 (2026-09-10, 15+ blocks).
+#   1b. between the healthy/away allows of step 1 and the claim wait of step
+#      2, a session that is NOT the lock owner while a live harness process of
+#      another session holds state/.lock stands down with one notice
+#      (foreign_owner_stand_down below): a healthy home never reaches it, an
+#      unhealthy non-owner home never reaches the re-block. The auto-arm is inert by
+#      identity in that session, so no failed epoch is ever recorded, the
+#      budget never advances past its first count, and the attended fail-open
+#      is unreachable - the 2026-09-10 incident: a Claude session in a home
+#      whose lock a live Codex app-server held was blocked 15+ turns in a row.
+#      The stand-down covers that live-foreign-owner case, which is one of the
+#      states where the auto-arm is inert by identity - not every such state.
+#      A missing or malformed state/.lock, and a dead owner whose reclaim fails
+#      because this session's ancestry cannot be resolved, leave the auto-arm
+#      equally inert yet deliberately keep the cooperative re-block, so they
+#      can still block without bound; that residual is tracked as a follow-up
+#      issue on nissan/firstmate.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -112,6 +129,8 @@ done
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
 # shellcheck source=bin/fm-hook-host-lib.sh
 . "$SCRIPT_DIR/fm-hook-host-lib.sh"
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
 # Read the whole turn-end hook payload once; never block on unreadable/absent
 # stdin.
@@ -240,6 +259,62 @@ block_stop() {
   } >&2
   exit 2
 }
+
+# --- --claude: foreign live lock owner -----------------------------------------
+# The --claude re-block exists to cooperate with the Stop-owned auto-arm, and
+# the auto-arm only ever arms from the session whose harness ancestry holds
+# state/.lock (bin/fm-claude-stop-autoarm.sh "identity"). When another LIVE
+# harness process owns that lock - the same numeric-pid-plus-liveness test the
+# auto-arm and the Cursor park use, so a Codex app-server, a second Claude
+# session, or any other verified harness all count - this session's auto-arm is
+# inert by design: it never claims, never fails, never records an epoch. Every
+# proof the cooperative path waits for is therefore structurally unreachable
+# here, the block budget cannot advance because the epoch identity never
+# changes, and blocking would repeat on every turn forever. Supervision of this
+# home is the lock owner's responsibility, exactly as a read-only session start
+# already tells this session, so stand down like the Cursor and child-worktree
+# scope cases: exit 0, with one notice per (session, owner) on stdout.
+# stderr is deliberately not used - the harness discards it on exit 0.
+# A dead, malformed, or missing lock is NOT this case: a stale owner is the
+# auto-arm's own recovery path only when this session's ancestry resolves, and a
+# missing or malformed lock leaves the auto-arm inert with nothing to recover.
+# All of them keep the cooperative path below and so can still block without
+# bound - the deliberate residual tracked as nissan/firstmate issue #4.
+# The lock pid is read ONCE and every test - own ancestry, harness liveness -
+# is made on that same value. Testing self-ownership by re-reading the file
+# would race the Stop-owned auto-arm's stale-lock reclaim on the same event: it
+# could reject the stale pid, then read the pid the auto-arm just wrote for
+# THIS session, find it alive, and stand down for its own session. Residual:
+# a dead owner's pid reused by an unrelated verified harness reads as a live
+# foreign owner, exactly as it does for the auto-arm's identity gate, which
+# stays inert in the same case - so the alternative there is the unbounded
+# block this stand-down exists to end, not a recovery.
+# The notice ledger is append-only, one line per (session, owner), so several
+# non-owner sessions in one home each get their own single notice instead of
+# overwriting one another's record - except that sessions whose payload carries
+# no readable session_id all collapse onto the SESSION_ID fallback `unknown` and
+# share one record, a residual tracked as nissan/firstmate issue #7.
+FOREIGN_OWNER_NOTICE="$STATE/.turnend-claude-foreign-owner"
+foreign_owner_stand_down() {
+  local lock_pid owner_desc record
+  [ "$CLAUDE_MODE" -eq 1 ] || return 1
+  lock_pid=$(cat "$STATE/.lock" 2>/dev/null || true)
+  case "$lock_pid" in ''|*[!0-9]*) return 1 ;; esac
+  fm_pid_in_harness_ancestry "$lock_pid" && return 1
+  fm_harness_pid_alive "$lock_pid" || return 1
+  record="session=$SESSION_ID owner=$lock_pid"
+  if grep -qxF -- "$record" "$FOREIGN_OWNER_NOTICE" 2>/dev/null; then
+    exit 0
+  fi
+  printf '%s\n' "$record" >> "$FOREIGN_OWNER_NOTICE" 2>/dev/null || true
+  owner_desc=$(basename -- "$(ps -o comm= -p "$lock_pid" 2>/dev/null)" 2>/dev/null || true)
+  [ -n "$owner_desc" ] || owner_desc=harness
+  # JSON-safe: the process name is interpolated into a systemMessage string.
+  owner_desc=$(printf '%s' "$owner_desc" | jq -Rr '@json | .[1:-1]' 2>/dev/null || printf 'harness')
+  printf '{"systemMessage":"FIRSTMATE TURN-END GUARD STANDING DOWN: this session does not hold this home'"'"'s fleet lock - a live %s process (pid %s) does - so watcher supervision here is that session'"'"'s responsibility and the Stop-owned auto-arm is inert in this session by design. Operate read-only in this home and do not arm a watcher yourself; this notice is shown once per session while that owner is alive."}\n' "$owner_desc" "$lock_pid"
+  exit 0
+}
+foreign_owner_stand_down
 
 if [ "$CLAUDE_MODE" -eq 0 ]; then
   block_stop

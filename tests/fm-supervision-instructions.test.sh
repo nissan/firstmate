@@ -42,6 +42,58 @@ test_conditional_stanzas() {
   pass "renderer includes read-only, afk, and effective x-mode current-state stanzas"
 }
 
+# The "Lock:" stanza must reflect bin/fm-lock.sh status and this process's own
+# ancestry, never the caller's assumption: on 2026-09-10 a Claude session in a
+# home whose lock a live Codex app-server held was told "held by this session".
+test_lock_stanza_reflects_lock_status() {
+  local home out pid fresh
+  fresh="$TMP_ROOT/lock-home-nostate"
+  mkdir -p "$fresh/config"
+  out=$(FM_HOME="$fresh" "$RENDER" --harness claude)
+  assert_contains "$out" "- Lock: free" "a home with no state dir did not render a free lock"
+  assert_absent "$fresh/state" "rendering supervision text created the state directory"
+
+  home="$TMP_ROOT/lock-home"
+  mkdir -p "$home/state" "$home/config"
+  out=$(FM_HOME="$home" "$RENDER" --harness claude)
+  assert_contains "$out" "- Lock: free" "free lock rendered as something else"
+  assert_not_contains "$out" "held by this session" "free lock claimed session ownership"
+
+  pid=999999
+  while kill -0 "$pid" 2>/dev/null; do pid=$((pid + 1)); done
+  printf '%s\n' "$pid" > "$home/state/.lock"
+  out=$(FM_HOME="$home" "$RENDER" --harness claude)
+  assert_contains "$out" "- Lock: stale" "dead lock owner not rendered as stale"
+  assert_not_contains "$out" "held by this session" "stale lock claimed session ownership"
+
+  ln -sf /bin/bash "$home/fake-codex"
+  "$home/fake-codex" -c 'sleep 60; exit 0' >/dev/null 2>&1 &
+  pid=$!
+  printf '%s\n' "$pid" > "$home/state/.lock"
+  out=$(FM_HOME="$home" "$RENDER" --harness claude)
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  assert_contains "$out" "- Lock: held by another live session (pid $pid)" "live foreign harness owner not rendered as another session"
+  assert_contains "$out" "operate read-only" "foreign-owner lock stanza did not direct read-only operation"
+  assert_not_contains "$out" "held by this session" "foreign live owner claimed session ownership"
+
+  ln -sf /bin/bash "$home/fake-claude"
+  # The trailing `exit` keeps the renderer off the end of the -c script, so bash
+  # always forks it instead of exec-replacing the fake harness: the lock pid
+  # must stay a live harness-shaped ANCESTOR of the renderer, not the renderer.
+  # shellcheck disable=SC2016 # the fake harness expands FM_HOME and RENDER inside its child shell.
+  out=$(FM_HOME="$home" RENDER="$RENDER" "$home/fake-claude" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        "$RENDER" --harness claude; rc=$?
+        exit "$rc"' 2>&1)
+  assert_contains "$out" "- Lock: held by this session" "a lock held by this session's own harness ancestor was not rendered as held by this session"
+  assert_not_contains "$out" "held by another live session" "the actual lock owner was told another session owns supervision"
+
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --read-only 1)
+  assert_contains "$out" "- Lock: read-only" "explicit read-only refusal must still win"
+  pass "renderer Lock stanza reflects fm-lock.sh status and session ownership"
+}
+
 test_repair_lines() {
   local home out
   home="$TMP_ROOT/repair-home"
@@ -197,6 +249,7 @@ test_selected_harness_block_only
 test_unknown_fallback
 test_conditional_stanzas
 test_repair_lines
+test_lock_stanza_reflects_lock_status
 test_cross_harness_ordinary_continuation_and_repair_matrix
 test_pi_signed_preserves_identity_with_pi_supervision_protocol
 test_grok_is_background_notify
