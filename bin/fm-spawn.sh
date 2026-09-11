@@ -950,8 +950,13 @@ spawn_abort_cleanup() {
   fi
   if [ "$RELAUNCH_RECREATED_ENDPOINT" = 1 ]; then
     RELAUNCH_RECREATED_ENDPOINT=0
-    if ! fm_backend_kill "$BACKEND" "$RELAUNCH_RECREATED_TARGET" 2>/dev/null; then
-      echo "warning: could not close the endpoint recreated for $ID after an aborted relaunch; close $RELAUNCH_RECREATED_TARGET by hand before retrying" >&2
+    # A close that returns 0 is not proof the endpoint went away: herdr's kill
+    # refuses an unlocked pane close with a warning and a zero status. Only the
+    # recovery-grade classifier reading `missing` proves it, and its stderr is
+    # left alone so a refusal reaches the operator either way.
+    fm_backend_kill "$BACKEND" "$RELAUNCH_RECREATED_TARGET" || true
+    if [ "$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_RECREATED_TARGET" 2>/dev/null)" != missing ]; then
+      echo "warning: the endpoint recreated for $ID was NOT removed after its relaunch aborted; close $RELAUNCH_RECREATED_TARGET by hand before retrying" >&2
     fi
   fi
   if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] \
@@ -1341,20 +1346,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_RECREATE_ENDPOINT=0
   case "$RELAUNCH_STATE" in
     dead) ;;
-    missing)
-      # Unreachable today: fm_backend_agent_state only classifies tmux and
-      # herdr, so every other backend reads `unverified` and refuses below.
-      # It stays so a future backend that gains a recovery-grade classifier
-      # cannot reach the create path unreviewed - orca's create path allocates
-      # a NEW worktree, which would silently break "reuse the recorded copy".
-      case "$BACKEND" in
-        tmux|herdr) RELAUNCH_RECREATE_ENDPOINT=1 ;;
-        *)
-          echo "error: task $ID's endpoint is structurally gone and backend '$BACKEND' cannot recreate one; reconcile the task by hand" >&2
-          exit 1
-          ;;
-      esac
-      ;;
+    missing) RELAUNCH_RECREATE_ENDPOINT=1 ;;
     *)
       echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
       exit 1
@@ -3148,7 +3140,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
       echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}' and could not be told to return to its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
       exit 1
     }
-    for _ in $(seq 1 10); do
+    # An adopted pane has been running all along: if it has not moved in 5s it
+    # never will. A recreated one is a shell on its FIRST start, which on a host
+    # with a heavy interactive profile can take seconds just to read the cd -
+    # so it gets the same cold-shell budget a fresh spawn's own worktree poll
+    # uses. The confirmation itself is mandatory on both paths.
+    relaunch_cd_polls=10
+    [ "$RELAUNCH_RECREATE_ENDPOINT" -ne 1 ] || relaunch_cd_polls=60
+    for _ in $(seq 1 "$relaunch_cd_polls"); do
       relaunch_seen=$(spawn_current_path "$WT_TARGET" || true)
       [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ] || break
       sleep 0.5
