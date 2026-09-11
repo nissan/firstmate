@@ -89,12 +89,17 @@
 set -u
 
 # Tokens accumulated across turns against one unchanged artifact fingerprint
-# before the guard escalates - roughly a day and a half of Claude's recorded
-# ~1.1k-token turns, or a fifth of the 292.7k the motivating burn spent, all of
-# it against a worktree with no commit, no report write, no status line, and no
-# file written. It is deliberately far above what any single turn renders: one
-# long reasoning turn that then writes a file must not trip this, and with the
-# time gate below it cannot, because a window that young is never eligible.
+# before the guard escalates - about 55 of Claude's recorded ~1.1k-token turns,
+# or a fifth of the 292.7k the motivating burn spent, all of it against a
+# worktree with no commit, no report write, no status line, and no file written.
+# What that is in wall-clock time depends only on how fast the turns come: at
+# the two-minute turn cadence tests/fm-watch-noprogress.test.sh drives it is
+# reached in under two hours, and at the motivating burn's own rate (292.7k over
+# ~18h, ~16.3k tokens an hour) in under four - either way a burn surfaces on the
+# same day it starts rather than after a human finally looks. It is deliberately
+# far above what any single turn renders: one long reasoning turn that then
+# writes a file must not trip this, and with the time gate below it cannot,
+# because a window that young is never eligible.
 FM_NOPROGRESS_SPEND=${FM_NOPROGRESS_SPEND:-60000}
 
 # Seconds the artifact fingerprint must have been unchanged before the guard
@@ -148,12 +153,15 @@ _fm_noprogress_uint() {  # <value> <default>
 # fm_noprogress_pane_tokens: the token counter rendered in a pane capture, as a
 # plain integer, or nothing when the capture carries none.
 #
-# Every verified harness renders its counter as a number next to the word
-# "tokens" ("· 292.7k tokens", "Running  59 tokens", "tokens used: 1,234"), so
-# that is the whole grammar: an optional k/m/g suffix, optional thousands
-# commas, optional one decimal place. Anything else is not a token counter and
-# is ignored - a guess here would become a false escalation, and the cost of
-# reading nothing is only that this guard stays silent for that harness.
+# Every footer this repo has recorded live renders its counter as a number
+# immediately before the word "tokens" ("· 292.7k tokens", "↓ 234 tokens",
+# "Running  59 tokens"), so that is the whole grammar: digits, optional
+# thousands commas, optionally one decimal place and a k suffix. No other
+# spelling is accepted, because no other spelling has been recorded and an
+# accepted spelling nothing renders is only extra surface to forge. Anything
+# else is not a token counter and is ignored - a guess here would become a false
+# escalation, and the cost of reading nothing is only that this guard stays
+# silent for that harness.
 #
 # FOOTER REGION ONLY. The match is narrowed to the last 12 non-blank lines, the
 # same TUI footer region every other rendered-string contract in this repo reads
@@ -164,16 +172,21 @@ _fm_noprogress_uint() {  # <value> <default>
 # compaction notice this repo has recorded live ("Compacted from 7,697 tokens",
 # docs/verification/supervision.md) is prose about a past total, not a counter.
 #
-# The LARGEST remaining match wins. A footer can render more than one number
-# next to "tokens", and the largest is the stable choice across polls; picking a
-# smaller one would make the reading jitter between shapes. Which of them is
-# per-turn no longer matters, because fm_noprogress_observe accumulates deltas
-# and treats a drop as a turn boundary rather than as a reset.
+# The FOOTER-MOST remaining match wins. A footer can render more than one number
+# next to "tokens" - a live counter with a context budget or a quota line above
+# it - and the last one is the counter, because every recorded shape puts the
+# live counter on the bottom-most line it draws. Taking the LARGEST instead
+# would let any constant in the region outrank the counter and pin the reading
+# for good: the delta would be zero on every poll, the frozen-counter gate would
+# short-circuit, and the guard would go permanently silent for that harness
+# while still claiming to cover it. Which of the matches is per-turn does not
+# matter, because fm_noprogress_observe accumulates deltas and treats a drop as
+# a turn boundary rather than as a reset.
 fm_noprogress_pane_tokens() {  # <pane-capture>
-  local capture=${1:-} best=0 seen=1 raw num frac unit scaled
+  local capture=${1:-} last='' raw num frac unit scaled
   while read -r raw; do
     [ -n "$raw" ] || continue
-    # raw arrives as "<digits>[.<digit>][k|m|g]" with commas already stripped.
+    # raw arrives as "<digits>[.<digit>][k]" with commas already stripped.
     unit=${raw##*[0-9]}
     num=${raw%"$unit"}
     case "$num" in
@@ -184,23 +197,20 @@ fm_noprogress_pane_tokens() {  # <pane-capture>
     num=$(_fm_noprogress_uint "$num" 0)
     case "$unit" in
       k|K) scaled=$(( num * 1000 + frac * 100 )) ;;
-      m|M) scaled=$(( num * 1000000 + frac * 100000 )) ;;
-      g|G) scaled=$(( num * 1000000000 + frac * 100000000 )) ;;
       *)   scaled=$num ;;
     esac
-    [ "$scaled" -le "$best" ] || best=$scaled
-    seen=0
+    last=$scaled
   done <<EOF
 $(printf '%s\n' "$capture" \
   | grep -v '^[[:space:]]*$' \
   | tail -12 \
   | tr -d ',' \
-  | sed -E 's/[Ff][Rr][Oo][Mm][[:space:]]+[0-9]+(\.[0-9])?[kKmMgG]?[[:space:]]+[Tt][Oo][Kk][Ee][Nn][Ss]//g' \
-  | grep -oiE '[0-9]+(\.[0-9])?[kmg]?[[:space:]]+tokens|tokens([[:space:]]+used)?:[[:space:]]*[0-9]+(\.[0-9])?[kmg]?' \
-  | sed -E 's/[[:space:]]*tokens([[:space:]]+used)?:?[[:space:]]*//I')
+  | sed -E 's/[Ff][Rr][Oo][Mm][[:space:]]+[0-9]+(\.[0-9])?[kK]?[[:space:]]+[Tt][Oo][Kk][Ee][Nn][Ss]//g' \
+  | grep -oiE '[0-9]+(\.[0-9])?k?[[:space:]]+tokens' \
+  | sed -E 's/[[:space:]]+[Tt][Oo][Kk][Ee][Nn][Ss]$//')
 EOF
-  [ "$seen" -eq 0 ] || return 1
-  printf '%s' "$best"
+  [ -n "$last" ] || return 1
+  printf '%s' "$last"
 }
 
 # fm_noprogress_artifact_sig: the cheap artifact fingerprint for a task - the
@@ -334,7 +344,13 @@ _fm_noprogress_write() {  # <record> <tokens> <spend> <sig> <since> <flagged>
 # fm_noprogress_reason: the supervisor-facing wake reason for one escalation.
 # Says what was observed and what to check, and states plainly that nothing was
 # stopped - the reader decides whether to kill the worker.
+#
+# <secs> is the age of the guard's OWN window - how long this fingerprint has
+# been watched - not how long ago the last artifact actually moved. A watcher
+# restart or a deferred worktree write opens a fresh window under an artifact
+# that has not moved for hours, so the number is a floor, and the sentence says
+# only what it can stand behind: nothing was produced for at least that long.
 fm_noprogress_reason() {  # <window> <spend> <secs>
-  printf 'stale: %s (spending without producing: %s tokens since the last commit, report write, or status line %ss ago, demand-deep-inspection: read the pane before absorbing - nothing was stopped, killing this worker is the captain'\''s call)' \
+  printf 'stale: %s (spending without producing: %s tokens with no commit, report write, or status line for the last %ss, demand-deep-inspection: read the pane before absorbing - nothing was stopped, killing this worker is the captain'\''s call)' \
     "$1" "$2" "$3"
 }

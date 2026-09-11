@@ -61,6 +61,13 @@ make_case() {
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
+# Every invocation is recorded when FM_FAKE_TMUX_LOG names a file, so a test can
+# assert on the commands a watcher actually issued - including the mutating ones
+# this fake refuses to serve. Unset means no recording, so this is inert for
+# every suite that does not ask for it.
+if [ -n "${FM_FAKE_TMUX_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+fi
 if [ "${1:-}" = "list-windows" ]; then
   if [ -n "${FM_FAKE_TMUX_WINDOWS:-}" ]; then
     printf '%s\n' "$FM_FAKE_TMUX_WINDOWS"

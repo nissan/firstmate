@@ -48,27 +48,30 @@ queued_guard_wake() {  # <state>
 
 # --- the library, as pure functions ----------------------------------------
 
-# The counter grammar every verified harness renders. A pane this cannot read
-# yields NO observation, which is what keeps an unrecognised harness on exactly
-# the coverage it had before rather than on a guessed number.
+# The counter grammar every recorded harness footer renders. A pane this cannot
+# read yields NO observation, which is what keeps an unrecognised harness on
+# exactly the coverage it had before rather than on a guessed number.
 test_pane_token_parsing() {
   local got
   got=$(fm_noprogress_pane_tokens '  · 292.7k tokens · esc to interrupt')
   [ "$got" = 292700 ] || fail "a 'k'-suffixed counter parsed as '$got', not 292700"
   got=$(fm_noprogress_pane_tokens ' Running  59 tokens')
   [ "$got" = 59 ] || fail "a bare counter parsed as '$got', not 59"
-  got=$(fm_noprogress_pane_tokens 'tokens used: 1,234')
+  got=$(fm_noprogress_pane_tokens '  · 1,234 tokens')
   [ "$got" = 1234 ] || fail "a comma-separated counter parsed as '$got', not 1234"
-  got=$(fm_noprogress_pane_tokens 'Total tokens: 15,300')
-  [ "$got" = 15300 ] || fail "a 'tokens:' counter parsed as '$got', not 15300"
-  # A footer can render more than one number next to "tokens". The largest is
-  # the stable choice across polls; which of them is per-turn does not matter,
-  # because fm_noprogress_observe accumulates deltas across turn boundaries.
-  got=$(fm_noprogress_pane_tokens 'turn 1.2k tokens
-session 292.7k tokens')
-  [ "$got" = 292700 ] || fail "two counters in one footer picked '$got', not the larger 292700"
+  # A footer can render more than one number next to "tokens". The FOOTER-MOST
+  # one is the counter; which of them is per-turn does not matter, because
+  # fm_noprogress_observe accumulates deltas across turn boundaries.
+  got=$(fm_noprogress_pane_tokens 'session 292.7k tokens
+turn 1.2k tokens')
+  [ "$got" = 1200 ] || fail "two counters in one footer picked '$got', not the footer-most 1200"
   if fm_noprogress_pane_tokens 'reading the brief, nothing numeric here' >/dev/null 2>&1; then
     fail "a pane with no counter still produced an observation"
+  fi
+  # No spelling this repo has not recorded is accepted: an unrecognised footer
+  # leaves the guard silent rather than reading a number out of prose.
+  if fm_noprogress_pane_tokens 'tokens used: 1,234' >/dev/null 2>&1; then
+    fail "an unrecorded 'tokens used:' spelling was read as a counter"
   fi
 
   # FOOTER REGION ONLY. Scrollback is content a worker prints, and a counter
@@ -86,7 +89,45 @@ session 292.7k tokens')
   got=$(fm_noprogress_pane_tokens 'Compacted from 7,697 tokens
  Running  59 tokens')
   [ "$got" = 59 ] || fail "a compaction notice outweighed the real counter ('$got', not 59)"
-  pass "the pane counter grammar reads every verified harness footer and refuses to guess"
+  pass "the pane counter grammar reads every recorded harness footer and refuses to guess"
+}
+
+# FOOTER-MOST, NOT LARGEST. A constant number next to "tokens" can sit in the
+# footer region above the live counter - a context budget, a quota line. Under a
+# largest-match rule that constant is the reading on every single poll, so the
+# delta is always zero, the frozen-counter gate short-circuits, and the guard
+# goes silent for that harness forever while docs/architecture.md still says the
+# shape is covered. That is the same "documented as protected while it is not"
+# failure this attempt exists to end, so it is asserted end to end: the parser
+# picks the counter, and the window built from those readings escalates.
+test_a_constant_above_the_counter_cannot_pin_the_reading() {
+  local dir state verdict got n poll escalated
+  dir=$(make_case footer-most); state="$dir/state"
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  got=$(fm_noprogress_pane_tokens 'Context left: 175000 tokens
+ ⠘⠆ Running  59 tokens')
+  [ "$got" = 59 ] \
+    || fail "a larger constant above the counter was read instead of the counter ('$got', not 59)"
+
+  # The counter climbs by 200 a poll under an unchanging 175000; the artifact
+  # never moves. Reading the constant instead would hold spend at 0 forever.
+  escalated=
+  n=100
+  poll=0
+  while [ "$poll" -lt 20 ] && [ -z "$escalated" ]; do
+    verdict=$(fm_noprogress_observe "$state" t \
+      "$(fm_noprogress_pane_tokens "$(printf 'Context left: 175000 tokens\n ⠘⠆ Running  %s tokens\n' "$n")")" \
+      sig-unchanged "$(( 1000000 + poll * 60 ))")
+    case "$verdict" in escalate\ *) escalated=$verdict ;; esac
+    n=$(( n + 200 ))
+    poll=$(( poll + 1 ))
+  done
+  [ -n "$escalated" ] || fail \
+    "a counter climbing under a larger constant never escalated - the constant pinned the reading: record=[$(cat "$(fm_noprogress_record "$state" t)")]"
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "the footer-most counter is the reading, so a larger constant above it cannot pin the guard silent"
 }
 
 # The core decision table, driven directly so each rule is asserted alone.
@@ -383,16 +424,16 @@ test_artifact_fingerprint_tracks_each_signal() {
 
 # --- the wiring, against a real bin/fm-watch.sh -----------------------------
 
-WIRED_DIR=; WIRED_STATE=; WIRED_OUT=; WIRED_PID=; WIRED_TOKENS=
+WIRED_DIR=; WIRED_STATE=; WIRED_OUT=; WIRED_PID=; WIRED_TOKENS=; WIRED_TMUXLOG=
 
 # Drive a real watcher against a pane the test rewrites between rounds. The pane
 # always churns, so the staleness backbone never fires and only the guard can
 # produce a wake. <mode> chooses what each round changes.
 run_wired_case() {  # <name> <mode> <rounds>
   local name=$1 mode=$2 rounds=$3
-  local dir state fakebin out pane window pid tokens i
+  local dir state fakebin out pane window pid tokens i tmuxlog
   dir=$(make_case "$name"); state="$dir/state"; fakebin="$dir/fakebin"
-  out="$dir/watch.out"; pane="$dir/pane.txt"
+  out="$dir/watch.out"; pane="$dir/pane.txt"; tmuxlog="$dir/tmux.log"
   window="test:fm-$name"
   mkdir -p "$dir/data/$name"
   printf 'window=%s\nkind=ship\nharness=codex\n' "$window" > "$state/$name.meta"
@@ -409,6 +450,7 @@ run_wired_case() {  # <name> <mode> <rounds>
   # else on the stale path can absorb or surface this pane on our behalf.
   export FM_FAKE_CREW_STATE='state: unknown · source: pane · harness state unavailable (unknown codex-unverified)'
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_LOG="$tmuxlog" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$dir/data" \
     FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
     FM_NOPROGRESS_SPEND=5000 FM_NOPROGRESS_SECS=0 \
@@ -445,6 +487,28 @@ run_wired_case() {  # <name> <mode> <rounds>
     i=$((i + 1))
   done
   WIRED_DIR=$dir; WIRED_STATE=$state; WIRED_OUT=$out; WIRED_PID=$pid; WIRED_TOKENS=$tokens
+  WIRED_TMUXLOG=$tmuxlog
+}
+
+# The guard may only raise a flag. tmux is the ONLY channel this watcher has to
+# reach a worker, and the fixture records every command it issued through that
+# channel, so a guard that interrupted, signalled, restarted, or tore one down
+# has to show up here as a mutating verb.
+assert_no_worker_control_issued() {  # <tmux-log>
+  local log=$1 issued verb
+  [ -s "$log" ] \
+    || fail "the fixture recorded no tmux calls at all, so this proves nothing ($log)"
+  issued=$(cat "$log")
+  printf '%s\n' "$issued" | grep -q '^capture-pane' \
+    || fail "the watcher never even read the pane, so the recorded commands prove nothing: [$issued]"
+  while read -r verb _; do
+    case "$verb" in
+      send-keys|send-prefix|kill-window|kill-pane|kill-session|kill-server|respawn-pane|respawn-window)
+        fail "the guard issued '$verb' on a burning worker; it may only escalate: [$issued]" ;;
+    esac
+  done <<EOF
+$issued
+EOF
 }
 
 # The guard is only allowed to be silent if it actually looked. Its per-task
@@ -471,6 +535,10 @@ test_climbing_tokens_without_artifact_escalate() {
     || { reap "$WIRED_PID"; unset FM_FAKE_CREW_STATE
          fail "a pane whose token counter climbed with no commit, report write, or status line never escalated: queue=[$(cat "$WIRED_STATE/.wake-queue" 2>/dev/null)] out=[$(cat "$WIRED_OUT")]"; }
   assert_guard_observed "$WIRED_STATE" burn
+  # ESCALATE, NEVER KILL - asserted on what the escalating watcher actually did,
+  # not on what its source says. It flagged the burn and touched the worker's
+  # window read-only throughout.
+  assert_no_worker_control_issued "$WIRED_TMUXLOG"
   # The wake has to be actionable: the reason names what to inspect rather than
   # just reporting "stale", and says plainly that nothing was stopped.
   grep -qF 'demand-deep-inspection' "$WIRED_STATE/.wake-queue" \
@@ -529,7 +597,13 @@ test_growing_report_stays_silent() {
 # firstmate on a crew that is doing its job.
 test_uncommitted_worktree_writes_defer_instead_of_escalating() {
   run_wired_case writing writing 25
-  assert_guard_observed "$WIRED_STATE" writing
+  # NOT assert_guard_observed here: the deferral under test IS a
+  # fm_noprogress_clear, so the per-task record this case is meant to prove the
+  # guard wrote is the very file the absorb branch deletes, and whether it
+  # survives to the end of the driver loop is a coin toss. The triage line
+  # asserted below is the durable proof, and a stronger one - it can only be
+  # written by a poll that observed the pane, accumulated past both gates,
+  # reached the escalation branch, and deferred there.
   [ -s "$WIRED_DIR/wt/lib.rs" ] \
     || fail "the writing fixture never wrote into the worktree, so its silence proves nothing"
   [ "$WIRED_TOKENS" -gt 100000 ] \
@@ -552,28 +626,8 @@ test_uncommitted_worktree_writes_defer_instead_of_escalating() {
   pass "a crew writing uncommitted files in its worktree is deferred, not escalated"
 }
 
-# The guard must never reach for a lifecycle control. Asserted against the
-# source, because the escalating case above can only prove what it happened to
-# execute, and the thing that must never happen is the thing never executed.
-test_guard_never_stops_a_worker() {
-  local src="$ROOT/bin/fm-noprogress-lib.sh" body
-  # Comments are stripped first: this asserts on what the code RUNS, not on
-  # prose that names the thing it must never do.
-  if sed 's/#.*//' "$src" | grep -qE 'kill[[:space:]]|pkill|fm-control\.sh|send-keys|SIGINT|SIGTERM'; then
-    fail "the guard library reaches for a lifecycle control; it may only escalate"
-  fi
-  body=$(sed -n '/^noprogress_check()/,/^}/p' "$ROOT/bin/fm-watch.sh")
-  [ -n "$body" ] || fail "noprogress_check is not wired into the watcher"
-  if printf '%s\n' "$body" | sed 's/#.*//' \
-    | grep -qE 'kill[[:space:]]|pkill|fm-control\.sh|send-keys|SIGINT|SIGTERM'; then
-    fail "the watcher's guard hook reaches for a lifecycle control; it may only escalate"
-  fi
-  printf '%s\n' "$body" | grep -qF 'fm_wake_append stale' \
-    || fail "the watcher's guard hook does not raise a wake at all"
-  pass "the guard only ever raises a flag - it never stops, signals, or restarts a worker"
-}
-
 test_pane_token_parsing
+test_a_constant_above_the_counter_cannot_pin_the_reading
 test_observe_decision_table
 test_reescalation_and_counter_reset
 test_recorded_per_turn_footers_accumulate_across_turns
@@ -583,4 +637,3 @@ test_climbing_tokens_without_artifact_escalate
 test_frozen_token_wait_stays_silent
 test_growing_report_stays_silent
 test_uncommitted_worktree_writes_defer_instead_of_escalating
-test_guard_never_stops_a_worker
