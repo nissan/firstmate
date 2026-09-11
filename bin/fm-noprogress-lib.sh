@@ -56,6 +56,9 @@
 #   "Sock-hopping… (11s · ↓ 234 tokens)"                      (claude)
 #   " ⠘⠆ Running  59 tokens"                                  (cursor)
 #
+# tests/fm-watch-noprogress.test.sh drives those three shapes verbatim, so the
+# claim above is a test, not a comment.
+#
 # So the rendered number is a rate, not a total, and the only total this guard
 # can have is one it accumulates itself. Every poll contributes a DELTA: the
 # rise since the previous poll while a turn is still running, and the whole

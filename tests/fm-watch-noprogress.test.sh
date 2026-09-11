@@ -163,14 +163,15 @@ test_observe_decision_table() {
 FOOTER_TURNS=()
 # Claude, tests/fm-tmux-submit-busy.test.sh:270 - "k"-suffixed, one decimal.
 FOOTER_TURNS+=('✢ Pollinating… (@Ss · ↓ @k tokens · thought for 1s)')
-# Claude, docs/verification/runtime-backends.md:383 - bare integer.
+# Claude, docs/verification/runtime-backends.md:677 - bare integer.
 FOOTER_TURNS+=('Sock-hopping… (@Ss · ↓ @N tokens)')
-# cursor, tests/fm-backend-herdr.test.sh:3677 - bare integer behind a spinner.
+# cursor, tests/fm-backend-herdr.test.sh:3916 - bare integer behind a spinner.
 FOOTER_TURNS+=(' ⠘⠆ Running  @N tokens')
 
-# render_turn_footer: one poll's pane for turn <turn>, <frac> of the way through
-# it. <shape> selects one of the recorded footers above. The counter RESTARTS at
-# every turn, which is the whole point.
+# render_turn_footer: one poll's pane, rendering <turn-tokens> in the recorded
+# footer shape this turn index selects. The counter RESTARTS at every turn,
+# which is the whole point, and the pane carries scrollback above the footer so
+# the footer-region narrowing is exercised on the way through.
 render_turn_footer() {  # <shape-index> <turn-tokens>
   local shape=${FOOTER_TURNS[$(( $1 % ${#FOOTER_TURNS[@]} ))]} n=$2 k
   # "1.1k" from 1100, the way a footer renders a four-figure per-turn count.
@@ -185,6 +186,10 @@ render_turn_footer() {  # <shape-index> <turn-tokens>
 # clean environment, so this test measures what the fleet actually runs rather
 # than a number copied here that could drift away from it.
 shipped_default() {  # <var>
+  # The inner script runs in a child shell with the overrides cleared, so the
+  # library assigns its own default; single quotes are deliberate - $1 and $2
+  # are the child's positional parameters, not this shell's.
+  # shellcheck disable=SC2016
   env -u FM_NOPROGRESS_SPEND -u FM_NOPROGRESS_SECS bash -c \
     '. "$1"; printf "%s" "${!2}"' _ "$ROOT/bin/fm-noprogress-lib.sh" "$1"
 }
