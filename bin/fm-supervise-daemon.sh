@@ -1338,7 +1338,7 @@ is_wake_reason() {  # <reason>
 handle_wake() {  # <reason> <state>
   local reason=$1 state=$2 decision action distilled task last stale_detail
   local capture="$state/.subsuper-classified-end.$$" span_record='' span_rc='' endpoint ident rest sig marker
-  local kind="" arg="" classification_failed=0 span_failure_repeat=0
+  local kind="" arg="" classification_failed=0 span_failure_repeat=0 stale_override=""
   : > "$capture" || return 1
   if should_force_self "$reason"; then
     log "wake force-self (FM_INJECT_SKIP): $reason"
@@ -1411,19 +1411,29 @@ handle_wake() {  # <reason> <state>
               # per STALE_ESCALATE_SECS for as long as the wait lasted.
               # Housekeeping (2b) then owns the re-surface, so the wait is still
               # bounded - by one recheck per PAUSE_RESURFACE_SECS instead.
+              #
+              # Neither override may DISCARD an escalate the classification
+              # already reached. When the unseen span held an actionable record,
+              # that decision carries the record's own text, and the escalate
+              # branch below then marks the record reported. Replacing the text
+              # there advanced the seen offset past a `blocked:` line nobody ever
+              # read, and nothing re-surfaces it afterwards - so the two reasons
+              # ride out together and the offset only advances over text that
+              # actually reached the buffer.
               case "$stale_detail" in
-                "$FM_NOPROGRESS_REASON_PREFIX"*) decision="escalate|${reason#stale: }" ;;
-                *) case "${decision%%|*}" in
-                     pause) : ;;
-                     *) case "$stale_detail" in
-                          idle\ *s,\ possible\ wedge,\ escalation\ *)
-                            last=$(last_status_line "$state/$task.status")
-                            status_is_paused_or_captain_held "$last" \
-                              || decision="escalate|${reason#stale: }"
-                            ;;
-                        esac ;;
-                   esac ;;
-              esac ;;
+                "$FM_NOPROGRESS_REASON_PREFIX"*) stale_override=1 ;;
+                idle\ *s,\ possible\ wedge,\ escalation\ *)
+                  if [ "${decision%%|*}" != pause ]; then
+                    last=$(last_status_line "$state/$task.status")
+                    status_is_paused_or_captain_held "$last" || stale_override=1
+                  fi ;;
+              esac
+              if [ -n "$stale_override" ]; then
+                case "${decision%%|*}" in
+                  escalate) decision="escalate|${decision#*|} + ${reason#stale: }" ;;
+                  *)        decision="escalate|${reason#stale: }" ;;
+                esac
+              fi ;;
     check:*)  decision=$(classify_check "$reason") ;;
     heartbeat|heartbeat:*) decision=$(classify_heartbeat) ;;
     *)        decision=$(classify_unknown "$reason") ;;

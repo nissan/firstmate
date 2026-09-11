@@ -792,6 +792,92 @@ test_spend_without_artifact_survives_away_mode_triage() {
   pass "a spend-without-artifact escalation survives away-mode triage even under a declared wait, while a frozen counter and a plain stale are unchanged"
 }
 
+# AN OVERRIDE THAT FORCES AN ESCALATE MUST NOT DISCARD THE ONE ALREADY REACHED.
+# When a task's unseen status span holds an actionable record, classify_stale
+# returns `escalate|stale + actionable status: <event>` and handle_wake's
+# escalate branch marks that record REPORTED by advancing the seen offset. The
+# guard's override replaced the whole decision, so the burn reason went to the
+# captain and the `blocked:` line was silently marked reported without ever
+# having been reported - and nothing re-surfaces it afterwards. The shape is not
+# exotic: the guard's own gates require that no status line was appended for the
+# whole window (an append moves the artifact fingerprint and restarts it), so an
+# unread record sitting still while the crew burns is exactly what they select
+# for. Both reasons must reach the buffer, or neither may be marked seen.
+test_a_burn_wake_never_marks_an_unread_status_event_reported() {
+  local dir state task win key sig verdict reason n poll size
+  dir=$(make_supercase noprogress-actionable-clobber)
+  state="$dir/state"
+  task=burn-w2; win="sess:fm-$task"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'blocked: need prod credentials\n' > "$state/$task.status"
+  [ "$(FM_STATE_OVERRIDE="$state" status_seen_offset "$state" "$task")" = 0 ] \
+    || fail "the fixture's record is already seen, so this case pins nothing"
+  case "$(FM_STATE_OVERRIDE="$state" classify_stale "$win" "$state")" in
+    escalate\|stale\ +\ actionable\ status:*) ;;
+    *) fail "the fixture's own classifier did not reach an actionable-status escalate, so this case pins nothing" ;;
+  esac
+
+  # The burn reason comes from the real guard: a climbing counter against an
+  # artifact fingerprint that never moves, which is the only way this wake is
+  # produced at all.
+  sig=$(fm_noprogress_artifact_sig "$state" "$task" "$dir/data")
+  verdict=ok
+  n=20000
+  poll=0
+  while [ "$poll" -lt 8 ] && [ "${verdict%% *}" != escalate ]; do
+    verdict=$(fm_noprogress_observe "$state" "$task" "$n" "$sig" "$(( 1000000 + poll * 600 ))")
+    n=$(( n + 20000 ))
+    poll=$(( poll + 1 ))
+  done
+  case "$verdict" in
+    escalate\ *) ;;
+    *) fail "the guard itself never escalated, so this case pins nothing: $verdict" ;;
+  esac
+  verdict=${verdict#escalate }
+  reason=$(fm_noprogress_reason "$win" "${verdict%% *}" "${verdict##* }")
+
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    handle_wake "$reason" "$state"
+
+  [ "$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')" = 1 ] \
+    || fail "a burn wake over an unread record did not produce exactly one escalation: $(cat "$state/.subsuper-escalations")"
+  grep -qF 'blocked: need prod credentials' "$state/.subsuper-escalations" \
+    || fail "the unread actionable status event was dropped from the escalation that marks it reported: $(cat "$state/.subsuper-escalations")"
+  grep -qF "$FM_NOPROGRESS_REASON_PREFIX" "$state/.subsuper-escalations" \
+    || fail "the burn evidence was dropped instead: $(cat "$state/.subsuper-escalations")"
+  # ...and only now may the offset advance, because the record's text is in what
+  # the buffer actually received.
+  size=$(log_size "$state/$task.status")
+  [ "$(FM_STATE_OVERRIDE="$state" status_seen_offset "$state" "$task")" = "$size" ] \
+    || fail "the seen offset did not advance over a record that was reported"
+
+  # THE CONTROL: the same burn wake with nothing unread carries the guard reason
+  # alone, so this is a carry rather than a second escalation reason bolted onto
+  # every burn.
+  : > "$state/.subsuper-escalations"
+  fm_noprogress_clear "$state" "$task"
+  verdict=ok
+  n=20000
+  poll=0
+  while [ "$poll" -lt 8 ] && [ "${verdict%% *}" != escalate ]; do
+    verdict=$(fm_noprogress_observe "$state" "$task" "$n" "$sig" "$(( 2000000 + poll * 600 ))")
+    n=$(( n + 20000 ))
+    poll=$(( poll + 1 ))
+  done
+  verdict=${verdict#escalate }
+  reason=$(fm_noprogress_reason "$win" "${verdict%% *}" "${verdict##* }")
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    handle_wake "$reason" "$state"
+  grep -qF "$FM_NOPROGRESS_REASON_PREFIX" "$state/.subsuper-escalations" \
+    || fail "a burn wake with nothing unread lost its evidence: $(cat "$state/.subsuper-escalations")"
+  if grep -qF 'blocked: need prod credentials' "$state/.subsuper-escalations"; then
+    fail "a burn wake re-reported an already-seen record: $(cat "$state/.subsuper-escalations")"
+  fi
+
+  pass "a burn wake carries an unread actionable status event with it instead of marking it reported unread"
+}
+
 # The second half of issue #3149. The watcher's wedge timer emits an enriched
 # "idle Ns, possible wedge, escalation N" reason for any pane it reads as frozen -
 # including one whose crew has a CURRENT declared wait, because the watcher's own
@@ -2791,6 +2877,7 @@ test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
 test_spend_without_artifact_survives_away_mode_triage
+test_a_burn_wake_never_marks_an_unread_status_event_reported
 test_stale_terminal_escalates
 test_stale_actionable_wait_escalates_and_keeps_pause_cadence
 test_stale_paused_classifies_pause
