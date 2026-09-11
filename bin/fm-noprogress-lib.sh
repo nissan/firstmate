@@ -176,48 +176,61 @@ _fm_noprogress_uint() {  # <value> <default>
 # fm_noprogress_pane_tokens: the token counter rendered in a pane capture, as a
 # plain integer, or nothing when the capture carries none.
 #
-# Every footer this repo has recorded live renders its counter as a number
-# immediately before the word "tokens" ("· 292.7k tokens", "↓ 234 tokens",
-# "Running  59 tokens"), so that is the whole grammar: digits, optionally one
-# decimal place and a k suffix. No other spelling is accepted, because no other
-# spelling has been recorded and an accepted spelling nothing renders is only
-# extra surface to forge. Anything else is not a token counter and is ignored - a
-# guess here would become a false escalation, and the cost of reading nothing is
-# only that this guard stays silent for that harness.
+# RECORDED SIGNATURES ONLY. A number next to the word "tokens" is not a counter;
+# a number in a SPELLING A HARNESS WAS RECORDED RENDERING is. This repo holds
+# exactly two such spellings, and the match is anchored to both of them the way
+# bin/fm-composer-lib.sh anchors its busy tokens to recorded spinner rows:
 #
-# A counter written with thousands commas parses too, but that is a side effect,
-# not a recorded spelling: no recorded counter carries a comma, and the `tr -d`
-# below strips them only so the compaction notice ("Compacted from 7,697
-# tokens") reaches the filter that drops it as one token rather than two.
+#   ↓ <n>[.<d>][k] tokens   claude - the down-arrow separator immediately
+#                           precedes the count.
+#                           "✢ Pollinating… (16s · ↓ 1.1k tokens · thought for 1s)"
+#                             tests/fm-tmux-submit-busy.test.sh
+#                           "Sock-hopping… (11s · ↓ 234 tokens)"
+#                             docs/verification/runtime-backends.md
+#   Running  <n> tokens     cursor/Herdr - the literal verb precedes the count
+#                           on the spinner row.
+#                           " ⠘⠆ Running  59 tokens"
+#                             tests/fm-backend-herdr.test.sh, herdr_cursor_midturn_plain
 #
-# FOOTER REGION ONLY. The match is narrowed to the last 12 non-blank lines, the
-# same TUI footer region every other rendered-string contract in this repo reads
-# (fm_busy_grok_tail_busy and fm_busy_rovo_tail_busy in bin/fm-busy-lib.sh, and
-# window_is_busy's narrowing in bin/fm-watch.sh), because scrollback is content
-# a worker can print and a counter grammar applied to content is a grammar an
-# agent can forge. Within that region, "from <n> tokens" is dropped as well: the
-# compaction notice this repo has recorded live ("Compacted from 7,697 tokens",
-# docs/verification/supervision.md) is prose about a past total, not a counter.
+# The leading anchor is what makes this a counter grammar rather than a prose
+# grammar, and it is load-bearing in BOTH directions. Without it, "prompt is too
+# long: 216123 tokens > 200000 maximum" - an ordinary inline API error - reads as
+# a counter that leapt by 215k, so fm_noprogress_observe books spend nobody spent
+# and escalates with a fabricated number, then pins `flagged` so high that the
+# real burn underneath it stays suppressed. And "↓ 1.1k tokens · ↑ 3 tokens"
+# reads as 3 on every single poll, so the delta is zero forever, the
+# frozen-counter gate short-circuits, and the guard goes permanently silent for
+# that harness while docs/architecture.md still says the shape is covered - the
+# exact "documented as protected while it is not" outcome this attempt exists to
+# end. The compaction notice this repo recorded live ("Compacted from 7,697
+# tokens", docs/verification/supervision.md) falls out for the same reason, with
+# no carve-out of its own.
 #
-# The FOOTER-MOST remaining match wins. A footer can render more than one number
-# next to "tokens" - a live counter with a context budget or a quota line above
-# it - and the last one is the counter. The property this relies on is NOT that
-# the counter is the bottom-most line drawn: the recorded cursor capture
-# (tests/fm-backend-herdr.test.sh, herdr_cursor_midturn_plain) puts its counter
-# on the FIRST of seven lines. It is that no recorded shape renders a second
-# "<n> tokens" match BELOW its counter, so the last match in the region is the
-# counter in every capture this repo holds. Taking the LARGEST instead
-# would let any constant in the region outrank the counter and pin the reading
-# for good: the delta would be zero on every poll, the frozen-counter gate would
-# short-circuit, and the guard would go permanently silent for that harness
-# while still claiming to cover it. Which of the matches is per-turn does not
-# matter, because fm_noprogress_observe accumulates deltas and treats a drop as
-# a turn boundary rather than as a reset.
+# Commas and an uppercase K are deliberately NOT accepted: no recorded counter
+# carries either. Nor is any other separator, verb, or suffix. An unrecognised
+# footer is no observation at all, which costs only this guard's silence for that
+# harness, while a guess costs a false escalation.
+#
+# FOOTER REGION ONLY. The match is further narrowed to the last 12 non-blank
+# lines, the same TUI footer region every other rendered-string contract in this
+# repo reads (fm_busy_grok_tail_busy and fm_busy_rovo_tail_busy in
+# bin/fm-busy-lib.sh, and window_is_busy's narrowing in bin/fm-watch.sh), because
+# scrollback is content a worker prints and a counter grammar applied to content
+# is a grammar an agent can forge.
+#
+# The FOOTER-MOST remaining match wins. No recorded shape renders a second
+# anchored match below its counter, so the last one is the counter in every
+# capture this repo holds. This is NOT a claim that the counter is the
+# bottom-most line drawn - the recorded cursor capture puts its counter on the
+# FIRST of seven lines. Taking the LARGEST instead would let a constant outrank
+# a climbing counter and pin the reading for good. Which of the matches is
+# per-turn does not matter, because fm_noprogress_observe accumulates deltas and
+# treats a drop as a turn boundary rather than as a reset.
 fm_noprogress_pane_tokens() {  # <pane-capture>
   local capture=${1:-} last='' raw num frac unit scaled
   while read -r raw; do
     [ -n "$raw" ] || continue
-    # raw arrives as "<digits>[.<digit>][k]" with commas already stripped.
+    # raw arrives as "<digits>[.<digit>][k]", anchor and unit word stripped.
     unit=${raw##*[0-9]}
     num=${raw%"$unit"}
     case "$num" in
@@ -227,18 +240,16 @@ fm_noprogress_pane_tokens() {  # <pane-capture>
     frac=$(_fm_noprogress_uint "$frac" 0)
     num=$(_fm_noprogress_uint "$num" 0)
     case "$unit" in
-      k|K) scaled=$(( num * 1000 + frac * 100 )) ;;
-      *)   scaled=$num ;;
+      k) scaled=$(( num * 1000 + frac * 100 )) ;;
+      *) scaled=$num ;;
     esac
     last=$scaled
   done <<EOF
 $(printf '%s\n' "$capture" \
   | grep -v '^[[:space:]]*$' \
   | tail -12 \
-  | tr -d ',' \
-  | sed -E 's/[Ff][Rr][Oo][Mm][[:space:]]+[0-9]+(\.[0-9])?[kK]?[[:space:]]+[Tt][Oo][Kk][Ee][Nn][Ss]//g' \
-  | grep -oiE '[0-9]+(\.[0-9])?k?[[:space:]]+tokens' \
-  | sed -E 's/[[:space:]]+[Tt][Oo][Kk][Ee][Nn][Ss]$//')
+  | grep -oE '(↓|Running)[[:space:]]+[0-9]+(\.[0-9])?k?[[:space:]]+tokens' \
+  | sed -E 's/^(↓|Running)[[:space:]]+//; s/[[:space:]]+tokens$//')
 EOF
   [ -n "$last" ] || return 1
   printf '%s' "$last"

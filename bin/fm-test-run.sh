@@ -729,7 +729,6 @@ tests/fm-wake-drain-unread-status.test.sh 35078
 tests/fm-wake-queue.test.sh 56674
 tests/fm-watch-arm.test.sh 69464
 tests/fm-watch-checkpoint.test.sh 5779
-tests/fm-watch-noprogress.test.sh 25965
 tests/fm-watch-recovery-loop.test.sh 58731
 tests/fm-watch-triage.test.sh 262626
 tests/fm-watcher-lock.test.sh 88554

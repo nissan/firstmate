@@ -53,81 +53,131 @@ queued_guard_wake() {  # <state>
 # exactly the coverage it had before rather than on a guessed number.
 test_pane_token_parsing() {
   local got
-  got=$(fm_noprogress_pane_tokens '  · 292.7k tokens · esc to interrupt')
-  [ "$got" = 292700 ] || fail "a 'k'-suffixed counter parsed as '$got', not 292700"
-  got=$(fm_noprogress_pane_tokens ' Running  59 tokens')
-  [ "$got" = 59 ] || fail "a bare counter parsed as '$got', not 59"
-  got=$(fm_noprogress_pane_tokens '  · 1,234 tokens')
-  [ "$got" = 1234 ] || fail "a comma-separated counter parsed as '$got', not 1234"
-  # A footer can render more than one number next to "tokens". The FOOTER-MOST
-  # one is the counter; which of them is per-turn does not matter, because
+  # The two recorded spellings, verbatim, with their recorded surroundings.
+  got=$(fm_noprogress_pane_tokens '✢ Pollinating… (16s · ↓ 1.1k tokens · thought for 1s)')
+  [ "$got" = 1100 ] || fail "the recorded claude 'k'-suffixed footer parsed as '$got', not 1100"
+  got=$(fm_noprogress_pane_tokens 'Sock-hopping… (11s · ↓ 234 tokens)')
+  [ "$got" = 234 ] || fail "the recorded claude bare-integer footer parsed as '$got', not 234"
+  got=$(fm_noprogress_pane_tokens ' ⠘⠆ Running  59 tokens')
+  [ "$got" = 59 ] || fail "the recorded cursor spinner row parsed as '$got', not 59"
+
+  # A footer can render more than one anchored counter. The FOOTER-MOST one is
+  # the counter; which of them is per-turn does not matter, because
   # fm_noprogress_observe accumulates deltas across turn boundaries.
-  got=$(fm_noprogress_pane_tokens 'session 292.7k tokens
-turn 1.2k tokens')
+  got=$(fm_noprogress_pane_tokens '↓ 292.7k tokens
+↓ 1.2k tokens')
   [ "$got" = 1200 ] || fail "two counters in one footer picked '$got', not the footer-most 1200"
   if fm_noprogress_pane_tokens 'reading the brief, nothing numeric here' >/dev/null 2>&1; then
     fail "a pane with no counter still produced an observation"
   fi
-  # No spelling this repo has not recorded is accepted: an unrecognised footer
-  # leaves the guard silent rather than reading a number out of prose.
+
+  # ANCHORED, NOT MERELY REGIONAL. A number next to "tokens" is not a counter
+  # unless a harness was recorded rendering it that way, because a pane is full
+  # of prose a worker can print and an agent can forge.
   if fm_noprogress_pane_tokens 'tokens used: 1,234' >/dev/null 2>&1; then
     fail "an unrecorded 'tokens used:' spelling was read as a counter"
   fi
+  if fm_noprogress_pane_tokens 'Error: request exceeded 200000 tokens' >/dev/null 2>&1; then
+    fail "an error line was read as a token counter"
+  fi
+  if fm_noprogress_pane_tokens 'some prose about 5 TOKENS here' >/dev/null 2>&1; then
+    fail "prose naming tokens was read as a token counter"
+  fi
+  # No comma and no uppercase K has ever been recorded, so neither is accepted.
+  if fm_noprogress_pane_tokens '↓ 1,234 tokens' >/dev/null 2>&1; then
+    fail "an unrecorded comma-bearing counter was accepted"
+  fi
+  if fm_noprogress_pane_tokens '↓ 1.1K tokens' >/dev/null 2>&1; then
+    fail "an unrecorded uppercase-K counter was accepted"
+  fi
 
-  # FOOTER REGION ONLY. Scrollback is content a worker prints, and a counter
-  # grammar applied to content is a grammar an agent can forge - so a number
-  # next to "tokens" above the footer region is not an observation.
-  got=$(fm_noprogress_pane_tokens "$(printf 'the log says 999999 tokens\n%s\n' \
+  # FOOTER REGION ONLY. Even an anchored match above the footer region is
+  # scrollback, not a counter.
+  got=$(fm_noprogress_pane_tokens "$(printf '↓ 999999 tokens\n%s\n' \
     "$(for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do printf 'running the suite\n'; done)") Running  59 tokens")
   [ "$got" = 59 ] \
-    || fail "a number next to 'tokens' in scrollback was read as the counter ('$got', not 59)"
+    || fail "an anchored counter in scrollback was read as the counter ('$got', not 59)"
   # And the compaction notice this repo has recorded live is prose about a past
-  # total, not a counter, even when it lands inside the footer region.
+  # total, so it falls out on the anchor alone - it needs no carve-out.
   if fm_noprogress_pane_tokens 'Compacted from 7,697 tokens' >/dev/null 2>&1; then
     fail "a compaction notice was read as a token counter"
   fi
   got=$(fm_noprogress_pane_tokens 'Compacted from 7,697 tokens
- Running  59 tokens')
+ ⠘⠆ Running  59 tokens')
   [ "$got" = 59 ] || fail "a compaction notice outweighed the real counter ('$got', not 59)"
-  pass "the pane counter grammar reads every recorded harness footer and refuses to guess"
+  pass "the pane counter grammar reads both recorded harness signatures and refuses to guess"
 }
 
-# FOOTER-MOST, NOT LARGEST. A constant number next to "tokens" can sit in the
-# footer region above the live counter - a context budget, a quota line. Under a
-# largest-match rule that constant is the reading on every single poll, so the
-# delta is always zero, the frozen-counter gate short-circuits, and the guard
-# goes silent for that harness forever while docs/architecture.md still says the
-# shape is covered. That is the same "documented as protected while it is not"
-# failure this attempt exists to end, so it is asserted end to end: the parser
-# picks the counter, and the window built from those readings escalates.
-test_a_constant_above_the_counter_cannot_pin_the_reading() {
+# AN INLINE API ERROR IS NOT SPEND. A Claude pane that prints "prompt is too
+# long: 216123 tokens > 200000 maximum" below its spinner is reporting a limit,
+# not a turn's cost. Read as a counter it is a ~215k leap over the previous
+# poll, which books spend nobody spent: the guard escalates on that poll with a
+# fabricated figure in the human-facing reason, and pins `flagged` so high that
+# the real burn underneath it is suppressed for the rest of the window.
+test_an_inline_api_error_is_not_read_as_spend() {
+  local dir state verdict got poll now
+  dir=$(make_case api-error); state="$dir/state"
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  got=$(fm_noprogress_pane_tokens '✢ Pollinating… (16s · ↓ 1.2k tokens · thought for 1s)
+prompt is too long: 216123 tokens > 200000 maximum')
+  [ "$got" = 1200 ] \
+    || fail "an inline API error below the spinner moved the reading to '$got' instead of the counter's 1200"
+
+  # Driven through the window: the counter is FROZEN at 1.2k while the error
+  # sits under it, so this is a wait and nothing may be flagged - however long
+  # it runs, and however far past the age gate it goes.
+  poll=0
+  while [ "$poll" -lt 8 ]; do
+    now=$(( 1000000 + poll * 60 ))
+    verdict=$(fm_noprogress_observe "$state" t \
+      "$(fm_noprogress_pane_tokens "$(printf '✢ Pollinating… (16s · ↓ 1.2k tokens · thought for 1s)\nprompt is too long: 216123 tokens > 200000 maximum\n')")" \
+      sig-unchanged "$now")
+    [ "$verdict" = ok ] \
+      || fail "an inline API error was booked as spend and escalated on poll $poll: $verdict"
+    poll=$(( poll + 1 ))
+  done
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "an inline API error naming a token limit is never read as spend"
+}
+
+# A CONSTANT MUST NOT PIN THE READING. A footer can carry a second number next
+# to "tokens" that never moves - here the uploaded-bytes counterpart rendered
+# AFTER the live counter on the same line ("↓ 1.1k tokens · ↑ 3 tokens"). Read as
+# the counter, that constant is the reading on every single poll, so the delta is
+# always zero, the frozen-counter gate short-circuits, and the guard goes silent
+# for that harness forever while docs/architecture.md still says the shape is
+# covered. That is the same "documented as protected while it is not" failure
+# this attempt exists to end, so it is asserted end to end: the parser picks the
+# live counter, and the window built from those readings escalates.
+test_a_constant_beside_the_counter_cannot_pin_the_reading() {
   local dir state verdict got n poll escalated
   dir=$(make_case footer-most); state="$dir/state"
   export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
 
-  got=$(fm_noprogress_pane_tokens 'Context left: 175000 tokens
- ⠘⠆ Running  59 tokens')
-  [ "$got" = 59 ] \
-    || fail "a larger constant above the counter was read instead of the counter ('$got', not 59)"
+  got=$(fm_noprogress_pane_tokens '✢ Pollinating… (16s · ↓ 1.1k tokens · ↑ 3 tokens)')
+  [ "$got" = 1100 ] \
+    || fail "a trailing constant beside the counter was read instead of the counter ('$got', not 1100)"
 
-  # The counter climbs by 200 a poll under an unchanging 175000; the artifact
-  # never moves. Reading the constant instead would hold spend at 0 forever.
+  # The counter climbs by 200 a poll beside an unchanging "↑ 3 tokens"; the
+  # artifact never moves. Reading the constant instead would hold spend at 0.
   escalated=
   n=100
   poll=0
   while [ "$poll" -lt 20 ] && [ -z "$escalated" ]; do
     verdict=$(fm_noprogress_observe "$state" t \
-      "$(fm_noprogress_pane_tokens "$(printf 'Context left: 175000 tokens\n ⠘⠆ Running  %s tokens\n' "$n")")" \
+      "$(fm_noprogress_pane_tokens "$(printf '✢ Pollinating… (16s · ↓ %s tokens · ↑ 3 tokens)\n' "$n")")" \
       sig-unchanged "$(( 1000000 + poll * 60 ))")
     case "$verdict" in escalate\ *) escalated=$verdict ;; esac
     n=$(( n + 200 ))
     poll=$(( poll + 1 ))
   done
   [ -n "$escalated" ] || fail \
-    "a counter climbing under a larger constant never escalated - the constant pinned the reading: record=[$(cat "$(fm_noprogress_record "$state" t)")]"
+    "a counter climbing beside a constant never escalated - the constant pinned the reading: record=[$(cat "$(fm_noprogress_record "$state" t)")]"
 
   unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
-  pass "the footer-most counter is the reading, so a larger constant above it cannot pin the guard silent"
+  pass "the live counter is the reading, so a constant beside it cannot pin the guard silent"
 }
 
 # The core decision table, driven directly so each rule is asserted alone.
@@ -504,7 +554,7 @@ run_wired_case() {  # <name> <mode> <rounds>
     printf 'worktree=%s\n' "$dir/wt" >> "$state/$name.meta"
   fi
   tokens=100000
-  printf 'apply_patch start\n. %s tokens\n' "$tokens" > "$pane"
+  printf 'apply_patch start\n· ↓ %s tokens\n' "$tokens" > "$pane"
   # The codex verdict verbatim: no verified semantic busy source, so nothing
   # else on the stale path can absorb or surface this pane on our behalf.
   export FM_FAKE_CREW_STATE='state: unknown · source: pane · harness state unavailable (unknown codex-unverified)'
@@ -541,7 +591,7 @@ run_wired_case() {  # <name> <mode> <rounds>
         printf 'fn thing_%s() {}\n' "$i" >> "$dir/wt/lib.rs"
         ;;
     esac
-    printf 'apply_patch frame-%s\n. %s tokens\n' "$i" "$tokens" > "$pane"
+    printf 'apply_patch frame-%s\n· ↓ %s tokens\n' "$i" "$tokens" > "$pane"
     sleep 0.4
     i=$((i + 1))
   done
@@ -686,7 +736,8 @@ test_uncommitted_worktree_writes_defer_instead_of_escalating() {
 }
 
 test_pane_token_parsing
-test_a_constant_above_the_counter_cannot_pin_the_reading
+test_a_constant_beside_the_counter_cannot_pin_the_reading
+test_an_inline_api_error_is_not_read_as_spend
 test_observe_decision_table
 test_reescalation_and_counter_reset
 test_recorded_per_turn_footers_accumulate_across_turns
