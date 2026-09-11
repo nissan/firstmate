@@ -1,0 +1,943 @@
+#!/usr/bin/env bash
+# tests/fm-watch-noprogress.test.sh - the spend-without-artifact guard
+# (bin/fm-noprogress-lib.sh) and its wiring into bin/fm-watch.sh.
+#
+# The motivating incident: a worker ran roughly 18 hours and spent 292.7k tokens
+# producing nothing at all, twice on the same task, and nothing noticed either
+# time. The pane-staleness backbone could not see it, because that backbone only
+# fires on a FROZEN pane hash and this pane never froze - its token counter kept
+# climbing.
+#
+# So the wiring cases below deliberately drive panes that CHURN on every poll,
+# and every assertion is made while that churn is still running - never after
+# the fixture stops rewriting the pane, which would let the backbone go stale
+# and hand a wake to an assertion that did not earn it. Verified: against the
+# pre-guard watcher the escalating case fails, and it fails because nothing
+# carrying this guard's reason was ever queued.
+#
+# Each silent case additionally asserts that the guard DID observe the pane (its
+# per-task record exists and holds the counter the fixture last rendered), so
+# silence can never be the silence of a check that never ran.
+#
+# The four behaviours the guard has to separate, all with a churning pane:
+#   climbing tokens, no artifact     -> escalate (the burn)
+#   frozen tokens                    -> silent (a worker waiting on a pipeline)
+#   climbing tokens, report grows    -> silent (a scout writing findings as it goes)
+#   climbing tokens, worktree writes -> silent (a crew writing uncommitted source)
+set -u
+
+# shellcheck source=tests/wake-helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-noprogress-lib.sh"
+
+WATCH="$ROOT/bin/fm-watch.sh"
+
+TMP_ROOT=$(fm_test_tmproot fm-watch-noprogress-tests)
+
+# The phrase the guard's wake reason is built around. Asserted as a literal so a
+# silently reworded reason cannot let a "no wake" case pass vacuously.
+GUARD_PHRASE='spending without producing'
+
+reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
+
+# Whether the durable queue holds a guard escalation yet.
+queued_guard_wake() {  # <state>
+  grep -qF "$GUARD_PHRASE" "$1/.wake-queue" 2>/dev/null
+}
+
+# --- the library, as pure functions ----------------------------------------
+
+# The counter grammar every recorded harness footer renders. A pane this cannot
+# read yields NO observation, which is what keeps an unrecognised harness on
+# exactly the coverage it had before rather than on a guessed number.
+test_pane_token_parsing() {
+  local got
+  # The two recorded spellings, verbatim, with their recorded surroundings.
+  got=$(fm_noprogress_pane_tokens '✢ Pollinating… (16s · ↓ 1.1k tokens · thought for 1s)')
+  [ "$got" = 1100 ] || fail "the recorded claude 'k'-suffixed footer parsed as '$got', not 1100"
+  got=$(fm_noprogress_pane_tokens 'Sock-hopping… (11s · ↓ 234 tokens)')
+  [ "$got" = 234 ] || fail "the recorded claude bare-integer footer parsed as '$got', not 234"
+  got=$(fm_noprogress_pane_tokens ' ⠘⠆ Running  59 tokens')
+  [ "$got" = 59 ] || fail "the recorded cursor spinner row parsed as '$got', not 59"
+
+  # A footer can render more than one anchored counter. The FOOTER-MOST one is
+  # the counter; which of them is per-turn does not matter, because
+  # fm_noprogress_observe accumulates deltas across turn boundaries.
+  got=$(fm_noprogress_pane_tokens '↓ 292.7k tokens
+↓ 1.2k tokens')
+  [ "$got" = 1200 ] || fail "two counters in one footer picked '$got', not the footer-most 1200"
+  if fm_noprogress_pane_tokens 'reading the brief, nothing numeric here' >/dev/null 2>&1; then
+    fail "a pane with no counter still produced an observation"
+  fi
+
+  # ANCHORED, NOT MERELY REGIONAL. A number next to "tokens" is not a counter
+  # unless a harness was recorded rendering it that way, because a pane is full
+  # of prose a worker can print and an agent can forge.
+  if fm_noprogress_pane_tokens 'tokens used: 1,234' >/dev/null 2>&1; then
+    fail "an unrecorded 'tokens used:' spelling was read as a counter"
+  fi
+  if fm_noprogress_pane_tokens 'Error: request exceeded 200000 tokens' >/dev/null 2>&1; then
+    fail "an error line was read as a token counter"
+  fi
+  if fm_noprogress_pane_tokens 'some prose about 5 TOKENS here' >/dev/null 2>&1; then
+    fail "prose naming tokens was read as a token counter"
+  fi
+  # No comma and no uppercase K has ever been recorded, so neither is accepted.
+  if fm_noprogress_pane_tokens '↓ 1,234 tokens' >/dev/null 2>&1; then
+    fail "an unrecorded comma-bearing counter was accepted"
+  fi
+  if fm_noprogress_pane_tokens '↓ 1.1K tokens' >/dev/null 2>&1; then
+    fail "an unrecorded uppercase-K counter was accepted"
+  fi
+
+  # FOOTER REGION ONLY. Even an anchored match above the footer region is
+  # scrollback, not a counter.
+  got=$(fm_noprogress_pane_tokens "$(printf '↓ 999999 tokens\n%s\n' \
+    "$(for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do printf 'running the suite\n'; done)") Running  59 tokens")
+  [ "$got" = 59 ] \
+    || fail "an anchored counter in scrollback was read as the counter ('$got', not 59)"
+  # And the compaction notice this repo has recorded live is prose about a past
+  # total, so it falls out on the anchor alone - it needs no carve-out.
+  if fm_noprogress_pane_tokens 'Compacted from 7,697 tokens' >/dev/null 2>&1; then
+    fail "a compaction notice was read as a token counter"
+  fi
+  got=$(fm_noprogress_pane_tokens 'Compacted from 7,697 tokens
+ ⠘⠆ Running  59 tokens')
+  [ "$got" = 59 ] || fail "a compaction notice outweighed the real counter ('$got', not 59)"
+  pass "the pane counter grammar reads both recorded harness signatures and refuses to guess"
+}
+
+# AN INLINE API ERROR IS NOT SPEND. A Claude pane that prints "prompt is too
+# long: 216123 tokens > 200000 maximum" below its spinner is reporting a limit,
+# not a turn's cost. Read as a counter it is a ~215k leap over the previous
+# poll, which books spend nobody spent: the guard escalates on that poll with a
+# fabricated figure in the human-facing reason, and pins `flagged` so high that
+# the real burn underneath it is suppressed for the rest of the window.
+test_an_inline_api_error_is_not_read_as_spend() {
+  local dir state verdict got poll now
+  dir=$(make_case api-error); state="$dir/state"
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  got=$(fm_noprogress_pane_tokens '✢ Pollinating… (16s · ↓ 1.2k tokens · thought for 1s)
+prompt is too long: 216123 tokens > 200000 maximum')
+  [ "$got" = 1200 ] \
+    || fail "an inline API error below the spinner moved the reading to '$got' instead of the counter's 1200"
+
+  # Driven through the window: the counter is FROZEN at 1.2k while the error
+  # sits under it, so this is a wait and nothing may be flagged - however long
+  # it runs, and however far past the age gate it goes.
+  poll=0
+  while [ "$poll" -lt 8 ]; do
+    now=$(( 1000000 + poll * 60 ))
+    verdict=$(fm_noprogress_observe "$state" t \
+      "$(fm_noprogress_pane_tokens "$(printf '✢ Pollinating… (16s · ↓ 1.2k tokens · thought for 1s)\nprompt is too long: 216123 tokens > 200000 maximum\n')")" \
+      sig-unchanged "$now")
+    [ "$verdict" = ok ] \
+      || fail "an inline API error was booked as spend and escalated on poll $poll: $verdict"
+    poll=$(( poll + 1 ))
+  done
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "an inline API error naming a token limit is never read as spend"
+}
+
+# A CONSTANT MUST NOT PIN THE READING. A footer can carry a second number next
+# to "tokens" that never moves - here the uploaded-bytes counterpart rendered
+# AFTER the live counter on the same line ("↓ 1.1k tokens · ↑ 3 tokens"). Read as
+# the counter, that constant is the reading on every single poll, so the delta is
+# always zero, the frozen-counter gate short-circuits, and the guard goes silent
+# for that harness forever while docs/architecture.md still says the shape is
+# covered. That is the same "documented as protected while it is not" failure
+# this attempt exists to end, so it is asserted end to end: the parser picks the
+# live counter, and the window built from those readings escalates.
+test_a_constant_beside_the_counter_cannot_pin_the_reading() {
+  local dir state verdict got n poll escalated
+  dir=$(make_case footer-most); state="$dir/state"
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  got=$(fm_noprogress_pane_tokens '✢ Pollinating… (16s · ↓ 1.1k tokens · ↑ 3 tokens)')
+  [ "$got" = 1100 ] \
+    || fail "a trailing constant beside the counter was read instead of the counter ('$got', not 1100)"
+
+  # The counter climbs by 200 a poll beside an unchanging "↑ 3 tokens"; the
+  # artifact never moves. Reading the constant instead would hold spend at 0.
+  escalated=
+  n=100
+  poll=0
+  while [ "$poll" -lt 20 ] && [ -z "$escalated" ]; do
+    verdict=$(fm_noprogress_observe "$state" t \
+      "$(fm_noprogress_pane_tokens "$(printf '✢ Pollinating… (16s · ↓ %s tokens · ↑ 3 tokens)\n' "$n")")" \
+      sig-unchanged "$(( 1000000 + poll * 60 ))")
+    case "$verdict" in escalate\ *) escalated=$verdict ;; esac
+    n=$(( n + 200 ))
+    poll=$(( poll + 1 ))
+  done
+  [ -n "$escalated" ] || fail \
+    "a counter climbing beside a constant never escalated - the constant pinned the reading: record=[$(cat "$(fm_noprogress_record "$state" t)")]"
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "the live counter is the reading, so a constant beside it cannot pin the guard silent"
+}
+
+# The core decision table, driven directly so each rule is asserted alone.
+test_observe_decision_table() {
+  local dir state verdict
+  dir=$(make_case observe-table); state="$dir/state"
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  # First sighting only opens a window; it can never escalate on its own.
+  verdict=$(fm_noprogress_observe "$state" t "5000" "sig-a" 1000)
+  [ "$verdict" = ok ] || fail "a first sighting escalated: $verdict"
+
+  # THE BURN. Tokens climbed past the threshold against an unchanged artifact,
+  # and the window is older than the time gate.
+  fm_noprogress_observe "$state" t "5500" "sig-a" 1050 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t "9000" "sig-a" 1200)
+  [ "$verdict" = "escalate 4000 200" ] \
+    || fail "spend without artifact did not escalate as expected: $verdict"
+
+  # THE FROZEN WAIT. Same task, same unchanged artifact, spend still far past
+  # the threshold - but the counter did not move since the previous poll, so the
+  # worker is waiting, not burning, and the guard says nothing.
+  fm_noprogress_clear "$state" t
+  fm_noprogress_observe "$state" t "5000" "sig-a" 1000 >/dev/null
+  fm_noprogress_observe "$state" t "9000" "sig-a" 1100 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t "9000" "sig-a" 9999)
+  [ "$verdict" = ok ] || fail "a frozen counter escalated: $verdict"
+  # And it stays silent however long the wait runs.
+  verdict=$(fm_noprogress_observe "$state" t "9000" "sig-a" 99999)
+  [ "$verdict" = ok ] || fail "a long frozen wait escalated: $verdict"
+
+  # PRODUCTION. The artifact fingerprint moved, so the window restarts and the
+  # accumulated spend goes with it.
+  fm_noprogress_clear "$state" t
+  fm_noprogress_observe "$state" t "5000" "sig-a" 1000 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t "9000" "sig-b" 1200)
+  [ "$verdict" = ok ] || fail "a moved artifact escalated: $verdict"
+  verdict=$(fm_noprogress_observe "$state" t "9400" "sig-b" 1400)
+  [ "$verdict" = ok ] || fail "spend from before the artifact moved was not reset: $verdict"
+
+  # BOTH GATES. Spend past the threshold but the window younger than the time
+  # gate is a fast burst, not a burn.
+  fm_noprogress_clear "$state" t
+  fm_noprogress_observe "$state" t "5000" "sig-a" 1000 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t "9000" "sig-a" 1010)
+  [ "$verdict" = ok ] || fail "a young window escalated on spend alone: $verdict"
+  # ...and a long window with little spend is just a slow task.
+  fm_noprogress_clear "$state" t
+  fm_noprogress_observe "$state" t "5000" "sig-a" 1000 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t "5100" "sig-a" 9000)
+  [ "$verdict" = ok ] || fail "a long quiet window escalated on age alone: $verdict"
+
+  # An unreadable counter is no observation at all.
+  verdict=$(fm_noprogress_observe "$state" t "" "sig-a" 9000)
+  [ "$verdict" = ok ] || fail "an unreadable counter escalated: $verdict"
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "observe: the burn escalates; frozen counter, moved artifact, one gate alone, and an unreadable counter stay silent"
+}
+
+# THE REGRESSION THIS GUARD'S SECOND ATTEMPT EXISTS FOR. Every harness footer
+# this repo has recorded live is a PER-TURN counter that restarts at each turn
+# boundary, not a running session total. The first attempt read the rendered
+# number as a cumulative total and re-anchored its baseline whenever the number
+# dropped, so an all-day burn of ordinary turns never accumulated past ONE
+# turn's tokens and could never reach the threshold.
+#
+# So this drives the real recorded footer shapes - verbatim, including their
+# spinner glyphs and separators - through the real parser and the real decision
+# function, across many turn boundaries, at the SHIPPED thresholds (read out of
+# the library so the test tracks what actually ships), against an artifact that
+# never moves. It must escalate, and it must do so well inside the ~18 hours the
+# motivating burn ran.
+FOOTER_TURNS=()
+# Claude, tests/fm-tmux-submit-busy.test.sh:270 - "k"-suffixed, one decimal.
+FOOTER_TURNS+=('✢ Pollinating… (@Ss · ↓ @k tokens · thought for 1s)')
+# Claude, docs/verification/runtime-backends.md:677 - bare integer.
+FOOTER_TURNS+=('Sock-hopping… (@Ss · ↓ @N tokens)')
+# cursor, tests/fm-backend-herdr.test.sh:3916 - bare integer behind a spinner.
+FOOTER_TURNS+=(' ⠘⠆ Running  @N tokens')
+
+# render_turn_footer: one poll's pane, rendering <turn-tokens> in the recorded
+# footer shape this turn index selects. The counter RESTARTS at every turn,
+# which is the whole point, and the pane carries scrollback above the footer so
+# the footer-region narrowing is exercised on the way through.
+render_turn_footer() {  # <shape-index> <turn-tokens>
+  local shape=${FOOTER_TURNS[$(( $1 % ${#FOOTER_TURNS[@]} ))]} n=$2 k
+  # "1.1k" from 1100, the way a footer renders a four-figure per-turn count.
+  k="$(( n / 1000 )).$(( (n % 1000) / 100 ))k"
+  shape=${shape//@k/$k}
+  shape=${shape//@N/$n}
+  shape=${shape//@S/$(( n / 70 ))}
+  printf 'reading src/thing.rs\nrunning the suite\n%s\n' "$shape"
+}
+
+# The shipped default for a threshold: the value the library gives itself in a
+# clean environment, so this test measures what the fleet actually runs rather
+# than a number copied here that could drift away from it.
+shipped_default() {  # <var>
+  # The inner script runs in a child shell with the overrides cleared, so the
+  # library assigns its own default; single quotes are deliberate - $1 and $2
+  # are the child's positional parameters, not this shell's.
+  # shellcheck disable=SC2016
+  env -u FM_NOPROGRESS_SPEND -u FM_NOPROGRESS_SECS bash -c \
+    '. "$1"; printf "%s" "${!2}"' _ "$ROOT/bin/fm-noprogress-lib.sh" "$1"
+}
+
+test_recorded_per_turn_footers_accumulate_across_turns() {
+  local dir state spend_gate secs_gate verdict
+  local turn poll now tokens per_turn polls_per_turn escalated_at escalated_spend
+  dir=$(make_case recorded-footers); state="$dir/state"
+
+  spend_gate=$(shipped_default FM_NOPROGRESS_SPEND)
+  secs_gate=$(shipped_default FM_NOPROGRESS_SECS)
+  case "$spend_gate" in ''|*[!0-9]*) fail "could not read the shipped FM_NOPROGRESS_SPEND default" ;; esac
+  case "$secs_gate" in ''|*[!0-9]*) fail "could not read the shipped FM_NOPROGRESS_SECS default" ;; esac
+  export FM_NOPROGRESS_SPEND=$spend_gate FM_NOPROGRESS_SECS=$secs_gate
+
+  # A worker polled every 30s, turning over every 2 minutes, each turn rendering
+  # a counter that climbs from 0 to 1100 and then restarts - the ordinary
+  # Claude turn this repo has on record. Eighteen hours of it.
+  per_turn=1100
+  polls_per_turn=4
+  now=1000000
+  escalated_at=
+  escalated_spend=
+  turn=0
+  # 540 turns is the full 18 hours; the loop stops at the first escalation
+  # because everything after it is the pacing rule, covered separately.
+  while [ "$turn" -lt 540 ] && [ -z "$escalated_at" ]; do
+    poll=1
+    while [ "$poll" -le "$polls_per_turn" ] && [ -z "$escalated_at" ]; do
+      tokens=$(( per_turn * poll / polls_per_turn ))
+      verdict=$(fm_noprogress_observe "$state" t \
+        "$(fm_noprogress_pane_tokens "$(render_turn_footer "$turn" "$tokens")")" \
+        sig-unchanged "$now")
+      case "$verdict" in
+        escalate\ *)
+          if [ -z "$escalated_at" ]; then
+            escalated_at=$(( now - 1000000 ))
+            escalated_spend=$(printf '%s' "$verdict" | cut -d' ' -f2)
+          fi
+          ;;
+      esac
+      now=$(( now + 30 ))
+      poll=$(( poll + 1 ))
+    done
+    turn=$(( turn + 1 ))
+  done
+
+  [ -n "$escalated_at" ] || fail \
+    "540 turns of real per-turn footers - 18 hours, $(( 540 * per_turn )) tokens - against an unchanged artifact never escalated at the shipped gates ($spend_gate tokens / ${secs_gate}s); record=[$(cat "$(fm_noprogress_record "$state" t)")]"
+  [ "$escalated_spend" -ge "$spend_gate" ] || fail \
+    "the escalation reported $escalated_spend tokens of spend, below the $spend_gate gate it claims to have crossed"
+  # Well inside the burn: the point is that it fires long before a human would
+  # have to notice 18 hours had passed.
+  [ "$escalated_at" -le 21600 ] || fail \
+    "it took ${escalated_at}s to notice a continuous burn of ordinary turns"
+
+  # The same shapes, FROZEN - the pane redrawing an identical footer poll after
+  # poll, which is a worker waiting - must still never escalate, over a window
+  # four times older than the age gate and far past the burn case's turn count.
+  fm_noprogress_clear "$state" frozen
+  poll=0
+  while [ "$poll" -lt 240 ]; do
+    verdict=$(fm_noprogress_observe "$state" frozen \
+      "$(fm_noprogress_pane_tokens "$(render_turn_footer 0 "$per_turn")")" \
+      sig-unchanged "$(( 1000000 + poll * 30 ))")
+    [ "$verdict" = ok ] || fail "a frozen recorded footer escalated on poll $poll: $verdict"
+    poll=$(( poll + 1 ))
+  done
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "the recorded per-turn footers accumulate across turn boundaries, so an all-day burn escalates while a frozen footer stays silent"
+}
+
+# THE FROZEN-COUNTER GATE, ISOLATED. The decision table above exercises the gate
+# only in states where the spend gate or the re-escalation pacing would have
+# produced the same silence, so deleting the gate leaves those assertions green.
+# This drives the one state where the gate is the ONLY thing standing between
+# the window and a wake: spend already past its gate, then the counter freezes
+# while the clock crosses the age gate, with nothing ever flagged so pacing
+# cannot suppress anything.
+test_frozen_counter_gate_is_the_only_thing_keeping_this_silent() {
+  local dir state verdict rec
+  dir=$(make_case frozen-gate); state="$dir/state"
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  fm_noprogress_observe "$state" t 5000 sig-a 1000 >/dev/null
+  # Spend gate crossed (4000 > 1000), age gate NOT yet (10 < 100).
+  verdict=$(fm_noprogress_observe "$state" t 9000 sig-a 1010)
+  [ "$verdict" = ok ] || fail "the setup poll escalated before the age gate was reached: $verdict"
+  rec=$(fm_noprogress_record "$state" t)
+  [ "$(sed -n 's/^spend=//p' "$rec" | tail -1)" -ge 1000 ] \
+    || fail "the setup did not leave spend past its gate, so this proves nothing: $(cat "$rec")"
+  [ "$(sed -n 's/^flagged=//p' "$rec" | tail -1)" = 0 ] \
+    || fail "the setup already flagged, so re-escalation pacing could stand in for the gate: $(cat "$rec")"
+
+  # Now the counter FREEZES and the age gate crosses. Both gates are satisfied
+  # and nothing is paced: the frozen-counter gate alone must produce this ok.
+  verdict=$(fm_noprogress_observe "$state" t 9000 sig-a 1200)
+  [ "$verdict" = ok ] \
+    || fail "a worker that spent past the gate and then went quiet was flagged as a burn: $verdict"
+
+  # And the state really was one poll away from a wake: the identical window
+  # with the counter moving by a single token escalates.
+  verdict=$(fm_noprogress_observe "$state" t 9001 sig-a 1200)
+  case "$verdict" in
+    escalate\ *) ;;
+    *) fail "the window was not actually eligible, so the frozen poll above proves nothing: $verdict" ;;
+  esac
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "a counter that freezes after the spend gate is a wait, and only the frozen-counter gate keeps it silent"
+}
+
+# One flagged burn must not become a wake on every poll thereafter, and a
+# counter that goes backwards (a compaction, a fresh session) must not launder
+# the burn by restarting the artifact clock.
+test_reescalation_and_counter_reset() {
+  local dir state verdict
+  dir=$(make_case observe-pacing); state="$dir/state"
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  fm_noprogress_observe "$state" t "5000" "sig-a" 1000 >/dev/null
+  fm_noprogress_observe "$state" t "5500" "sig-a" 1050 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t "9000" "sig-a" 1200)
+  case "$verdict" in escalate\ *) ;; *) fail "the first burn did not escalate: $verdict" ;; esac
+  verdict=$(fm_noprogress_observe "$state" t "9100" "sig-a" 1300)
+  [ "$verdict" = ok ] || fail "a flagged burn re-escalated on the very next poll: $verdict"
+  verdict=$(fm_noprogress_observe "$state" t "10500" "sig-a" 1400)
+  case "$verdict" in escalate\ *) ;; *) fail "a burn that kept burning never flagged again: $verdict" ;; esac
+
+  # A backwards counter re-anchors the baseline but keeps the artifact clock, so
+  # the window's age survives the reset.
+  fm_noprogress_clear "$state" t
+  fm_noprogress_observe "$state" t "5000" "sig-a" 1000 >/dev/null
+  fm_noprogress_observe "$state" t "200" "sig-a" 1500 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t "1400" "sig-a" 1600)
+  case "$verdict" in
+    escalate\ *) ;;
+    *) fail "spend after a counter reset never escalated, so a reset launders a burn: $verdict" ;;
+  esac
+  case "$verdict" in
+    *' 600') ;;
+    *) fail "a counter reset restarted the artifact clock: $verdict" ;;
+  esac
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "escalations are paced by further spend, and a counter reset cannot launder a burn"
+}
+
+# The artifact fingerprint has to move for each of the three cheap signals, and
+# an unreadable component must contribute a fixed placeholder rather than a
+# changing value (or an unreadable worktree would read as constant progress).
+test_artifact_fingerprint_tracks_each_signal() {
+  local dir state data wt a b
+  dir=$(make_case artifact-sig); state="$dir/state"; data="$dir/data"
+  wt="$dir/wt"; mkdir -p "$wt" "$data/t"
+  printf 'window=test:fm-t\nkind=ship\nworktree=%s\n' "$wt" > "$state/t.meta"
+  git -C "$wt" init -q
+  git -C "$wt" config user.email t@example.com
+  git -C "$wt" config user.name t
+  printf 'one\n' > "$wt/f"
+  git -C "$wt" add f >/dev/null
+  git -C "$wt" commit -qm one >/dev/null
+
+  a=$(fm_noprogress_artifact_sig "$state" t "$data")
+  printf 'two\n' > "$wt/f"
+  git -C "$wt" commit -qam two >/dev/null
+  b=$(fm_noprogress_artifact_sig "$state" t "$data")
+  [ "$a" != "$b" ] || fail "a landed commit did not move the artifact fingerprint"
+
+  a=$b
+  printf 'a finding\n' >> "$data/t/report.md"
+  b=$(fm_noprogress_artifact_sig "$state" t "$data")
+  [ "$a" != "$b" ] || fail "a growing report did not move the artifact fingerprint"
+
+  a=$b
+  printf 'working: still going\n' >> "$state/t.status"
+  b=$(fm_noprogress_artifact_sig "$state" t "$data")
+  [ "$a" != "$b" ] || fail "a status append did not move the artifact fingerprint"
+
+  # A task with nothing readable at all must produce a STABLE fingerprint, so
+  # the guard can still observe it rather than seeing endless fake progress.
+  printf 'window=test:fm-none\nkind=ship\n' > "$state/none.meta"
+  a=$(fm_noprogress_artifact_sig "$state" none "$data")
+  sleep 1
+  b=$(fm_noprogress_artifact_sig "$state" none "$data")
+  [ "$a" = "$b" ] || fail "an unreadable task's fingerprint changed on its own: $a vs $b"
+
+  pass "the artifact fingerprint moves on a commit, a report write, and a status append, and is stable when unreadable"
+}
+
+# A WORKTREE THAT NEVER ANSWERS MUST NOT STALL THE POLL. The fingerprint is
+# recomputed for every task on every poll, and the task worktree is the only
+# part of it outside the home - a treehouse on a hung NFS/sshfs/container mount
+# answers neither the stat nor the HEAD read. The watcher polls every window in
+# ONE single-threaded loop, so an unbounded read there stops wake emission for
+# the whole fleet, not just that task. Hence the bound, and hence the fork it
+# needs: a builtin read cannot be interrupted, a killable child can. Hitting the
+# bound has to read as an unreadable worktree - the fixed placeholder, never a
+# changing value - with the escalation schedule untouched.
+test_a_hanging_worktree_cannot_stall_the_poll() {
+  local dir state data wt hangbin oldpath a b started elapsed
+  local n poll verdict escalated
+  dir=$(make_case hung-worktree); state="$dir/state"; data="$dir/data"
+  wt="$dir/wt"; hangbin="$dir/hangbin"; mkdir -p "$wt" "$data/t" "$hangbin"
+  printf 'window=test:fm-t\nkind=ship\nworktree=%s\n' "$wt" > "$state/t.meta"
+  # A worktree whose every git access hangs, which is what an unresponsive
+  # mount looks like from here. 120s is far longer than the whole suite would
+  # tolerate, so an unbounded read cannot pass this test by finishing early.
+  printf '#!/usr/bin/env bash\nsleep 120\n' > "$hangbin/git"
+  chmod +x "$hangbin/git"
+  export FM_NOPROGRESS_TIMEOUT=1
+
+  oldpath=$PATH
+  PATH="$hangbin:$PATH"
+  started=$(date +%s)
+  a=$(fm_noprogress_artifact_sig "$state" t "$data")
+  elapsed=$(( $(date +%s) - started ))
+  PATH=$oldpath
+  [ "$elapsed" -lt 30 ] \
+    || fail "one fingerprint read of a hung worktree took ${elapsed}s, so the poll is not bounded"
+  [ "${a%%:*}" = '-' ] \
+    || fail "a hung worktree produced a head component of '${a%%:*}' rather than the unreadable placeholder"
+
+  # Stable, not merely unreadable: a value that changed per poll would read as
+  # continuous progress and silence the guard forever.
+  PATH="$hangbin:$PATH"
+  b=$(fm_noprogress_artifact_sig "$state" t "$data")
+  PATH=$oldpath
+  [ "$a" = "$b" ] || fail "a hung worktree's fingerprint changed between polls: $a vs $b"
+
+  # ...and the schedule is untouched: a climbing counter against that stable
+  # fingerprint still crosses both gates and escalates, poll after bounded poll.
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+  escalated=
+  n=100
+  poll=0
+  started=$(date +%s)
+  while [ "$poll" -lt 4 ] && [ -z "$escalated" ]; do
+    PATH="$hangbin:$PATH"
+    b=$(fm_noprogress_artifact_sig "$state" t "$data")
+    PATH=$oldpath
+    verdict=$(fm_noprogress_observe "$state" t "$n" "$b" "$(( 1000000 + poll * 60 ))")
+    case "$verdict" in escalate\ *) escalated=$verdict ;; esac
+    n=$(( n + 500 ))
+    poll=$(( poll + 1 ))
+  done
+  elapsed=$(( $(date +%s) - started ))
+  [ -n "$escalated" ] \
+    || fail "a burn against a hung worktree never escalated, so the bound changed the schedule: record=[$(cat "$(fm_noprogress_record "$state" t)")]"
+  # Every one of those polls was bounded too - a hung mount must not compound.
+  [ "$elapsed" -lt 60 ] \
+    || fail "four consecutive bounded reads took ${elapsed}s, so the bound is not applied per poll"
+
+  unset FM_NOPROGRESS_TIMEOUT FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "a worktree that never answers is bounded, reads as the stable placeholder, and leaves the escalation schedule intact"
+}
+
+# A WORKTREE THAT ANSWERS ONLY SOMETIMES. The bound above means a flaky mount
+# produces a head component that alternates between a real sha and the
+# placeholder, poll after poll. Compared whole-string, every flip reads as a
+# moved artifact: the window restarts, spend resets to 0 and since resets to
+# now, on EVERY OTHER POLL, so accumulated spend can never reach the gate and
+# the guard goes permanently silent for exactly the task whose worktree is
+# sick - while docs/architecture.md still says the shape is covered. This drives
+# the real function against a git shim that succeeds and times out alternately,
+# with a climbing counter and no artifact growth, and requires an escalation.
+test_an_intermittently_readable_worktree_still_escalates() {
+  local dir state data wt flakybin oldpath real real_git
+  local n poll verdict escalated sig saw_sha saw_placeholder
+  dir=$(make_case flaky-worktree); state="$dir/state"; data="$dir/data"
+  wt="$dir/wt"; flakybin="$dir/flakybin"; mkdir -p "$wt" "$data/t" "$flakybin"
+  printf 'window=test:fm-t\nkind=ship\nworktree=%s\n' "$wt" > "$state/t.meta"
+  git -C "$wt" init -q
+  git -C "$wt" config user.email t@example.com
+  git -C "$wt" config user.name t
+  printf 'one\n' > "$wt/f"
+  git -C "$wt" add f >/dev/null
+  git -C "$wt" commit -qm one >/dev/null
+  real=$(git -C "$wt" rev-parse HEAD)
+
+  # Succeeds on even invocations, hangs past the bound on odd ones - an
+  # intermittently-slow mount, which is the case the bound exists for. The real
+  # binary is resolved from PATH before the shim shadows it, so this works on a
+  # host whose git is not under /usr/bin.
+  real_git=$(command -v git)
+  # shellcheck disable=SC2016  # The $ expansions belong to the generated shim.
+  printf '#!/usr/bin/env bash\nn=$(cat "%s/n" 2>/dev/null || echo 0)\nprintf "%%s" "$((n+1))" > "%s/n"\nif [ $((n %% 2)) -eq 1 ]; then sleep 120; fi\nexec %s "$@"\n' \
+    "$dir" "$dir" "$real_git" > "$flakybin/git"
+  chmod +x "$flakybin/git"
+  export FM_NOPROGRESS_TIMEOUT=1 FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  oldpath=$PATH
+  escalated=
+  saw_sha=1
+  saw_placeholder=1
+  n=100
+  poll=0
+  while [ "$poll" -lt 10 ] && [ -z "$escalated" ]; do
+    PATH="$flakybin:$PATH"
+    sig=$(fm_noprogress_artifact_sig "$state" t "$data")
+    PATH=$oldpath
+    case "${sig%%:*}" in
+      "$real") saw_sha=0 ;;
+      -)       saw_placeholder=0 ;;
+    esac
+    verdict=$(fm_noprogress_observe "$state" t "$n" "$sig" "$(( 1000000 + poll * 60 ))")
+    case "$verdict" in escalate\ *) escalated=$verdict ;; esac
+    n=$(( n + 500 ))
+    poll=$(( poll + 1 ))
+  done
+
+  # Non-vacuous: the fixture has to have actually produced BOTH readings, or
+  # this is just the always-readable case wearing a different name.
+  [ "$saw_sha" -eq 0 ] \
+    || fail "the flaky fixture never once read the real HEAD, so it never exercised the flip"
+  [ "$saw_placeholder" -eq 0 ] \
+    || fail "the flaky fixture never once timed out, so it never exercised the flip"
+  [ -n "$escalated" ] \
+    || fail "a burn against an intermittently-readable worktree never escalated - the flapping head reset the window: record=[$(cat "$(fm_noprogress_record "$state" t)")]"
+
+  unset FM_NOPROGRESS_TIMEOUT FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "a head that flips between a sha and the placeholder is no evidence, so a burn behind a flaky mount still escalates"
+}
+
+# A MISTYPED KNOB MUST NOT BECOME A WAKE STORM. docs/configuration.md invites
+# operators to retune both gates, and `${VAR:-default}` catches only unset and
+# empty. Unvalidated, `60k` makes `[ "$spend" -lt "60k" ]` error and return
+# false, which sails past BOTH gates and escalates on whatever trivial spend the
+# worker happened to have, quoting that figure to a human as a burn.
+test_a_malformed_gate_knob_falls_back_to_its_default() {
+  local dir state verdict
+  dir=$(make_case bad-knob); state="$dir/state"
+
+  # 200 tokens of spend against a window well past any sane age gate. Under the
+  # 60000 default this is nowhere near escalating; unvalidated it escalates.
+  export FM_NOPROGRESS_SPEND=60k FM_NOPROGRESS_SECS=1800
+  fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
+  fm_noprogress_observe "$state" t 200 sig-a 1100 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
+  [ "$verdict" = ok ] \
+    || fail "a malformed FM_NOPROGRESS_SPEND escalated on trivial spend: $verdict"
+
+  # The same for the age gate, and for the shapes a careless edit actually
+  # produces: a thousands separator and a trailing space.
+  for bad in '60,000' '60000 ' 'lots'; do
+    fm_noprogress_clear "$state" t
+    export FM_NOPROGRESS_SPEND="$bad" FM_NOPROGRESS_SECS="$bad"
+    fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
+    fm_noprogress_observe "$state" t 200 sig-a 1100 >/dev/null
+    verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
+    [ "$verdict" = ok ] \
+      || fail "the malformed knob value '$bad' escalated on trivial spend: $verdict"
+  done
+
+  # A SPEND GATE OF ZERO IS REJECTED TOO, because re-escalation is paced in
+  # units of that same gate: at zero the pacing comparison can never hold, so
+  # every later poll with any spend at all escalates, and each escalation exits
+  # the watcher and restarts the whole single-threaded fleet poll loop. Taken
+  # literally, 200 tokens against a long-open window would escalate here.
+  fm_noprogress_clear "$state" t
+  export FM_NOPROGRESS_SPEND=0 FM_NOPROGRESS_SECS=100
+  fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
+  [ "$verdict" = ok ] \
+    || fail "a spend gate of 0 escalated on 200 tokens instead of falling back to the default: $verdict"
+
+  # ...and with the default in force, pacing does what it is there for: a burn
+  # that crosses the default still escalates once, and the very next poll's
+  # further spend is suppressed until another full threshold is spent.
+  verdict=$(fm_noprogress_observe "$state" t 60300 sig-a 9100)
+  case "$verdict" in
+    escalate\ *) ;;
+    *) fail "a spend gate of 0 did not escalate at the default threshold either, so the fallback muted the guard: $verdict" ;;
+  esac
+  verdict=$(fm_noprogress_observe "$state" t 61300 sig-a 9200)
+  [ "$verdict" = ok ] \
+    || fail "re-escalation was unpaced under a spend gate of 0: $verdict"
+
+  # ...and the fallback is a FALLBACK, not a mute: a well-formed low gate still
+  # escalates, so this test cannot pass by making the guard silent.
+  fm_noprogress_clear "$state" t
+  export FM_NOPROGRESS_SPEND=150 FM_NOPROGRESS_SECS=100
+  fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
+  case "$verdict" in
+    escalate\ *) ;;
+    *) fail "a well-formed gate did not escalate, so the malformed cases prove nothing: $verdict" ;;
+  esac
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "a malformed or zero spend gate, and a malformed age gate, fall back to the default instead of escalating on trivial spend"
+}
+
+# EVERY TREEHOUSE WORKTREE IS A LINKED WORKTREE, so that is the normal case for
+# this guard, not an exotic one: its .git is a pointer file and its branch ref
+# lives in the common directory rather than beside HEAD. A detached HEAD is the
+# other shape a task can sit in. Both have to move the fingerprint when a commit
+# lands, or the guard reads a producing crew as a burn.
+test_linked_worktree_and_detached_head_resolve() {
+  local dir state data main wt real sig
+  dir=$(make_case linked-wt); state="$dir/state"; data="$dir/data"
+  main="$dir/main"; wt="$dir/linked"
+  mkdir -p "$main" "$data/t" "$data/d"
+  git -C "$main" init -q
+  git -C "$main" config user.email t@example.com
+  git -C "$main" config user.name t
+  printf 'one\n' > "$main/f"
+  git -C "$main" add f >/dev/null
+  git -C "$main" commit -qm one >/dev/null
+  git -C "$main" worktree add -q -b feature "$wt" >/dev/null 2>&1 \
+    || fail "could not create the linked worktree fixture"
+
+  printf 'window=test:fm-t\nkind=ship\nworktree=%s\n' "$wt" > "$state/t.meta"
+  real=$(git -C "$wt" rev-parse HEAD)
+  sig=$(fm_noprogress_artifact_sig "$state" t "$data")
+  [ "${sig%%:*}" = "$real" ] \
+    || fail "a linked worktree's HEAD read as '${sig%%:*}' rather than $real"
+
+  # A commit in the linked worktree moves it, which is the branch whose ref
+  # lives in the common directory rather than beside HEAD.
+  printf 'two\n' > "$wt/f"
+  git -C "$wt" commit -qam two >/dev/null
+  real=$(git -C "$wt" rev-parse HEAD)
+  sig=$(fm_noprogress_artifact_sig "$state" t "$data")
+  [ "${sig%%:*}" = "$real" ] \
+    || fail "a commit in a linked worktree left HEAD at '${sig%%:*}' rather than $real"
+
+  # Detached HEAD: the sha is in HEAD itself, with no ref to follow.
+  git -C "$wt" checkout -q --detach >/dev/null 2>&1 \
+    || fail "could not detach the linked worktree fixture"
+  real=$(git -C "$wt" rev-parse HEAD)
+  printf 'window=test:fm-d\nkind=ship\nworktree=%s\n' "$wt" > "$state/d.meta"
+  sig=$(fm_noprogress_artifact_sig "$state" d "$data")
+  [ "${sig%%:*}" = "$real" ] \
+    || fail "a detached HEAD read as '${sig%%:*}' rather than $real"
+
+  pass "the artifact fingerprint tracks HEAD in a linked worktree and on a detached HEAD"
+}
+
+# --- the wiring, against a real bin/fm-watch.sh -----------------------------
+
+WIRED_DIR=; WIRED_STATE=; WIRED_OUT=; WIRED_PID=; WIRED_TOKENS=; WIRED_TMUXLOG=
+
+# Drive a real watcher against a pane the test rewrites between rounds. The pane
+# always churns, so the staleness backbone never fires and only the guard can
+# produce a wake. <mode> chooses what each round changes.
+run_wired_case() {  # <name> <mode> <rounds>
+  local name=$1 mode=$2 rounds=$3
+  local dir state fakebin out pane window pid tokens i tmuxlog
+  dir=$(make_case "$name"); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; pane="$dir/pane.txt"; tmuxlog="$dir/tmux.log"
+  window="test:fm-$name"
+  mkdir -p "$dir/data/$name"
+  printf 'window=%s\nkind=ship\nharness=codex\n' "$window" > "$state/$name.meta"
+  # Only the writing case records a worktree: the bounded write probe needs one,
+  # and the other cases must reach the escalation decision without one so their
+  # verdicts come from the token/artifact rules alone.
+  if [ "$mode" = writing ]; then
+    mkdir -p "$dir/wt"
+    printf 'worktree=%s\n' "$dir/wt" >> "$state/$name.meta"
+  fi
+  tokens=100000
+  printf 'apply_patch start\n· ↓ %s tokens\n' "$tokens" > "$pane"
+  # The codex verdict verbatim: no verified semantic busy source, so nothing
+  # else on the stale path can absorb or surface this pane on our behalf.
+  export FM_FAKE_CREW_STATE='state: unknown · source: pane · harness state unavailable (unknown codex-unverified)'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_FAKE_TMUX_LOG="$tmuxlog" \
+    FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$dir/data" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_NOPROGRESS_SPEND=5000 FM_NOPROGRESS_SECS=0 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ "$i" -lt "$rounds" ]; do
+    is_live_non_zombie "$pid" || break
+    queued_guard_wake "$state" && break
+    case "$mode" in
+      # Tokens climb. Nothing else moves.
+      burn) tokens=$((tokens + 4000)) ;;
+      # The counter is FROZEN while the pane still churns - a worker parked on a
+      # background pipeline. Nothing is being spent, so nothing is wrong.
+      frozen) : ;;
+      # Tokens climb exactly as fast as in the burn case, but the report grows
+      # too: a scout appending findings as it establishes them.
+      producing)
+        tokens=$((tokens + 4000))
+        printf 'finding %s\n' "$i" >> "$dir/data/$name/report.md"
+        ;;
+      # Tokens climb exactly as fast as in the burn case and NO artifact moves -
+      # no commit, no report, no status line - but the crew is writing
+      # uncommitted source in its own worktree. That is the crew docs/architecture.md
+      # promises is deferred rather than flagged.
+      writing)
+        tokens=$((tokens + 4000))
+        printf 'fn thing_%s() {}\n' "$i" >> "$dir/wt/lib.rs"
+        ;;
+    esac
+    printf 'apply_patch frame-%s\n· ↓ %s tokens\n' "$i" "$tokens" > "$pane"
+    sleep 0.4
+    i=$((i + 1))
+  done
+  WIRED_DIR=$dir; WIRED_STATE=$state; WIRED_OUT=$out; WIRED_PID=$pid; WIRED_TOKENS=$tokens
+  WIRED_TMUXLOG=$tmuxlog
+}
+
+# The guard may only raise a flag. tmux is the ONLY channel this watcher has to
+# reach a worker, and the fixture records every command it issued through that
+# channel, so a guard that interrupted, signalled, restarted, or tore one down
+# has to show up here as a mutating verb.
+assert_no_worker_control_issued() {  # <tmux-log>
+  local log=$1 issued verb
+  [ -s "$log" ] \
+    || fail "the fixture recorded no tmux calls at all, so this proves nothing ($log)"
+  issued=$(cat "$log")
+  printf '%s\n' "$issued" | grep -q '^capture-pane' \
+    || fail "the watcher never even read the pane, so the recorded commands prove nothing: [$issued]"
+  while read -r verb _; do
+    case "$verb" in
+      send-keys|send-prefix|kill-window|kill-pane|kill-session|kill-server|respawn-pane|respawn-window)
+        fail "the guard issued '$verb' on a burning worker; it may only escalate: [$issued]" ;;
+    esac
+  done <<EOF
+$issued
+EOF
+}
+
+# The guard is only allowed to be silent if it actually looked. Its per-task
+# record is written on every observation, so its absence means the hook never
+# ran and the case proves nothing.
+assert_guard_observed() {  # <state> <task>
+  local rec seen
+  rec=$(fm_noprogress_record "$1" "$2")
+  [ -f "$rec" ] \
+    || fail "the guard never observed $2 at all, so its silence proves nothing (no $rec)"
+  seen=$(sed -n 's/^tokens=//p' "$rec" | tail -1)
+  case "$seen" in
+    ''|*[!0-9]*) fail "the guard's record for $2 holds no token observation: $(cat "$rec")" ;;
+  esac
+  [ "$seen" -ge 100000 ] \
+    || fail "the guard read '$seen' tokens from the fixture pane, which renders at least 100000"
+}
+
+test_climbing_tokens_without_artifact_escalate() {
+  # The driver breaks the moment the guard escalates, so this is asserted with
+  # the pane still churning: no plain staleness wake can stand in for it.
+  run_wired_case burn burn 60
+  queued_guard_wake "$WIRED_STATE" \
+    || { reap "$WIRED_PID"; unset FM_FAKE_CREW_STATE
+         fail "a pane whose token counter climbed with no commit, report write, or status line never escalated: queue=[$(cat "$WIRED_STATE/.wake-queue" 2>/dev/null)] out=[$(cat "$WIRED_OUT")]"; }
+  assert_guard_observed "$WIRED_STATE" burn
+  # ESCALATE, NEVER KILL - asserted on what the escalating watcher actually did,
+  # not on what its source says. It flagged the burn and touched the worker's
+  # window read-only throughout.
+  assert_no_worker_control_issued "$WIRED_TMUXLOG"
+  # The wake has to be actionable: the reason names what to inspect rather than
+  # just reporting "stale", and says plainly that nothing was stopped.
+  grep -qF 'read the pane before absorbing' "$WIRED_STATE/.wake-queue" \
+    || fail "the escalation did not tell the reader what to inspect"
+  grep -qF "captain's call" "$WIRED_STATE/.wake-queue" \
+    || fail "the escalation did not state that stopping the worker is the captain's call"
+  # An actionable wake exits the watcher so firstmate is woken.
+  wait_for_exit "$WIRED_PID" 100 >/dev/null 2>&1 || true
+  is_live_non_zombie "$WIRED_PID" \
+    && { reap "$WIRED_PID"; unset FM_FAKE_CREW_STATE
+         fail "the escalation was queued but the watcher kept polling, so firstmate is never woken"; }
+  reap "$WIRED_PID"
+  unset FM_FAKE_CREW_STATE
+  pass "a churning pane spending tokens with no artifact escalates for a human"
+}
+
+test_frozen_token_wait_stays_silent() {
+  run_wired_case frozen frozen 25
+  assert_guard_observed "$WIRED_STATE" frozen
+  if queued_guard_wake "$WIRED_STATE"; then
+    reap "$WIRED_PID"; unset FM_FAKE_CREW_STATE
+    fail "a worker idling on a background pipeline with a frozen token counter was flagged as a burn"
+  fi
+  is_live_non_zombie "$WIRED_PID" \
+    || { unset FM_FAKE_CREW_STATE
+         fail "the watcher exited during the frozen-counter case, so its silence proves nothing: out=[$(cat "$WIRED_OUT")]"; }
+  reap "$WIRED_PID"
+  unset FM_FAKE_CREW_STATE
+  pass "a frozen token counter is a wait, not a burn, and never escalates"
+}
+
+test_growing_report_stays_silent() {
+  run_wired_case producing producing 25
+  assert_guard_observed "$WIRED_STATE" producing
+  [ -s "$WIRED_DIR/data/producing/report.md" ] \
+    || fail "the producing fixture never wrote a report, so its silence proves nothing"
+  [ "$WIRED_TOKENS" -gt 100000 ] \
+    || fail "the producing fixture never spent any tokens, so its silence proves nothing"
+  if queued_guard_wake "$WIRED_STATE"; then
+    reap "$WIRED_PID"; unset FM_FAKE_CREW_STATE
+    fail "a worker spending tokens WHILE its report grew was flagged as a burn"
+  fi
+  is_live_non_zombie "$WIRED_PID" \
+    || { unset FM_FAKE_CREW_STATE
+         fail "the watcher exited during the producing case, so its silence proves nothing: out=[$(cat "$WIRED_OUT")]"; }
+  reap "$WIRED_PID"
+  unset FM_FAKE_CREW_STATE
+  pass "a worker whose report file is growing is producing, and never escalates"
+}
+
+# A crew writing uncommitted source in its own worktree is producing, even
+# though none of the three cheap artifact signals moves. The guard defers to the
+# same bounded write probe the wedge timer uses and restarts the window instead
+# of escalating; without that branch this exact pane - tokens climbing, nothing
+# committed, nothing reported, nothing appended - is the burn shape and wakes
+# firstmate on a crew that is doing its job.
+test_uncommitted_worktree_writes_defer_instead_of_escalating() {
+  run_wired_case writing writing 25
+  # NOT assert_guard_observed here: the deferral under test IS a
+  # fm_noprogress_clear, so the per-task record this case is meant to prove the
+  # guard wrote is the very file the absorb branch deletes, and whether it
+  # survives to the end of the driver loop is a coin toss. The triage line
+  # asserted below is the durable proof, and a stronger one - it can only be
+  # written by a poll that observed the pane, accumulated past both gates,
+  # reached the escalation branch, and deferred there.
+  [ -s "$WIRED_DIR/wt/lib.rs" ] \
+    || fail "the writing fixture never wrote into the worktree, so its silence proves nothing"
+  [ "$WIRED_TOKENS" -gt 100000 ] \
+    || fail "the writing fixture never spent any tokens, so its silence proves nothing"
+  if queued_guard_wake "$WIRED_STATE"; then
+    reap "$WIRED_PID"; unset FM_FAKE_CREW_STATE
+    fail "a crew writing uncommitted source in its worktree was flagged as a burn: queue=[$(cat "$WIRED_STATE/.wake-queue" 2>/dev/null)]"
+  fi
+  # ...and the silence is the deferral, not a window that never became
+  # eligible: the write probe is consulted only in the branch that was about to
+  # escalate, so its absorb line is proof the decision was actually reached.
+  grep -qF 'absorbed spend-without-artifact' "$WIRED_STATE/.watch-triage.log" 2>/dev/null \
+    || { reap "$WIRED_PID"; unset FM_FAKE_CREW_STATE
+         fail "the guard never reached the write probe, so nothing was deferred: triage=[$(cat "$WIRED_STATE/.watch-triage.log" 2>/dev/null)]"; }
+  is_live_non_zombie "$WIRED_PID" \
+    || { unset FM_FAKE_CREW_STATE
+         fail "the watcher exited during the writing case, so its silence proves nothing: out=[$(cat "$WIRED_OUT")]"; }
+  reap "$WIRED_PID"
+  unset FM_FAKE_CREW_STATE
+  pass "a crew writing uncommitted files in its worktree is deferred, not escalated"
+}
+
+test_pane_token_parsing
+test_a_constant_beside_the_counter_cannot_pin_the_reading
+test_an_inline_api_error_is_not_read_as_spend
+test_observe_decision_table
+test_reescalation_and_counter_reset
+test_recorded_per_turn_footers_accumulate_across_turns
+test_frozen_counter_gate_is_the_only_thing_keeping_this_silent
+test_artifact_fingerprint_tracks_each_signal
+test_a_hanging_worktree_cannot_stall_the_poll
+test_an_intermittently_readable_worktree_still_escalates
+test_a_malformed_gate_knob_falls_back_to_its_default
+test_linked_worktree_and_detached_head_resolve
+test_climbing_tokens_without_artifact_escalate
+test_frozen_token_wait_stays_silent
+test_growing_report_stays_silent
+test_uncommitted_worktree_writes_defer_instead_of_escalating

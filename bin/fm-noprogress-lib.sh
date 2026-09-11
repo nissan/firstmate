@@ -1,0 +1,478 @@
+#!/usr/bin/env bash
+# fm-noprogress-lib.sh - the spend-without-artifact guard.
+#
+# Sourced, never executed.
+#
+# WHY THIS EXISTS. The pane-staleness backbone in bin/fm-watch.sh only ever
+# fires on a FROZEN pane: it hashes the last 40 lines, and a hash that keeps
+# moving is treated as liveness. That is exactly the hole a real burn walked
+# through - a worker ran roughly 18 hours and spent 292.7k tokens producing
+# nothing at all, twice on the same task, and nothing in the system noticed
+# either time. Its pane never stopped moving (a climbing token counter, a
+# spinner, scrolling tool output), so it never went stale, never wedged, and
+# never surfaced. This library is the orthogonal check for that shape: work
+# that is SPENDING but not PRODUCING.
+#
+# THE DISTINCTION THAT MATTERS. Idleness is not the signal, and must never be
+# treated as one - the staleness backbone already owns quiet panes, and a
+# declared wait behind a running pipeline is admitted there deliberately. The
+# signal here is strictly token spend that buys no artifact:
+#
+#   frozen token count  -> the worker is WAITING. Always silent. A worker idle
+#                          for 40 minutes on a background pipeline spends
+#                          nothing and produces nothing, and that is healthy.
+#   artifact grew       -> the worker is PRODUCING. Always silent, and the
+#                          window restarts. A scout appending findings to its
+#                          report as it establishes them (the incremental-report
+#                          contract in the scout brief) is progress, and reads
+#                          as progress here.
+#   tokens climbing and
+#   no artifact moved   -> the burn shape. Escalate for a human.
+#
+# ARTIFACTS. What counts as production is deliberately the same set a
+# supervisor would look at: a commit landing in the task worktree, the scout
+# report growing, a status line appended, or files written in the worktree.
+# The first three are read every poll: two size stats in the home and the
+# worktree's HEAD, the last of them a bounded `git rev-parse`. None of that is
+# fork-free - this library spends order twenty processes per task per poll, in
+# family with what the watcher's surrounding per-window path already spends. The
+# worktree write probe is the expensive one, the bounded WALK
+# bin/fm-classify-lib.sh already owns (crew_worktree_written_since), and like the
+# wedge timer it runs ONLY at the moment this guard would otherwise escalate -
+# never per poll. That split is the cost model: the walk is deferred, and what
+# does run per poll is bounded so no single worktree can stall the whole fleet's
+# polling.
+#
+# ESCALATE, NEVER KILL. This guard raises a flag and stops. It never
+# interrupts, signals, restarts, or tears down a worker. Two workers on one
+# day proved why: one that looked finished was mid-pipeline, and one that
+# looked wedged was legitimately waiting. An automatic killer would have
+# destroyed real work in both cases. The captain kills workers.
+#
+# UNREADABLE IS SILENT. No parseable token counter means no observation, and
+# no observation means no escalation. A harness whose footer this library
+# cannot read simply keeps the coverage it had before (the staleness backbone),
+# rather than gaining a guard that fires on a guess.
+#
+# PER-TURN COUNTERS, ACCUMULATED SPEND. Every harness footer this repo has
+# recorded live renders a PER-TURN counter that restarts at each turn boundary,
+# not a running session total:
+#
+#   "✢ Pollinating… (16s · ↓ 1.1k tokens · thought for 1s)"   (claude)
+#   "Sock-hopping… (11s · ↓ 234 tokens)"                      (claude)
+#   " ⠘⠆ Running  59 tokens"                                  (cursor)
+#
+# tests/fm-watch-noprogress.test.sh drives those three shapes verbatim, so the
+# claim above is a test, not a comment.
+#
+# So the rendered number is a rate, not a total, and the only total this guard
+# can have is one it accumulates itself. Every poll contributes a DELTA: the
+# rise since the previous poll while a turn is still running, and the whole
+# rendered value when the counter dropped, because a drop is the start of a new
+# turn rather than a reason to forget what the previous turns cost. That sum is
+# what the spend gate measures, so eighteen hours of turns that each render a
+# thousand tokens and produce nothing reach the threshold exactly the way one
+# imaginary session counter climbing to the same number would. A counter that
+# does not move contributes nothing, which is what keeps a wait silent.
+#
+# STATE. One record per task at state/.noprogress-<task>, in the same
+# private-marker family as .hash-/.count-/.stale-. It carries:
+#
+#   tokens=<n>      the counter rendered on the previous poll, so the next
+#                   poll's delta - and a frozen counter - are recognisable.
+#   spend=<n>       tokens accumulated against the current artifact fingerprint
+#                   across every turn since the window opened.
+#   art=<sig>       the artifact fingerprint the window is anchored to.
+#   since=<epoch>   when that fingerprint was first seen.
+#   flagged=<n>     the accumulated spend at the last escalation, so
+#                   re-escalation is paced by further spend, not by the clock.
+#
+# A record written by an older release carries base= instead of spend=; it is
+# read as unparseable and simply opens a fresh window, which is the same thing
+# every other corrupt-record path here does.
+#
+# Callers: bin/fm-watch.sh, bin/fm-teardown.sh.
+set -u
+
+# fm_run_timed, the shared hard bound around the one thing this library touches
+# outside the home: the task worktree. bin/fm-timeout-lib.sh owns bounded
+# execution for this repo, so nothing here re-derives the coreutils/BSD/perl
+# selection. It declares `set -u` as this library already does, so it is sourced
+# plainly. Resolved from BASH_SOURCE so it works whether a bin/ script or a test
+# sourced this file.
+_FM_NOPROGRESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_NOPROGRESS_LIB_DIR="."
+# shellcheck source=bin/fm-timeout-lib.sh
+# shellcheck disable=SC1091
+. "$_FM_NOPROGRESS_LIB_DIR/fm-timeout-lib.sh"
+
+# Tokens accumulated across turns against one unchanged artifact fingerprint
+# before the guard escalates - about 55 of Claude's recorded ~1.1k-token turns,
+# or a fifth of the 292.7k the motivating burn spent, all of it against a
+# worktree with no commit, no report write, no status line, and no file written.
+# What that is in wall-clock time depends only on how fast the turns come: at
+# the two-minute turn cadence tests/fm-watch-noprogress.test.sh drives it is
+# reached in under two hours, and at the motivating burn's own rate (292.7k over
+# ~18h, ~16.3k tokens an hour) in under four - either way a burn surfaces on the
+# same day it starts rather than after a human finally looks. It is deliberately
+# far above what any single turn renders: one long reasoning turn that then
+# writes a file must not trip this, and with the time gate below it cannot,
+# because a window that young is never eligible. A value that is not a positive
+# integer falls back to the default; zero is rejected because re-escalation is
+# paced in units of this same gate (see fm_noprogress_observe).
+FM_NOPROGRESS_SPEND=${FM_NOPROGRESS_SPEND:-60000}
+
+# Seconds the artifact fingerprint must have been unchanged before the guard
+# escalates. Both gates must be crossed: a fast burst of spend that lands an
+# artifact minutes later is not the shape being caught. A value that is not a
+# non-negative integer falls back to the default.
+FM_NOPROGRESS_SECS=${FM_NOPROGRESS_SECS:-1800}
+
+# The phrase every escalation this guard raises is built around, and the one
+# every consumer routes on. It lives here alone: the watcher queues the wake
+# (bin/fm-watch.sh), the away-mode daemon has to recognise it to escalate rather
+# than absorb it (bin/fm-supervise-daemon.sh), and a second spelling of it in
+# either place is how this guard silently goes back to being absorbed.
+FM_NOPROGRESS_REASON_PREFIX='spending without producing'
+
+# Wall-clock seconds the worktree HEAD read may take. This bound is the reason
+# that read is a subprocess rather than a handful of shell `read`s: a bound
+# needs a killable child, and a builtin read on a hung NFS/sshfs/container mount
+# blocks in uninterruptible I/O with nothing able to interrupt it. The watcher
+# is single-threaded and polls every window in one loop, so an unbounded read
+# against one bad mount stops wake emission for the WHOLE FLEET, not just that
+# task - a far worse failure than the fork costs. The repo already bounds this
+# exact hazard for the same reason (FM_WORKTREE_WRITE_TIMEOUT, and
+# crew_worktree_written_since in bin/fm-classify-lib.sh). Hitting the bound
+# reads as an unreadable worktree, which contributes the fixed placeholder
+# fm_noprogress_artifact_sig defines and so leaves the escalation schedule
+# exactly as it was. A value that is not a positive integer falls back to the
+# default.
+FM_NOPROGRESS_TIMEOUT=${FM_NOPROGRESS_TIMEOUT:-5}
+
+# fm_noprogress_record: absolute path of a task's guard record.
+fm_noprogress_record() {  # <state> <task>
+  printf '%s/.noprogress-%s' "$1" "$2"
+}
+
+# fm_noprogress_anchor: absolute path of a task's window anchor - an empty file
+# whose MTIME is the start of the current window. It exists because the
+# worktree write probe this guard defers to
+# (crew_worktree_written_since in bin/fm-classify-lib.sh) compares file times
+# against a file, not an epoch. The record itself is rewritten on every poll and
+# so is useless as an anchor; this one is touched only when the window restarts.
+fm_noprogress_anchor() {  # <state> <task>
+  printf '%s/.noprogress-since-%s' "$1" "$2"
+}
+
+# fm_noprogress_clear: drop a task's guard record and anchor, so the next
+# observation opens a fresh window rather than inheriting a stale one. Called
+# from the watcher's absorb branch, when a bounded worktree walk proves the
+# window bought uncommitted writes after all, and from bin/fm-teardown.sh, so a
+# retired task leaves no record behind for an id the home may reuse.
+fm_noprogress_clear() {  # <state> <task>
+  rm -f "$(fm_noprogress_record "$1" "$2")" "$(fm_noprogress_anchor "$1" "$2")" 2>/dev/null || true
+}
+
+# _fm_noprogress_field: one field out of a record, empty when absent.
+_fm_noprogress_field() {  # <record> <name>
+  local rec=$1 name=$2 line
+  [ -f "$rec" ] || return 0
+  line=$(grep "^$name=" "$rec" 2>/dev/null | tail -1) || return 0
+  printf '%s' "${line#*=}"
+}
+
+# _fm_noprogress_uint: echo <value> when it is a plain non-negative integer,
+# else <default>. Every number this library reads back off disk or out of a
+# pane goes through here, so a corrupt record degrades to a fresh window
+# instead of poisoning arithmetic under `set -u`/`set -e`.
+_fm_noprogress_uint() {  # <value> <default>
+  case "${1:-}" in
+    ''|*[!0-9]*) printf '%s' "$2" ;;
+    *)           printf '%s' "$1" ;;
+  esac
+}
+
+# fm_noprogress_pane_tokens: the token counter rendered in a pane capture, as a
+# plain integer, or nothing when the capture carries none.
+#
+# RECORDED SIGNATURES ONLY. A number next to the word "tokens" is not a counter;
+# a number in a SPELLING A HARNESS WAS RECORDED RENDERING is. This repo holds
+# exactly two such spellings, and the match is anchored to both of them the way
+# bin/fm-composer-lib.sh anchors its busy tokens to recorded spinner rows:
+#
+#   ↓ <n>[.<d>][k] tokens   claude - the down-arrow separator immediately
+#                           precedes the count.
+#                           "✢ Pollinating… (16s · ↓ 1.1k tokens · thought for 1s)"
+#                             tests/fm-tmux-submit-busy.test.sh
+#                           "Sock-hopping… (11s · ↓ 234 tokens)"
+#                             docs/verification/runtime-backends.md
+#   Running  <n> tokens     cursor/Herdr - the literal verb precedes the count
+#                           on the spinner row.
+#                           " ⠘⠆ Running  59 tokens"
+#                             tests/fm-backend-herdr.test.sh, herdr_cursor_midturn_plain
+#
+# The leading anchor is what makes this a counter grammar rather than a prose
+# grammar, and it is load-bearing in BOTH directions. Without it, "prompt is too
+# long: 216123 tokens > 200000 maximum" - an ordinary inline API error - reads as
+# a counter that leapt by 215k, so fm_noprogress_observe books spend nobody spent
+# and escalates with a fabricated number, then pins `flagged` so high that the
+# real burn underneath it stays suppressed. And "↓ 1.1k tokens · ↑ 3 tokens"
+# reads as 3 on every single poll, so the delta is zero forever, the
+# frozen-counter gate short-circuits, and the guard goes permanently silent for
+# that harness while docs/architecture.md still says the shape is covered - the
+# exact "documented as protected while it is not" outcome this attempt exists to
+# end. The compaction notice this repo recorded live ("Compacted from 7,697
+# tokens", docs/verification/supervision.md) falls out for the same reason, with
+# no carve-out of its own.
+#
+# Commas and an uppercase K are deliberately NOT accepted: no recorded counter
+# carries either. Nor is any other separator, verb, or suffix. An unrecognised
+# footer is no observation at all, which costs only this guard's silence for that
+# harness, while a guess costs a false escalation.
+#
+# FOOTER REGION ONLY. The match is further narrowed to the last 12 non-blank
+# lines, the same TUI footer region every other rendered-string contract in this
+# repo reads (fm_busy_grok_tail_busy and fm_busy_rovo_tail_busy in
+# bin/fm-busy-lib.sh, and window_is_busy's narrowing in bin/fm-watch.sh), because
+# scrollback is content a worker prints and a counter grammar applied to content
+# is a grammar an agent can forge.
+#
+# The FOOTER-MOST remaining match wins. No recorded shape renders a second
+# anchored match below its counter, so the last one is the counter in every
+# capture this repo holds. This is NOT a claim that the counter is the
+# bottom-most line drawn - the recorded cursor capture puts its counter on the
+# FIRST of seven lines. Taking the LARGEST instead would let a constant outrank
+# a climbing counter and pin the reading for good. Which of the matches is
+# per-turn does not matter, because fm_noprogress_observe accumulates deltas and
+# treats a drop as a turn boundary rather than as a reset.
+fm_noprogress_pane_tokens() {  # <pane-capture>
+  local capture=${1:-} last='' raw num frac unit scaled
+  while read -r raw; do
+    [ -n "$raw" ] || continue
+    # raw arrives as "<digits>[.<digit>][k]", anchor and unit word stripped.
+    unit=${raw##*[0-9]}
+    num=${raw%"$unit"}
+    case "$num" in
+      *.*) frac=${num#*.}; num=${num%.*} ;;
+      *)   frac=0 ;;
+    esac
+    frac=$(_fm_noprogress_uint "$frac" 0)
+    num=$(_fm_noprogress_uint "$num" 0)
+    case "$unit" in
+      k) scaled=$(( num * 1000 + frac * 100 )) ;;
+      *) scaled=$num ;;
+    esac
+    last=$scaled
+  done <<EOF
+$(printf '%s\n' "$capture" \
+  | grep -v '^[[:space:]]*$' \
+  | tail -12 \
+  | grep -oE '(↓|Running)[[:space:]]+[0-9]+(\.[0-9])?k?[[:space:]]+tokens' \
+  | sed -E 's/^(↓|Running)[[:space:]]+//; s/[[:space:]]+tokens$//')
+EOF
+  [ -n "$last" ] || return 1
+  printf '%s' "$last"
+}
+
+# fm_noprogress_artifact_sig: the cheap artifact fingerprint for a task - the
+# head commit of its worktree, the size of its report, and the size of its
+# status log, joined. Any of the three moving means the worker produced
+# something. A component that cannot be read contributes the fixed placeholder
+# '-' rather than a changing value, so an unreadable worktree can never
+# masquerade as continuous progress.
+#
+# The placeholder alone is not enough, though, and fm_noprogress_observe owns
+# the other half of that invariant. A fixed placeholder is stable only while the
+# component stays unreadable; the HEAD read below is bounded, so on a flaky
+# mount it can succeed on one poll and time out on the next, and the head
+# component then FLIPS between a sha and '-'. Compared whole-string that reads
+# as production twice per flap. See the placeholder rule in
+# fm_noprogress_observe, which is where a '-' head is resolved to "no evidence"
+# rather than to a moved artifact.
+#
+# This is cheap relative to the bounded worktree WALK the guard defers, not
+# cheap in absolute terms: the meta read is a `grep|tail|cut`, each size is a
+# `wc|tr`, and the HEAD read is `git rev-parse` under fm_run_timed, which is
+# itself several processes. One poll of one task costs this function plus
+# fm_noprogress_observe's field reads and the parser pipeline - order twenty
+# processes, measured. That is in family with what the surrounding watcher path
+# already spends per window (window_kind, window_backend, window_to_task,
+# last_status_line, window_is_busy), and it is the price of the bound above,
+# which is worth paying: a fork is recoverable, a stalled single-threaded
+# watcher is not. What stays off the poll path is the unbounded WALK, which is
+# the expensive one and runs only in the branch about to escalate.
+fm_noprogress_artifact_sig() {  # <state> <task> <data>
+  local state=$1 task=$2 data=$3 wt head report status bound
+  wt=$(grep '^worktree=' "$state/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  bound=${FM_NOPROGRESS_TIMEOUT:-}
+  case "$bound" in ''|*[!0-9]*|0) bound=5 ;; esac
+  head='-'
+  if [ -n "$wt" ]; then
+    head=$(fm_run_timed "$bound" git -C "$wt" rev-parse HEAD 2>/dev/null) || head='-'
+    [ -n "$head" ] || head='-'
+  fi
+  report='-'
+  if [ -f "$data/$task/report.md" ]; then
+    report=$(_fm_noprogress_uint "$(LC_ALL=C wc -c < "$data/$task/report.md" | tr -d ' ')" -)
+  fi
+  status='-'
+  if [ -f "$state/$task.status" ]; then
+    status=$(_fm_noprogress_uint "$(LC_ALL=C wc -c < "$state/$task.status" | tr -d ' ')" -)
+  fi
+  printf '%s:%s:%s' "$head" "$report" "$status"
+}
+
+# fm_noprogress_observe: fold one poll's observation into the task's window and
+# say what the supervisor should do about it.
+#
+# Prints exactly one verdict line:
+#   ok                            nothing to do
+#   escalate <spend> <secs>       the burn shape crossed both gates
+#
+# and returns 0 in both cases; a non-zero return means the observation could
+# not be recorded and the caller should treat this poll as unobserved.
+#
+# <tokens> is the counter RENDERED this poll, which on every verified harness is
+# a per-turn number (see the header). What this folds into the window is the
+# delta that number represents:
+#
+#   rose since the previous poll -> the running turn spent that much more
+#   dropped                      -> a turn boundary; the new turn has already
+#                                   spent what it renders, and the turns before
+#                                   it still cost what they cost, so the whole
+#                                   rendered value is added rather than the
+#                                   accumulated total being forgotten
+#   unchanged                    -> nothing was spent at all
+#
+# Silence is the default and every uncertainty resolves to it: an unreadable
+# token count, a first sighting with no window, a record too corrupt to parse,
+# and above all a counter that did not move at all.
+fm_noprogress_observe() {  # <state> <task> <tokens> <artifact-sig> <now>
+  local state=$1 task=$2 tokens=$3 sig=$4 now=$5
+  local rec prev_tokens prev_sig spend since flagged delta age spend_gate secs_gate
+
+  rec=$(fm_noprogress_record "$state" "$task")
+  case "$tokens" in
+    ''|*[!0-9]*) printf 'ok\n'; return 0 ;;
+  esac
+  case "$now" in
+    ''|*[!0-9]*) printf 'ok\n'; return 0 ;;
+  esac
+
+  prev_sig=$(_fm_noprogress_field "$rec" art)
+  prev_tokens=$(_fm_noprogress_uint "$(_fm_noprogress_field "$rec" tokens)" '')
+  spend=$(_fm_noprogress_uint "$(_fm_noprogress_field "$rec" spend)" '')
+  since=$(_fm_noprogress_uint "$(_fm_noprogress_field "$rec" since)" '')
+  flagged=$(_fm_noprogress_uint "$(_fm_noprogress_field "$rec" flagged)" 0)
+
+  # AN UNREADABLE HEAD IS NO EVIDENCE, NOT A MOVED ARTIFACT. The worktree HEAD
+  # read is bounded, so on a flaky mount it succeeds on one poll and times out
+  # on the next, and the head component flips sha -> '-' -> sha. Compared
+  # whole-string, every flip looks like production: the window restarts, spend
+  # resets to 0 and since resets to now, on every other poll. Accumulated spend
+  # could then never reach the gate, so the guard would go permanently silent
+  # for precisely the task whose worktree is sick - while docs/architecture.md
+  # still said the shape was covered. So a '-' head carries the LAST KNOWN head
+  # forward instead of overwriting it. Nothing new is stored for this: the
+  # carried value goes into the same art= field the record already has. Only a
+  # real sha-to-different-sha transition is production, which also means a
+  # commit that lands DURING an outage is still seen the moment the read
+  # recovers, rather than being swallowed as "no evidence".
+  case "${sig%%:*}" in
+    -) case "$prev_sig" in
+         ''|-:*) ;;
+         *) sig="${prev_sig%%:*}:${sig#*:}" ;;
+       esac ;;
+  esac
+
+  # A moved fingerprint is production: restart the window outright, and the
+  # spend the previous window accumulated goes with it. This is the branch that
+  # keeps a scout writing its report incrementally silent. An unreadable or
+  # older-format record lands here too, so it opens a clean window instead of
+  # poisoning the accounting.
+  if [ "$sig" != "$prev_sig" ] || [ -z "$spend" ] || [ -z "$since" ] || [ -z "$prev_tokens" ]; then
+    _fm_noprogress_write "$rec" "$tokens" 0 "$sig" "$now" 0 || return 1
+    : > "$(fm_noprogress_anchor "$state" "$task")" 2>/dev/null || true
+    printf 'ok\n'
+    return 0
+  fi
+
+  # The delta this poll contributes. A drop is a turn boundary, never a reset:
+  # forgetting the accumulated spend there is exactly how a per-turn counter
+  # would hide an all-day burn.
+  if [ "$tokens" -ge "$prev_tokens" ]; then
+    delta=$(( tokens - prev_tokens ))
+  else
+    delta=$tokens
+  fi
+  spend=$(( spend + delta ))
+
+  _fm_noprogress_write "$rec" "$tokens" "$spend" "$sig" "$since" "$flagged" || return 1
+
+  # THE FROZEN-COUNTER GATE. Nothing spent since the previous poll means the
+  # worker is waiting, not burning, and this guard says nothing - however long
+  # the wait runs and however much was spent before it began.
+  [ "$delta" -gt 0 ] || { printf 'ok\n'; return 0; }
+
+  # Both gates go through the same fall-back-to-default contract every other
+  # number this library reads gets, because `${VAR:-default}` catches only unset
+  # and empty - not a typo. docs/configuration.md invites operators to retune
+  # exactly these two, and an unvalidated `60k` makes `[ -lt ]` error and return
+  # false, which sails past BOTH gates and escalates on whatever trivial spend
+  # the worker happened to have: a per-poll wake storm quoting a fabricated
+  # figure, which is the false-alarm shape this guard exists to avoid.
+  #
+  # The spend gate rejects zero as well, exactly as the timeout does, because
+  # re-escalation below is paced in units of THIS gate: at zero the pacing
+  # comparison can never hold, so every subsequent poll with any spend at all
+  # escalates and each escalation exits the watcher, restarting the whole
+  # single-threaded fleet poll loop once per FM_POLL for as long as the burn
+  # runs. The age gate has no such second role, so zero remains legal there.
+  spend_gate=${FM_NOPROGRESS_SPEND:-}
+  case "$spend_gate" in ''|*[!0-9]*|0) spend_gate=60000 ;; esac
+  secs_gate=$(_fm_noprogress_uint "${FM_NOPROGRESS_SECS:-}" 1800)
+
+  age=$(( now - since ))
+  [ "$age" -ge 0 ] || age=0
+  if [ "$spend" -lt "$spend_gate" ] || [ "$age" -lt "$secs_gate" ]; then
+    printf 'ok\n'
+    return 0
+  fi
+  # Re-escalation is paced by further spend, not by the clock: a flagged burn
+  # that keeps burning earns another flag only after another full threshold.
+  if [ "$flagged" -gt 0 ] && [ "$(( spend - flagged ))" -lt "$spend_gate" ]; then
+    printf 'ok\n'
+    return 0
+  fi
+  _fm_noprogress_write "$rec" "$tokens" "$spend" "$sig" "$since" "$spend" || return 1
+  printf 'escalate %s %s\n' "$spend" "$age"
+}
+
+# _fm_noprogress_write: publish a record atomically, so a watcher killed
+# mid-write leaves the previous window rather than a half-parsed one.
+_fm_noprogress_write() {  # <record> <tokens> <spend> <sig> <since> <flagged>
+  local rec=$1 tmp
+  tmp="$rec.tmp.$$"
+  {
+    printf 'tokens=%s\n' "$2"
+    printf 'spend=%s\n' "$3"
+    printf 'art=%s\n' "$4"
+    printf 'since=%s\n' "$5"
+    printf 'flagged=%s\n' "$6"
+  } > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null || true; return 1; }
+  mv -f "$tmp" "$rec" 2>/dev/null || { rm -f "$tmp" 2>/dev/null || true; return 1; }
+}
+
+# fm_noprogress_reason: the supervisor-facing wake reason for one escalation.
+# Says what was observed and what to check, and states plainly that nothing was
+# stopped - the reader decides whether to kill the worker.
+#
+# <secs> is the age of the guard's OWN window - how long this fingerprint has
+# been watched - not how long ago the last artifact actually moved. A watcher
+# restart or a deferred worktree write opens a fresh window under an artifact
+# that has not moved for hours, so the number is a floor, and the sentence says
+# only what it can stand behind: nothing was produced for at least that long.
+fm_noprogress_reason() {  # <window> <spend> <secs>
+  printf 'stale: %s (%s: %s tokens with no commit, report write, or status line for the last %ss - read the pane before absorbing; nothing was stopped, killing this worker is the captain'\''s call)' \
+    "$1" "$FM_NOPROGRESS_REASON_PREFIX" "$2" "$3"
+}

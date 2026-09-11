@@ -80,6 +80,12 @@ export REAL_PS_FOR_TEST
 REAL_LSOF_FOR_TEST=$(command -v lsof)
 export REAL_LSOF_FOR_TEST
 
+# The spend-without-artifact guard's own record and anchor are per-task state
+# teardown retires; these tests drive the real observer against them rather than
+# hand-writing the files, so what they pin is the guard's behaviour on a reused id.
+# shellcheck source=bin/fm-noprogress-lib.sh disable=SC1091
+. "$ROOT/bin/fm-noprogress-lib.sh"
+
 # Build a fresh sandbox for one test case. Sets up:
 #   $CASE/state/        - firstmate state dir (with a fresh watcher beacon)
 #   $CASE/fakebin/      - mocks for treehouse, tmux (PATH-prepended by caller)
@@ -2092,6 +2098,79 @@ test_teardown_missing_busy_sidecar_completes() {
   pass "teardown completes when an exact busy-state sidecar is already absent"
 }
 
+# Seed the guard record for task-x1 the way the watcher does: successive
+# observations of a climbing counter against a fingerprint that never moves.
+# The placeholder-only fingerprint is the ordinary shape for a task early in its
+# life - no worktree recorded yet, no report, no status log - and it is the one
+# a later task reusing the same id would compute again.
+seed_noprogress_burn() {  # <case_dir> <window-start-epoch>
+  local state="$1/state" at=$2
+  fm_noprogress_observe "$state" task-x1 30000 '-:-:-' "$at" >/dev/null
+  fm_noprogress_observe "$state" task-x1 59000 '-:-:-' "$(( at + 600 ))" >/dev/null
+  fm_noprogress_observe "$state" task-x1 88000 '-:-:-' "$(( at + 1200 ))" >/dev/null
+}
+
+# TEARDOWN IS THE ONLY RETIREMENT PATH FOR THE GUARD'S PER-TASK STATE. The
+# watcher's other caller fires only when a worktree write absorbs an escalation,
+# so without this one a retired task's record and anchor outlive it.
+test_teardown_retires_the_noprogress_record_and_anchor() {
+  local case_dir rc
+  case_dir=$(make_case noprogress-retire)
+  write_meta "$case_dir" local-only ship
+  seed_noprogress_burn "$case_dir" 1000000
+  [ -f "$(fm_noprogress_record "$case_dir/state" task-x1)" ] \
+    || fail "noprogress-retire: the fixture never wrote a guard record, so this pins nothing"
+  [ -f "$(fm_noprogress_anchor "$case_dir/state" task-x1)" ] \
+    || fail "noprogress-retire: the fixture never wrote a window anchor, so this pins nothing"
+
+  set +e
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "noprogress-retire: teardown should complete"
+  assert_absent "$(fm_noprogress_record "$case_dir/state" task-x1)" \
+    "noprogress-retire: teardown left the guard record behind for a reusable id"
+  assert_absent "$(fm_noprogress_anchor "$case_dir/state" task-x1)" \
+    "noprogress-retire: teardown left the window anchor behind for a reusable id"
+  pass "teardown retires the spend-without-artifact record and its window anchor"
+}
+
+# WHY THAT RETIREMENT IS LOAD-BEARING RATHER THAN HYGIENE. The home reuses task
+# ids. A record left behind holds the RETIRED worker's accumulated spend, its
+# window start and its flag, all against a fingerprint the new task computes
+# identically - so the new task's first observation continues the dead task's
+# window instead of opening its own: the counter drop books the whole rendered
+# value as spend on top of the inherited total, and the inherited window start is
+# days old, so both gates are crossed on the very first poll and a fresh worker
+# is escalated quoting a figure that belongs to someone else.
+test_a_reused_task_id_starts_from_a_clean_guard_window() {
+  local case_dir rc later verdict sig
+  case_dir=$(make_case noprogress-id-reuse)
+  write_meta "$case_dir" local-only ship
+  seed_noprogress_burn "$case_dir" 1000000
+
+  set +e
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "noprogress-id-reuse: teardown should complete"
+
+  # The home hands the id to a new task three days later. Its fingerprint is the
+  # same placeholder-only one, and its own counter is nowhere near the gate.
+  sig=$(fm_noprogress_artifact_sig "$case_dir/state" task-x1 "$case_dir/data")
+  [ "$sig" = '-:-:-' ] \
+    || fail "noprogress-id-reuse: the reused id computes $sig, so it could never have inherited the retired window"
+  later=$(( 1000000 + 3 * 86400 ))
+  verdict=$(fm_noprogress_observe "$case_dir/state" task-x1 5000 "$sig" "$later")
+  [ "$verdict" = ok ] \
+    || fail "noprogress-id-reuse: a fresh task inherited the retired task's window on its first poll: $verdict"
+  verdict=$(fm_noprogress_observe "$case_dir/state" task-x1 9000 "$sig" "$(( later + 600 ))")
+  [ "$verdict" = ok ] \
+    || fail "noprogress-id-reuse: a fresh task with 4000 tokens of its own spend escalated: $verdict"
+  pass "a task reusing a retired id opens its own guard window instead of inheriting the retired one"
+}
+
 test_herdr_teardown_clears_escalation_marker() {
   local case_dir marker
   case_dir=$(make_case herdr-marker-cleanup)
@@ -3805,6 +3884,8 @@ test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line
 test_secondmate_home_teardown_delivers_final_line_or_refuses
 test_teardown_missing_busy_sidecar_completes
+test_teardown_retires_the_noprogress_record_and_anchor
+test_a_reused_task_id_starts_from_a_clean_guard_window
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence

@@ -194,6 +194,12 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$FM_DAEMON_DIR/fm-busy-lib.sh"
 
+# The spend-without-artifact guard, for FM_NOPROGRESS_REASON_PREFIX alone: this
+# daemon must recognise that guard's escalation to route it, and the phrase has
+# exactly one definition, in the library that builds the reason.
+# shellcheck source=bin/fm-noprogress-lib.sh
+. "$FM_DAEMON_DIR/fm-noprogress-lib.sh"
+
 # --- tunables ---------------------------------------------------------------
 # Supervisor backends this daemon knows how to inject into today. zellij, orca,
 # and cmux are real backends elsewhere in firstmate (bin/fm-backend.sh) but this
@@ -1332,7 +1338,7 @@ is_wake_reason() {  # <reason>
 handle_wake() {  # <reason> <state>
   local reason=$1 state=$2 decision action distilled task last stale_detail
   local capture="$state/.subsuper-classified-end.$$" span_record='' span_rc='' endpoint ident rest sig marker
-  local kind="" arg="" classification_failed=0 span_failure_repeat=0
+  local kind="" arg="" classification_failed=0 span_failure_repeat=0 stale_override=""
   : > "$capture" || return 1
   if should_force_self "$reason"; then
     log "wake force-self (FM_INJECT_SKIP): $reason"
@@ -1372,26 +1378,62 @@ handle_wake() {  # <reason> <state>
               else
                 decision=$(classify_stale "$arg" "$state" "$span_record" "$span_rc")
               fi
+              # THE SPEND-WITHOUT-ARTIFACT GUARD OUTRANKS EVERY STATUS-LOG
+              # ABSORPTION, so it is routed FIRST, before any of the precedence
+              # below can see it. That guard's signal is SPEND, and no status
+              # line is evidence about spend: `working:`, `paused:` and `held:`
+              # are all the crew's own prose, written once and true or not ever
+              # after. Left to the lines below, a burning crew whose last line
+              # was a nonterminal `working:` classified as `self|transient
+              # stale`, housekeeping's recheck found the pane busy (a climbing
+              # token counter is busy), dropped the marker and acked the wake;
+              # one whose last line was a three-hour-old `paused:` was absorbed
+              # outright by the `pause` arm. Either way the guard was silent in
+              # away mode, which is the exact posture the 18-hour burn it exists
+              # to catch ran in. Neither the declared wait nor the captain hold
+              # survives as an exception here: the hold read at this point is
+              # the same unverified status line (the verified form pairs it with
+              # fm_afk_contract_present, as the afk path below does), and the
+              # attended watcher path escalates this pane whatever its status
+              # says, so absorbing it here would only be the two triage paths
+              # disagreeing about one signal. Repeats stay bounded because the
+              # guard itself paces re-escalation by further spend, and the
+              # declaration's own pause tracking is reconciled below either way.
+              #
               # An enriched wedge reason carries the watcher's own escalation count
               # and its "do not re-absorb on the run-step/pane state alone" demand,
               # so it outranks this daemon's cheaper status-log absorption - EXCEPT
               # under a current declared wait. A `pause` verdict is not run-step or
               # pane state at all: it is the crew's own declaration that this pane
               # waits by design, which is the one question the wedge timer cannot
-              # answer for itself. Overriding it escalated healthy declared waits
-              # once per STALE_ESCALATE_SECS for as long as the wait lasted.
+              # answer for itself, and unlike spend it is the very question the
+              # wedge asks. Overriding it escalated healthy declared waits once
+              # per STALE_ESCALATE_SECS for as long as the wait lasted.
               # Housekeeping (2b) then owns the re-surface, so the wait is still
               # bounded - by one recheck per PAUSE_RESURFACE_SECS instead.
-              case "${decision%%|*}" in
-                pause) : ;;
-                *) case "$stale_detail" in
-                     idle\ *s,\ possible\ wedge,\ escalation\ *)
-                       last=$(last_status_line "$state/$task.status")
-                       status_is_paused_or_captain_held "$last" \
-                         || decision="escalate|${reason#stale: }"
-                       ;;
-                   esac ;;
-              esac ;;
+              #
+              # Neither override may DISCARD an escalate the classification
+              # already reached. When the unseen span held an actionable record,
+              # that decision carries the record's own text, and the escalate
+              # branch below then marks the record reported. Replacing the text
+              # there advanced the seen offset past a `blocked:` line nobody ever
+              # read, and nothing re-surfaces it afterwards - so the two reasons
+              # ride out together and the offset only advances over text that
+              # actually reached the buffer.
+              case "$stale_detail" in
+                "$FM_NOPROGRESS_REASON_PREFIX"*) stale_override=1 ;;
+                idle\ *s,\ possible\ wedge,\ escalation\ *)
+                  if [ "${decision%%|*}" != pause ]; then
+                    last=$(last_status_line "$state/$task.status")
+                    status_is_paused_or_captain_held "$last" || stale_override=1
+                  fi ;;
+              esac
+              if [ -n "$stale_override" ]; then
+                case "${decision%%|*}" in
+                  escalate) decision="escalate|${decision#*|} + ${reason#stale: }" ;;
+                  *)        decision="escalate|${reason#stale: }" ;;
+                esac
+              fi ;;
     check:*)  decision=$(classify_check "$reason") ;;
     heartbeat|heartbeat:*) decision=$(classify_heartbeat) ;;
     *)        decision=$(classify_unknown "$reason") ;;
