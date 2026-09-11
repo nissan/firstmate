@@ -286,6 +286,11 @@ Unlike tmux process-name inspection, native registration can classify Pi without
 The session-start sweep uses this probe.
 Mid-session secondmate agent-process liveness is not implemented because idle secondmates are deliberately exempt from stale-pane escalation and need a separate periodic identity signal.
 
+A full server stop - the one a client/server version mismatch forces - leaves no pane behind at all, so every task in the home reads `missing` rather than `dead`.
+That is recoverable through the ordinary control plane rather than by hand: `bin/fm-control.sh <task-id> relaunch --note "..."` recreates the endpoint in the task's recorded workspace with the same per-task wiring a fresh spawn builds, launches the replacement into it, and publishes the new endpoint in the same record transaction, while the recorded worktree and every uncommitted change in it are reused untouched.
+`exit` on such a task is idempotent success, not a refusal.
+[`agent-control.md`](agent-control.md) owns that recovery, including the report-less scout whose slot only a forced cleanup can return.
+
 ## Push events and polling fallback
 
 Protocol 16 can subscribe to `pane.agent_status_changed` over one bounded Unix-socket reader.

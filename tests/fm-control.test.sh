@@ -634,15 +634,35 @@ test_already_stopped_exit_is_idempotent() {
   pass "fm-control exit: an already-stopped agent is idempotent success with no bytes sent"
 }
 
-test_missing_endpoint_refuses() {
-  local dir out rc
+# A structurally gone endpoint is not a refusal for `exit`: an agent cannot
+# outlive the pane it ran in, so there is nothing to stop and nothing to change
+# (issue #9 - refusing here made the documented recovery circular). `interrupt`
+# still refuses, because there is no running turn to cancel.
+test_missing_endpoint_exit_is_idempotent() {
+  local dir out rc before after
   dir=$(new_case gone)
   add_task "$dir" t1 claude
   : > "$dir/fake/windows"
+  before=$(cat "$dir/home/state/t1.meta")
   out=$(run_control "$dir" t1 exit); rc=$?
-  expect_code 1 "$rc" "a missing endpoint should refuse"
-  assert_contains "$out" "recorded endpoint is gone" "the refusal should name the missing endpoint"
-  pass "fm-control exit: a vanished endpoint refuses instead of silently succeeding"
+  expect_code 0 "$rc" "exiting a gone endpoint should succeed; there is nothing to stop"$'\n'"$out"
+  assert_contains "$out" "already-stopped t1" "the outcome should report the agent as already stopped"
+  [ -z "$(literals "$dir")" ] || fail "a gone endpoint must not be sent an exit command"
+  after=$(cat "$dir/home/state/t1.meta")
+  [ "$before" = "$after" ] || fail "exit on a gone endpoint changed the durable record"
+  pass "fm-control exit: a vanished endpoint is idempotent success with no bytes sent"
+}
+
+test_missing_endpoint_interrupt_refuses() {
+  local dir out rc
+  dir=$(new_case gone-interrupt)
+  add_task "$dir" t1 claude
+  : > "$dir/fake/windows"
+  out=$(run_control "$dir" t1 interrupt); rc=$?
+  expect_code 1 "$rc" "interrupting a gone endpoint should refuse"
+  assert_contains "$out" "nothing to interrupt" "the refusal should say there is no agent"
+  [ -z "$(keys_sent "$dir")" ] || fail "no key should reach a gone endpoint"
+  pass "fm-control interrupt: a vanished endpoint refuses; there is no turn to cancel"
 }
 
 test_interrupt_refuses_when_no_agent_runs() {
@@ -900,7 +920,8 @@ test_verb_allowlist_is_closed
 test_resume_is_refused_with_its_reason
 test_relaunch_only_flags_are_rejected_on_other_verbs
 test_already_stopped_exit_is_idempotent
-test_missing_endpoint_refuses
+test_missing_endpoint_exit_is_idempotent
+test_missing_endpoint_interrupt_refuses
 test_interrupt_refuses_when_no_agent_runs
 test_ambiguous_endpoint_refuses
 test_busy_agent_is_interrupted_before_the_exit_command

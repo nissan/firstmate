@@ -468,6 +468,7 @@ MODE_SET=0
 YOLO_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
+RELAUNCH_RECREATE_ENDPOINT=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -1316,10 +1317,35 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   }
   RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
-  [ "$RELAUNCH_STATE" = dead ] || {
-    echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
-    exit 1
-  }
+  # `dead` is an endpoint that still exists and confidently holds no agent, so
+  # the replacement launches straight into it. `missing` is the structurally
+  # gone endpoint a session-provider restart leaves behind: the pane, tab, or
+  # window the record names is authoritatively absent, which is the SAME
+  # positive proof that no agent owns this task - an agent cannot outlive the
+  # endpoint it ran in. Refusing it stranded every task in the home behind a
+  # circular instruction to run an exit that itself refused a gone endpoint
+  # (issue #9). It is recoverable instead: the endpoint is recreated in the
+  # recorded workspace below with the same per-task wiring a fresh spawn uses,
+  # and the recorded worktree - with every uncommitted change in it - is reused
+  # untouched. Every other state (alive, ambiguous, unreadable, unverified)
+  # still refuses, because none of them proves the previous agent is gone.
+  RELAUNCH_RECREATE_ENDPOINT=0
+  case "$RELAUNCH_STATE" in
+    dead) ;;
+    missing)
+      case "$BACKEND" in
+        tmux|herdr) RELAUNCH_RECREATE_ENDPOINT=1 ;;
+        *)
+          echo "error: task $ID's endpoint is structurally gone and backend '$BACKEND' cannot recreate one; reconcile the task by hand" >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
+      exit 1
+      ;;
+  esac
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
@@ -2631,17 +2657,25 @@ fi
 
 W="fm-$ID"
 if [ "$RELAUNCH" -eq 1 ]; then
-  # Adopt the recorded endpoint instead of creating one. This is what keeps a
-  # relaunch a REPLACEMENT rather than a second copy of the task: no new
-  # terminal, no second worktree, and every uncommitted change left exactly
-  # where the previous agent left it.
-  T=$RELAUNCH_TARGET
+  # Either endpoint path is a REPLACEMENT, never a second copy of the task: the
+  # recorded worktree is reused as-is, so no second local copy is allocated and
+  # every uncommitted change stays exactly where the previous agent left it.
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
   [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
+fi
+if [ "$RELAUNCH" -eq 1 ] && [ "$RELAUNCH_RECREATE_ENDPOINT" -eq 0 ]; then
+  # Adopt the recorded endpoint instead of creating one: it exists and is
+  # positively agent-free, so no new terminal is needed.
+  T=$RELAUNCH_TARGET
   WT_TARGET=$T
   SES=${T%%:*}
 else
+# A recreate-relaunch falls through here deliberately: the recorded endpoint is
+# structurally gone, so the task needs a new one built with exactly the same
+# per-task wiring a fresh spawn builds. The endpoint fields this block resolves
+# are what the meta record below publishes, so the record names the recreated
+# endpoint in the same transaction that launches into it.
 case "$BACKEND" in
   tmux)
     SES=$(fm_backend_tmux_container_ensure)
@@ -3073,7 +3107,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
     sleep 0.5
   done
   if [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ]; then
-    if [ "$BACKEND" != herdr ]; then
+    # A recreated endpoint is BUILT in the project directory, so it is expected
+    # to start outside the recorded worktree; telling it to cd there is the
+    # normal step, not a drift recovery. An adopted endpoint that drifted is
+    # only steered back on herdr, where a restored pane legitimately comes back
+    # in its saved cwd.
+    if [ "$BACKEND" != herdr ] && [ "$RELAUNCH_RECREATE_ENDPOINT" -ne 1 ]; then
       echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}', not its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
       exit 1
     fi

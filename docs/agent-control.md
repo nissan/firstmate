@@ -31,8 +31,8 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
-| `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. |
-| `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
+| `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success, and so is a structurally missing endpoint. |
+| `relaunch` | Replace the running agent with a new one in the same worktree, in the same endpoint or - when that endpoint is structurally gone - a recreated one, on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the endpoint the durable record now names, and that record names the harness that is actually running. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
@@ -100,7 +100,27 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
 - `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free, so a replacement can never join a live agent.
-  It also requires the shell to be in the recorded worktree: tmux refuses immediately when it is not, while Herdr sends one `cd` to the recorded path and refuses unless a subsequent path read confirms the move.
+  Both `dead` (the endpoint exists and holds no agent) and `missing` (the endpoint is authoritatively absent) are that proof; every other state refuses.
+- It also requires the shell to be in the recorded worktree: tmux refuses immediately when an adopted endpoint is not, while Herdr sends one `cd` to the recorded path and refuses unless a subsequent path read confirms the move.
+  A recreated endpoint is built in the project directory, so it is always sent that same `cd` and held to the same confirmation.
+
+## Recovering a structurally missing endpoint
+
+A session provider restart takes every pane with it, so afterwards each task in the home reads `missing`: the endpoint its record names is authoritatively absent.
+Nothing can still be running in an endpoint that does not exist, so `missing` is the same positive agent-free proof `dead` is - and the recorded local copy, with every uncommitted change in it, is untouched.
+
+The sanctioned recovery is one ordinary command per task:
+
+```sh
+bin/fm-control.sh <task-id> relaunch --note "the session provider was restarted; pick up from the local copy"
+```
+
+The launch owner recreates the endpoint in the recorded workspace with the same per-task wiring a fresh spawn builds, launches the replacement into it with the brief plus that progress note, and publishes the new endpoint in the same record transaction.
+The recorded worktree is reused as-is: nothing is reset, re-cloned, or reallocated, and no second local copy is created.
+`exit` on such a task is idempotent success rather than a refusal, so the documented `exit` then `bin/fm-spawn.sh <id> --relaunch` sequence works too.
+
+A scout that was lost this way with no report written is the one case this cannot recover: its findings were never durable.
+`bin/fm-teardown.sh <id> --force` returns that stranded slot and prints one loud line saying the investigation is being discarded; without `--force` the report refusal stands.
 
 ## Capability matrix
 
