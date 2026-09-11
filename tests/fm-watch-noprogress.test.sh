@@ -422,6 +422,65 @@ test_artifact_fingerprint_tracks_each_signal() {
   pass "the artifact fingerprint moves on a commit, a report write, and a status append, and is stable when unreadable"
 }
 
+# A WORKTREE THAT NEVER ANSWERS. The fingerprint is read on every poll for every
+# task, and the task worktree is the only part of it that lives outside the home
+# - a treehouse on an unresponsive mount answers neither the stat nor the
+# rev-parse. Unbounded, that blocks the poll, and the watcher whose whole job is
+# noticing wedged work is itself wedged for the entire fleet. So the read is
+# bounded, and hitting the bound has to read as an unreadable worktree: the fixed
+# placeholder, never a changing value, with the escalation schedule untouched.
+test_a_hanging_worktree_cannot_stall_the_poll() {
+  local dir state data wt hangbin oldpath a b started elapsed
+  local n poll verdict escalated
+  dir=$(make_case hung-worktree); state="$dir/state"; data="$dir/data"
+  wt="$dir/wt"; hangbin="$dir/hangbin"; mkdir -p "$wt" "$data/t" "$hangbin"
+  printf 'window=test:fm-t\nkind=ship\nworktree=%s\n' "$wt" > "$state/t.meta"
+  # A worktree whose every git access hangs, which is what an unresponsive mount
+  # looks like from here.
+  printf '#!/usr/bin/env bash\nsleep 60\n' > "$hangbin/git"
+  chmod +x "$hangbin/git"
+  export FM_NOPROGRESS_TIMEOUT=1
+
+  oldpath=$PATH
+  PATH="$hangbin:$PATH"
+  started=$(date +%s)
+  a=$(fm_noprogress_artifact_sig "$state" t "$data")
+  elapsed=$(( $(date +%s) - started ))
+  PATH=$oldpath
+  [ "$elapsed" -lt 30 ] \
+    || fail "one fingerprint read of a hung worktree took ${elapsed}s, so the poll is not bounded"
+  [ "${a%%:*}" = '-' ] \
+    || fail "a hung worktree produced a head component of '${a%%:*}' rather than the unreadable placeholder"
+
+  # Stable, not merely unreadable: a value that changed per poll would read as
+  # continuous progress and silence the guard forever.
+  PATH="$hangbin:$PATH"
+  b=$(fm_noprogress_artifact_sig "$state" t "$data")
+  PATH=$oldpath
+  [ "$a" = "$b" ] || fail "a hung worktree's fingerprint changed between polls: $a vs $b"
+
+  # ...and the schedule is untouched: a climbing counter against that stable
+  # fingerprint still crosses both gates and escalates.
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+  escalated=
+  n=100
+  poll=0
+  while [ "$poll" -lt 4 ] && [ -z "$escalated" ]; do
+    PATH="$hangbin:$PATH"
+    b=$(fm_noprogress_artifact_sig "$state" t "$data")
+    PATH=$oldpath
+    verdict=$(fm_noprogress_observe "$state" t "$n" "$b" "$(( 1000000 + poll * 60 ))")
+    case "$verdict" in escalate\ *) escalated=$verdict ;; esac
+    n=$(( n + 500 ))
+    poll=$(( poll + 1 ))
+  done
+  [ -n "$escalated" ] \
+    || fail "a burn against a hung worktree never escalated, so the bound changed the schedule: record=[$(cat "$(fm_noprogress_record "$state" t)")]"
+
+  unset FM_NOPROGRESS_TIMEOUT FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "a worktree that never answers is bounded, reads as the stable placeholder, and leaves the escalation schedule intact"
+}
+
 # --- the wiring, against a real bin/fm-watch.sh -----------------------------
 
 WIRED_DIR=; WIRED_STATE=; WIRED_OUT=; WIRED_PID=; WIRED_TOKENS=; WIRED_TMUXLOG=
@@ -633,6 +692,7 @@ test_reescalation_and_counter_reset
 test_recorded_per_turn_footers_accumulate_across_turns
 test_frozen_counter_gate_is_the_only_thing_keeping_this_silent
 test_artifact_fingerprint_tracks_each_signal
+test_a_hanging_worktree_cannot_stall_the_poll
 test_climbing_tokens_without_artifact_escalate
 test_frozen_token_wait_stays_silent
 test_growing_report_stays_silent

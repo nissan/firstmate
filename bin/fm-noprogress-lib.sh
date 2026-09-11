@@ -88,6 +88,17 @@
 # Callers: bin/fm-watch.sh, bin/fm-teardown.sh.
 set -u
 
+# fm_run_timed, the shared hard bound this library puts around the one thing it
+# touches outside the home: the task worktree. bin/fm-timeout-lib.sh owns bounded
+# execution for this repo, so nothing here re-derives the coreutils/BSD/perl
+# selection. It declares `set -u` as this library already does, so it is sourced
+# plainly. Resolved from BASH_SOURCE so it works whether a bin/ script or a test
+# sourced this file.
+_FM_NOPROGRESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_NOPROGRESS_LIB_DIR="."
+# shellcheck source=bin/fm-timeout-lib.sh
+# shellcheck disable=SC1091
+. "$_FM_NOPROGRESS_LIB_DIR/fm-timeout-lib.sh"
+
 # Tokens accumulated across turns against one unchanged artifact fingerprint
 # before the guard escalates - about 55 of Claude's recorded ~1.1k-token turns,
 # or a fifth of the 292.7k the motivating burn spent, all of it against a
@@ -106,6 +117,18 @@ FM_NOPROGRESS_SPEND=${FM_NOPROGRESS_SPEND:-60000}
 # escalates. Both gates must be crossed: a fast burst of spend that lands an
 # artifact minutes later is not the shape being caught.
 FM_NOPROGRESS_SECS=${FM_NOPROGRESS_SECS:-1800}
+
+# Wall-clock seconds one fingerprint read of the task worktree may take. The
+# wedge detector's write probe runs only at the moment it would escalate and can
+# afford FM_WORKTREE_WRITE_TIMEOUT; this read runs on EVERY poll for EVERY task,
+# so it gets its own, much shorter bound. Without one, a worktree on a hung mount
+# (NFS, sshfs, a stale automount) would block the poll and wedge the watcher this
+# guard exists to keep watching - for the whole fleet, not just that task.
+# Hitting the bound reads as an unreadable worktree, which contributes the fixed
+# placeholder fm_noprogress_artifact_sig already defines and so leaves the
+# escalation schedule exactly as it was. A value that is not a positive integer
+# falls back to the default.
+FM_NOPROGRESS_TIMEOUT=${FM_NOPROGRESS_TIMEOUT:-5}
 
 # fm_noprogress_record: absolute path of a task's guard record.
 fm_noprogress_record() {  # <state> <task>
@@ -155,13 +178,17 @@ _fm_noprogress_uint() {  # <value> <default>
 #
 # Every footer this repo has recorded live renders its counter as a number
 # immediately before the word "tokens" ("· 292.7k tokens", "↓ 234 tokens",
-# "Running  59 tokens"), so that is the whole grammar: digits, optional
-# thousands commas, optionally one decimal place and a k suffix. No other
-# spelling is accepted, because no other spelling has been recorded and an
-# accepted spelling nothing renders is only extra surface to forge. Anything
-# else is not a token counter and is ignored - a guess here would become a false
-# escalation, and the cost of reading nothing is only that this guard stays
-# silent for that harness.
+# "Running  59 tokens"), so that is the whole grammar: digits, optionally one
+# decimal place and a k suffix. No other spelling is accepted, because no other
+# spelling has been recorded and an accepted spelling nothing renders is only
+# extra surface to forge. Anything else is not a token counter and is ignored - a
+# guess here would become a false escalation, and the cost of reading nothing is
+# only that this guard stays silent for that harness.
+#
+# A counter written with thousands commas parses too, but that is a side effect,
+# not a recorded spelling: no recorded counter carries a comma, and the `tr -d`
+# below strips them only so the compaction notice ("Compacted from 7,697
+# tokens") reaches the filter that drops it as one token rather than two.
 #
 # FOOTER REGION ONLY. The match is narrowed to the last 12 non-blank lines, the
 # same TUI footer region every other rendered-string contract in this repo reads
@@ -174,8 +201,12 @@ _fm_noprogress_uint() {  # <value> <default>
 #
 # The FOOTER-MOST remaining match wins. A footer can render more than one number
 # next to "tokens" - a live counter with a context budget or a quota line above
-# it - and the last one is the counter, because every recorded shape puts the
-# live counter on the bottom-most line it draws. Taking the LARGEST instead
+# it - and the last one is the counter. The property this relies on is NOT that
+# the counter is the bottom-most line drawn: the recorded cursor capture
+# (tests/fm-backend-herdr.test.sh, herdr_cursor_midturn_plain) puts its counter
+# on the FIRST of seven lines. It is that no recorded shape renders a second
+# "<n> tokens" match BELOW its counter, so the last match in the region is the
+# counter in every capture this repo holds. Taking the LARGEST instead
 # would let any constant in the region outrank the counter and pin the reading
 # for good: the delta would be zero on every poll, the frozen-counter gate would
 # short-circuit, and the guard would go permanently silent for that harness
@@ -219,12 +250,22 @@ EOF
 # something. A component that cannot be read contributes a fixed placeholder
 # rather than a changing value, so an unreadable worktree can never masquerade
 # as continuous progress.
+#
+# The worktree is the only component outside the home, so it is the only one
+# that can hang, and every touch of it - existence included - happens inside the
+# FM_NOPROGRESS_TIMEOUT bound. There is deliberately no separate `-d` test: a
+# stat is exactly as blockable as the read it would guard, and git already
+# reports a missing or unreadable worktree as a failure, which is the same
+# placeholder either way. The other two components are stats inside the home,
+# which is the filesystem the watcher is already running on.
 fm_noprogress_artifact_sig() {  # <state> <task> <data>
-  local state=$1 task=$2 data=$3 wt head report status
+  local state=$1 task=$2 data=$3 wt head report status bound
   wt=$(grep '^worktree=' "$state/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  bound=$FM_NOPROGRESS_TIMEOUT
+  case "$bound" in ''|*[!0-9]*|0) bound=5 ;; esac
   head='-'
-  if [ -n "$wt" ] && [ -d "$wt" ]; then
-    head=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || head='-'
+  if [ -n "$wt" ]; then
+    head=$(fm_run_timed "$bound" git -C "$wt" rev-parse HEAD 2>/dev/null) || head='-'
     [ -n "$head" ] || head='-'
   fi
   report='-'
