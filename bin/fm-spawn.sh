@@ -1333,6 +1333,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
   case "$RELAUNCH_STATE" in
     dead) ;;
     missing)
+      # Unreachable today: fm_backend_agent_state only classifies tmux and
+      # herdr, so every other backend reads `unverified` and refuses below.
+      # It stays so a future backend that gains a recovery-grade classifier
+      # cannot reach the create path unreviewed - orca's create path allocates
+      # a NEW worktree, which would silently break "reuse the recorded copy".
       case "$BACKEND" in
         tmux|herdr) RELAUNCH_RECREATE_ENDPOINT=1 ;;
         *)

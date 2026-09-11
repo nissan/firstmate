@@ -7,7 +7,9 @@
 # restart an investigation can be left with a gone endpoint and no findings
 # written down, and the only way to get the slot back is a forced cleanup
 # (issue #9). That escape hatch stays, and must announce on one loud line that
-# an investigation is being discarded.
+# an investigation is being discarded - but only once the discard is actually
+# certain, so a cleanup that refuses further down never claims to have thrown
+# away work it left completely intact.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -93,6 +95,46 @@ test_forced_reportless_scout_teardown_announces_the_discard() {
   pass "fm-teardown: --force returns a stranded report-less scout and says what it discarded"
 }
 
+# make_herdr_scout_case <name> <id>: the same report-less scout, recorded on a
+# Herdr endpoint whose server answers nothing readable. Herdr's teardown
+# preflight is NOT skipped by --force, so this cleanup refuses after the report
+# gate has already been passed - the exact ordering the notice must respect.
+make_herdr_scout_case() {  # <name> <id>
+  local name=$1 id=$2 dir
+  dir="$TMP_ROOT/$name"
+  mkdir -p "$dir/home/state" "$dir/home/data/$id" "$dir/fakebin"
+  fm_git_worktree "$dir/project" "$dir/worktree" "scout-$id"
+  cat > "$dir/fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$dir/fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$dir/fakebin/herdr" "$dir/fakebin/treehouse"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=fmses:p1" "endpoint_task_id=$id" "backend=herdr" \
+    "herdr_session=fmses" "herdr_workspace_id=w1" "herdr_tab_id=w1:t1" \
+    "herdr_pane_id=p1" "worktree=$dir/worktree" "project=$dir/project" \
+    "harness=claude" "kind=scout" "mode=local-only" "spawn_gen=s-scout-$id"
+  printf '%s\n' "$dir"
+}
+
+test_a_later_refusal_never_prints_the_discard_notice() {
+  local dir out rc
+  dir=$(make_herdr_scout_case later-refusal sc5)
+  out=$(run_teardown "$dir" sc5 --force); rc=$?
+  expect_code 1 "$rc" "an unreadable Herdr endpoint must refuse even under --force"$'\n'"$out"
+  case "$out" in
+    *"$NOTICE"*)
+      fail "the discard notice was printed over a teardown that then refused:"$'\n'"$out" ;;
+  esac
+  assert_present "$dir/home/state/sc5.meta" "the refused cleanup removed the task record"
+  assert_present "$dir/worktree" "the refused cleanup removed the recorded local copy"
+  pass "fm-teardown: nothing is announced as discarded by a cleanup that refuses instead"
+}
+
 test_forced_scout_teardown_with_a_report_is_silent() {
   local dir out rc
   dir=$(make_scout_case with-report sc4)
@@ -108,4 +150,5 @@ test_forced_scout_teardown_with_a_report_is_silent() {
 test_reportless_scout_with_a_gone_endpoint_is_refused_without_force
 test_reportless_scout_with_a_live_endpoint_is_refused_without_force
 test_forced_reportless_scout_teardown_announces_the_discard
+test_a_later_refusal_never_prints_the_discard_notice
 test_forced_scout_teardown_with_a_report_is_silent

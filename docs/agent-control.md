@@ -121,6 +121,19 @@ The recorded worktree is reused as-is: nothing is reset, re-cloned, or reallocat
 
 A scout that was lost this way with no report written is the one case this cannot recover: its findings were never durable.
 `bin/fm-teardown.sh <id> --force` returns that stranded slot and prints one loud line saying the investigation is being discarded; without `--force` the report refusal stands.
+The notice is printed once every refusal `--force` does not skip has passed, so a cleanup that then refuses never claims a discard that did not happen.
+
+### What recovery does to Herdr presentation
+
+Presentation is a viewing arrangement, never endpoint authority: the durable record's endpoint fields are.
+So recovery is scoped to the endpoint, and the presentation layout it lands in follows from what is still on disk:
+
+- A recovered task whose presentation journal survived is reclaimed into its own nested workspace, exactly as a resume is.
+- A recovered task whose journal is gone is recreated in the ordinary **flat container layout**, because the fresh-projection path is only ever taken for a task that has no record yet and a relaunch always has one.
+  The task is fully recovered and fully controllable; it simply presents flat rather than nested until it is next spawned fresh.
+
+Behavioral coverage for the recreate path is tmux-only (`tests/fm-control-relaunch.test.sh`), since the hermetic suite stubs the session provider.
+The Herdr half belongs in the lab-guarded slot next to `tests/fm-control-herdr-smoke.test.sh`, which drives a real Herdr server; adding it is tracked as a follow-up rather than done here.
 
 ## Capability matrix
 

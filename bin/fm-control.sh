@@ -543,6 +543,13 @@ TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
 
+# journal_write: replace the journal with one record for <phase>. The caller
+# replays CHECKPOINT_LINES into every phase, so the fields safe_checkpoint
+# proved are the SAME bytes in each record: in particular
+# pre_exit_endpoint_state is the classifier state read once, before the agent
+# was stopped, and it is deliberately not refreshed in the later records - a
+# `complete` record still reporting `missing` is the durable evidence of why
+# the exit half of this transaction had no agent to stop.
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
   shift
@@ -743,7 +750,8 @@ safe_checkpoint() {
   else
     dirty=no
   fi
-  CHECKPOINT_LINES+=("worktree_head=$head" "worktree_dirty=$dirty" "endpoint_state=$(agent_state)")
+  CHECKPOINT_LINES+=("worktree_head=$head" "worktree_dirty=$dirty" \
+    "pre_exit_endpoint_state=$(agent_state)")
   if [ "$KIND" = secondmate ]; then
     # A secondmate's own crewmates outlive its relaunch: they run in their own
     # endpoints, and the relaunched secondmate reconciles them from its home's

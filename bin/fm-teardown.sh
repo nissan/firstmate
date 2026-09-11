@@ -3097,15 +3097,6 @@ if [ "$KIND" = secondmate ] && [ "$FORCE" = "--force" ]; then
   cleanup_firstmate_home_children "$HOME_PATH" || exit $?
 fi
 
-if [ "$KIND" = scout ] && [ "$FORCE" = "--force" ] && [ ! -f "$DATA/$ID/report.md" ]; then
-  # A forced teardown of a report-less scout is exactly how a stranded slot is
-  # returned when the investigation's endpoint is gone and its findings were
-  # never written down (issue #9). It stays allowed, because refusing forever
-  # is worse - but it discards the whole investigation, so it can never be
-  # silent: say so on one line, loudly, before anything is removed.
-  echo "NOTICE: FORCED teardown of scout task $ID with NO report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
-fi
-
 if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
   REPORT="$DATA/$ID/report.md"
   if [ ! -f "$REPORT" ]; then
@@ -3275,6 +3266,18 @@ else
   else
     BACKLOG_SKIP_REASON=$TEARDOWN_BACKLOG_SKIP_REASON
   fi
+fi
+
+if [ "$KIND" = scout ] && [ "$FORCE" = "--force" ] && [ ! -f "$DATA/$ID/report.md" ]; then
+  # A forced teardown of a report-less scout is exactly how a stranded slot is
+  # returned when the investigation's endpoint is gone and its findings were
+  # never written down (issue #9). It stays allowed, because refusing forever
+  # is worse - but it discards the whole investigation, so it can never be
+  # silent: say so on one line, loudly. Announced HERE rather than at the
+  # report gate above so it is never printed over a teardown that then
+  # refuses: every refusal that --force does not skip has passed by this
+  # point, so the discard is certain and nothing has been removed yet.
+  echo "NOTICE: FORCED teardown of scout task $ID with NO report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
 fi
 
 # Every landed/discard-work refusal above has now passed (or --force skipped

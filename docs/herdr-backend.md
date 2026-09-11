@@ -289,6 +289,10 @@ Mid-session secondmate agent-process liveness is not implemented because idle se
 A full server stop - the one a client/server version mismatch forces - leaves no pane behind at all, so every task in the home reads `missing` rather than `dead`.
 That is recoverable through the ordinary control plane rather than by hand: `bin/fm-control.sh <task-id> relaunch --note "..."` recreates the endpoint in the task's recorded workspace with the same per-task wiring a fresh spawn builds, launches the replacement into it, and publishes the new endpoint in the same record transaction, while the recorded worktree and every uncommitted change in it are reused untouched.
 `exit` on such a task is idempotent success, not a refusal.
+Recovery is scoped to the endpoint, because presentation is a viewing arrangement and never endpoint authority.
+A recovered task whose presentation journal survived is reclaimed into its own nested workspace; a recovered task whose journal is gone comes back in the ordinary flat container layout, because the projection path that builds a nested workspace is only taken for a task that has no record yet and a relaunch always has one.
+Such a task is fully recovered and fully controllable - it just presents flat until it is next spawned fresh.
+Behavioral coverage for that Herdr path needs a real server and belongs in the lab-guarded slot next to `tests/fm-control-herdr-smoke.test.sh`; it is tracked as a follow-up, and the hermetic coverage that exists today is tmux-only.
 [`agent-control.md`](agent-control.md) owns that recovery, including the report-less scout whose slot only a forced cleanup can return.
 
 ## Push events and polling fallback

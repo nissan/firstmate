@@ -1634,7 +1634,7 @@ test_relaunch_recreates_a_structurally_missing_endpoint() {
     || fail "the uncommitted change did not survive the recovery byte-identically"
   [ "$(journal_field "$dir" rl50 phase)" = complete ] \
     || fail "the transaction journal should end complete"
-  [ "$(journal_field "$dir" rl50 endpoint_state)" = missing ] \
+  [ "$(journal_field "$dir" rl50 pre_exit_endpoint_state)" = missing ] \
     || fail "the journal should record that the endpoint was gone when the work was checkpointed"
   assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement should have been launched"
   assert_grep "session provider restarted" "$dir/home/data/rl50/brief.md" \
