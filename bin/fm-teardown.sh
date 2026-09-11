@@ -3268,18 +3268,6 @@ else
   fi
 fi
 
-if [ "$KIND" = scout ] && [ "$FORCE" = "--force" ] && [ ! -f "$DATA/$ID/report.md" ]; then
-  # A forced teardown of a report-less scout is exactly how a stranded slot is
-  # returned when the investigation's endpoint is gone and its findings were
-  # never written down (issue #9). It stays allowed, because refusing forever
-  # is worse - but it discards the whole investigation, so it can never be
-  # silent: say so on one line, loudly. Announced HERE rather than at the
-  # report gate above so it is never printed over a teardown that then
-  # refuses: every refusal that --force does not skip has passed by this
-  # point, so the discard is certain and nothing has been removed yet.
-  echo "NOTICE: FORCED teardown of scout task $ID with NO report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
-fi
-
 # Every landed/discard-work refusal above has now passed (or --force skipped
 # them). Fix 1 and Fix 2 (see script header) run here, unconditionally on
 # --force, and before ANY destructive step below - a still-parked run or a
@@ -3337,6 +3325,20 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
     echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
     exit 1
   }
+fi
+
+if [ "$KIND" = scout ] && [ "$FORCE" = "--force" ] && [ ! -f "$DATA/$ID/report.md" ]; then
+  # A forced teardown of a report-less scout is exactly how a stranded slot is
+  # returned when the investigation's endpoint is gone and its findings were
+  # never written down (issue #9). It stays allowed, because refusing forever
+  # is worse - but it discards the whole investigation, so it can never be
+  # silent: say so on one line, loudly. Announced HERE, below every refusal
+  # --force does not skip - the report gate, the leaked-process reap, the Orca
+  # path match, and the worktree return that actually destroys the findings -
+  # so the line is only ever printed for a cleanup that really is discarding
+  # the work, never over one that then refuses with the worktree, the tasktmp,
+  # and the record all still intact.
+  echo "NOTICE: FORCED teardown of scout task $ID with NO report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
 fi
 
 HERDR_PRESENTATION_JOURNAL="$STATE/$ID.herdr-presentation"

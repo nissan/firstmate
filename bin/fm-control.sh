@@ -45,11 +45,12 @@
 #              already recorded for it.
 #              When the recorded endpoint is structurally gone (the classifier
 #              reads `missing`, as every task in a home does after its session
-#              provider is restarted), the launch owner recreates one in the
-#              recorded workspace with the same per-task wiring a fresh spawn
-#              uses and publishes it in the same record transaction. The
-#              recorded worktree and every uncommitted change in it are reused
-#              untouched; nothing is reset or re-cloned.
+#              provider is restarted), the launch owner recreates one in this
+#              home's session container - the same one a fresh spawn uses, not
+#              the container the record names - with the same per-task wiring,
+#              and publishes it in the same record transaction. What comes back
+#              from the record is the WORKTREE: it and every uncommitted change
+#              in it are reused untouched; nothing is reset or re-cloned.
 #              A prefixed raw-command basename cannot reconstruct its launch
 #              command, so relaunch requires an explicit --harness for it.
 #              --note is required for a ship or scout, whose replacement

@@ -93,8 +93,10 @@ case "${1:-}" in
           [ -z "${FM_FAKE_TRACE_EXPORTED:-}" ] || : > "$FM_FAKE_TRACE_EXPORTED"
           ;;
         'cd -- '*)
+          # FM_FAKE_CD_IGNORED models a shell that never reaches the recorded
+          # worktree, so the caller's own post-cd confirmation is what fails.
           cdpath=${payload#cd -- \'}
-          printf '%s' "${cdpath%\'}" > "$D/cwd"
+          [ -n "${FM_FAKE_CD_IGNORED:-}" ] || printf '%s' "${cdpath%\'}" > "$D/cwd"
           ;;
       esac
     fi
@@ -131,6 +133,25 @@ case "${1:-}" in
     done
     [ -z "$wname" ] || printf '%s\n' "$wname" >> "$D/windows"
     printf '@%s\n' "${RANDOM}"
+    exit 0 ;;
+  kill-window)
+    # The inventory is the session's truth, so a closed window has to leave it -
+    # otherwise nothing here can tell an orphan endpoint from a cleaned-up one.
+    shift
+    target=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -t) target=${2:-}; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    wname=${target#*:}
+    wname=${wname#=}
+    if [ -n "$wname" ] && [ -f "$D/windows" ]; then
+      grep -vFx "$wname" "$D/windows" > "$D/windows.next" || true
+      cat "$D/windows.next" > "$D/windows"
+      rm -f "$D/windows.next"
+    fi
     exit 0 ;;
   set-window-option) exit 0 ;;
 esac
@@ -207,6 +228,7 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_TRACE_RELEASE="${FM_FAKE_TRACE_RELEASE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
+    FM_FAKE_CD_IGNORED="${FM_FAKE_CD_IGNORED:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -219,6 +241,7 @@ run_spawn() {  # <case-dir> <args...>
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
+    FM_FAKE_CD_IGNORED="${FM_FAKE_CD_IGNORED:-}" \
     "$SPAWN" "$@" 2>&1
 }
 
@@ -1658,6 +1681,42 @@ test_exit_on_a_missing_endpoint_is_idempotent_success() {
   pass "fm-control exit: a structurally missing endpoint is idempotent success"
 }
 
+# A recreate-relaunch builds a real endpoint in the middle of the transaction.
+# If the transaction then aborts, that endpoint must not survive: the record
+# still names the OLD gone one, so nothing else will ever learn the new one
+# exists, and the task's own window name is now taken. The retry is then
+# stranded a second time - behind an orphan only manual surgery could clear -
+# which is exactly the outcome the recovery verb exists to prevent.
+test_an_aborted_recreate_relaunch_leaves_no_orphan_endpoint() {
+  local dir out rc
+  dir=$(new_case orphan-endpoint rl53)
+  add_ship_task "$dir" rl53 claude
+  printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  make_endpoint_missing "$dir"
+
+  FM_FAKE_CD_IGNORED=1
+  out=$(run_control "$dir" rl53 relaunch --note "session provider restarted"); rc=$?
+  FM_FAKE_CD_IGNORED=
+  expect_code 1 "$rc" "a replacement that never reaches the recorded worktree must fail"$'\n'"$out"
+  [ "$(meta_field "$dir" rl53 window)" = "fmses:fm-rl53" ] \
+    || fail "an aborted relaunch rewrote the durable record to '$(meta_field "$dir" rl53 window)'"
+  if grep -qx "fm-rl53" "$dir/fake/windows"; then
+    fail "the endpoint the aborted relaunch created was left running in the session"
+  fi
+
+  # The retry is the whole point: recovery through the control plane has to stay
+  # available after a failed attempt.
+  printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  out=$(run_control "$dir" rl53 relaunch --note "retry after the aborted recovery"); rc=$?
+  expect_code 0 "$rc" "the retry must recover the task rather than collide with an orphan"$'\n'"$out"
+  assert_grep "fm-rl53" "$dir/fake/windows" "the retry should have recreated the endpoint"
+  case "$(meta_field "$dir" rl53 window)" in
+    *:fm-rl53) ;;
+    *) fail "the retry did not publish a recreated endpoint for the task" ;;
+  esac
+  pass "fm-control relaunch: an aborted recreate closes its endpoint, so the retry still recovers the task"
+}
+
 test_documented_exit_then_relaunch_sequence_recovers_a_missing_endpoint() {
   local dir out rc
   dir=$(new_case missing-sequence rl52)
@@ -1727,5 +1786,6 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
 test_relaunch_recreates_a_structurally_missing_endpoint
+test_an_aborted_recreate_relaunch_leaves_no_orphan_endpoint
 test_exit_on_a_missing_endpoint_is_idempotent_success
 test_documented_exit_then_relaunch_sequence_recovers_a_missing_endpoint

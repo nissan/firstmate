@@ -135,6 +135,35 @@ test_a_later_refusal_never_prints_the_discard_notice() {
   pass "fm-teardown: nothing is announced as discarded by a cleanup that refuses instead"
 }
 
+# break_worktree_process_scan <case-dir>: make the leaked-process scan
+# unanswerable. `reap_task_worktree_processes` then REFUSES - preserving the
+# worktree, the tasktmp and the record - and it is not skipped by --force, so
+# it runs after the report gate has already been passed.
+break_worktree_process_scan() {  # <case-dir>
+  cat > "$1/fakebin/lsof" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$1/fakebin/lsof"
+}
+
+test_a_later_refusal_after_the_report_gate_never_prints_the_notice() {
+  local dir out rc
+  dir=$(make_scout_case reap-refusal sc6)
+  break_worktree_process_scan "$dir"
+  out=$(run_teardown "$dir" sc6 --force); rc=$?
+  expect_code 1 "$rc" "an unanswerable leaked-process scan must refuse even under --force"$'\n'"$out"
+  assert_contains "$out" "cannot determine leaked processes" \
+    "the refusal should be the leaked-process scan, not an earlier gate"
+  case "$out" in
+    *"$NOTICE"*)
+      fail "the discard notice was printed over a teardown that then refused:"$'\n'"$out" ;;
+  esac
+  assert_present "$dir/home/state/sc6.meta" "the refused cleanup removed the task record"
+  assert_present "$dir/worktree" "the refused cleanup removed the recorded local copy"
+  pass "fm-teardown: a refusal past the report gate still announces no discard"
+}
+
 test_forced_scout_teardown_with_a_report_is_silent() {
   local dir out rc
   dir=$(make_scout_case with-report sc4)
@@ -151,4 +180,5 @@ test_reportless_scout_with_a_gone_endpoint_is_refused_without_force
 test_reportless_scout_with_a_live_endpoint_is_refused_without_force
 test_forced_reportless_scout_teardown_announces_the_discard
 test_a_later_refusal_never_prints_the_discard_notice
+test_a_later_refusal_after_the_report_gate_never_prints_the_notice
 test_forced_scout_teardown_with_a_report_is_silent

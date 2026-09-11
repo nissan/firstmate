@@ -885,6 +885,8 @@ SPAWN_TASK_SET_LOCK=
 SPAWN_TASK_SET_LOCK_HELD=0
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
+RELAUNCH_RECREATED_ENDPOINT=0
+RELAUNCH_RECREATED_TARGET=
 RELAUNCH_REPLACEMENT_PENDING=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
@@ -944,6 +946,12 @@ spawn_abort_cleanup() {
           --gen "$RELAUNCH_REPLACEMENT_BUSY_GEN"; then
         echo "warning: could not retire replacement busy generation after aborted relaunch of $ID" >&2
       fi
+    fi
+  fi
+  if [ "$RELAUNCH_RECREATED_ENDPOINT" = 1 ]; then
+    RELAUNCH_RECREATED_ENDPOINT=0
+    if ! fm_backend_kill "$BACKEND" "$RELAUNCH_RECREATED_TARGET" 2>/dev/null; then
+      echo "warning: could not close the endpoint recreated for $ID after an aborted relaunch; close $RELAUNCH_RECREATED_TARGET by hand before retrying" >&2
     fi
   fi
   if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] \
@@ -1324,9 +1332,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # positive proof that no agent owns this task - an agent cannot outlive the
   # endpoint it ran in. Refusing it stranded every task in the home behind a
   # circular instruction to run an exit that itself refused a gone endpoint
-  # (issue #9). It is recoverable instead: the endpoint is recreated in the
-  # recorded workspace below with the same per-task wiring a fresh spawn uses,
-  # and the recorded worktree - with every uncommitted change in it - is reused
+  # (issue #9). It is recoverable instead: the endpoint is recreated below in
+  # this launcher's own session container - the same one a fresh spawn resolves,
+  # never the container the record names - with the same per-task wiring, while
+  # the recorded worktree, with every uncommitted change in it, is reused
   # untouched. Every other state (alive, ambiguous, unreadable, unverified)
   # still refuses, because none of them proves the previous agent is gone.
   RELAUNCH_RECREATE_ENDPOINT=0
@@ -2693,6 +2702,10 @@ case "$BACKEND" in
     # stays $T (the name form), which is safe now that rename is disabled.
     WID=$(fm_backend_tmux_create_task "$SES" "$W" "$PROJ_ABS") || exit 1
     WT_TARGET="$WID"
+    if [ "$RELAUNCH_RECREATE_ENDPOINT" -eq 1 ]; then
+      RELAUNCH_RECREATED_ENDPOINT=1
+      RELAUNCH_RECREATED_TARGET=$T
+    fi
     ;;
   herdr)
     # fm_backend_herdr_workspace_label resolves the target workspace from
@@ -2860,6 +2873,10 @@ EOF
       exit 1
     fi
     T="$HERDR_SES:$HERDR_PANE_ID"
+    if [ "$RELAUNCH_RECREATE_ENDPOINT" -eq 1 ] && [ "$HERDR_PROJECTED" -ne 1 ]; then
+      RELAUNCH_RECREATED_ENDPOINT=1
+      RELAUNCH_RECREATED_TARGET=$T
+    fi
     ;;
   zellij)
     ZELLIJ_SES=$(fm_backend_zellij_container_ensure) || exit 1
@@ -3106,11 +3123,16 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # than wherever the pane happened to drift.
   relaunch_wt_real=$(real_path_or_raw "$WT")
   relaunch_seen=
-  for _ in $(seq 1 10); do
-    relaunch_seen=$(spawn_current_path "$WT_TARGET" || true)
-    [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ] || break
-    sleep 0.5
-  done
+  # A recreated endpoint was just built in the project directory, so polling for
+  # it to already be in the recorded worktree can only ever time out. Only an
+  # ADOPTED endpoint is worth waiting on.
+  if [ "$RELAUNCH_RECREATE_ENDPOINT" -ne 1 ]; then
+    for _ in $(seq 1 10); do
+      relaunch_seen=$(spawn_current_path "$WT_TARGET" || true)
+      [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ] || break
+      sleep 0.5
+    done
+  fi
   if [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ]; then
     # A recreated endpoint is BUILT in the project directory, so it is expected
     # to start outside the recorded worktree; telling it to cd there is the
@@ -3814,6 +3836,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_REPLACEMENT_PENDING=0
   SPAWN_META_PUBLISH_STARTED=0
   SPAWN_META_TMP=
+  RELAUNCH_RECREATED_ENDPOINT=0
 fi
 # A dispatch or relaunch keeps the per-task meta lock through launch delivery.
 # The backlog mutation is deliberately the final fallible commit below, so

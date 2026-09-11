@@ -115,13 +115,13 @@ The sanctioned recovery is one ordinary command per task:
 bin/fm-control.sh <task-id> relaunch --note "the session provider was restarted; pick up from the local copy"
 ```
 
-The launch owner recreates the endpoint in the recorded workspace with the same per-task wiring a fresh spawn builds, launches the replacement into it with the brief plus that progress note, and publishes the new endpoint in the same record transaction.
-The recorded worktree is reused as-is: nothing is reset, re-cloned, or reallocated, and no second local copy is created.
+The launch owner recreates the endpoint in this home's session container - the same one a fresh spawn uses, resolved from the launcher rather than from the record - with the same per-task wiring a fresh spawn builds, launches the replacement into it with the brief plus that progress note, and publishes the new endpoint in the same record transaction.
+The pane therefore does not come back where it was; what comes back from the record is the worktree, which is reused as-is: nothing is reset, re-cloned, or reallocated, and no second local copy is created.
 `exit` on such a task is idempotent success rather than a refusal, so the documented `exit` then `bin/fm-spawn.sh <id> --relaunch` sequence works too.
 
 A scout that was lost this way with no report written is the one case this cannot recover: its findings were never durable.
 `bin/fm-teardown.sh <id> --force` returns that stranded slot and prints one loud line saying the investigation is being discarded; without `--force` the report refusal stands.
-The notice is printed once every refusal `--force` does not skip has passed, so a cleanup that then refuses never claims a discard that did not happen.
+The notice is printed only after the worktree has actually been returned - past every refusal `--force` does not skip, including the leaked-process reap and the worktree return itself - so a cleanup that refuses instead never claims a discard that did not happen.
 
 ### What recovery does to Herdr presentation
 
