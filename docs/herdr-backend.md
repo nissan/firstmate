@@ -286,6 +286,13 @@ Unlike tmux process-name inspection, native registration can classify Pi without
 The session-start sweep uses this probe.
 Mid-session secondmate agent-process liveness is not implemented because idle secondmates are deliberately exempt from stale-pane escalation and need a separate periodic identity signal.
 
+A full server stop - the one a client/server version mismatch forces - leaves no pane behind at all, so every task in the home reads `missing` rather than `dead`.
+That is recoverable through the ordinary control plane rather than by hand, and [`agent-control.md`](agent-control.md#recovering-a-structurally-missing-endpoint) owns that recovery - the verbs, what is preserved, and the report-less scout whose slot only a forced cleanup can return.
+The Herdr-specific half is where the recreated endpoint is built: this home's session container, resolved from the launcher through `fm_backend_herdr_container_ensure`, never the workspace the gone record names.
+Recovery is scoped to the endpoint, because presentation is a viewing arrangement and never endpoint authority.
+A recovered task whose presentation journal survived is reclaimed into its own nested workspace; a recovered task whose journal is gone comes back in the ordinary flat container layout, because the projection path that builds a nested workspace is only taken for a task that has no record yet and a relaunch always has one.
+Such a task is fully recovered and fully controllable - it just presents flat until it is next spawned fresh.
+
 ## Push events and polling fallback
 
 Protocol 16 can subscribe to `pane.agent_status_changed` over one bounded Unix-socket reader.

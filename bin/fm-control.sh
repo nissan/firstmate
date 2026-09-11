@@ -30,9 +30,12 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
-#              Already-stopped is success (idempotent).
+#              Already-stopped is success (idempotent), and so is an endpoint
+#              that is structurally gone: an agent cannot outlive the pane it
+#              ran in, so there is nothing to stop and nothing to change.
 #   relaunch   Transactionally replace the running agent with a new one, in the
-#              SAME endpoint and SAME worktree, on the same or a newly chosen
+#              SAME worktree and - where it still exists - the SAME endpoint,
+#              on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
 #              of this verb. An explicit `default` model or effort clears that
 #              axis for the replacement. With no explicit axis, a secondmate
@@ -40,6 +43,14 @@
 #              plus its optional model and effort tokens) exactly as any other
 #              respawn does, while a ship or scout keeps the exact adapter
 #              already recorded for it.
+#              When the recorded endpoint is structurally gone (the classifier
+#              reads `missing`, as every task in a home does after its session
+#              provider is restarted), the launch owner recreates one in this
+#              home's session container - the same one a fresh spawn uses, not
+#              the container the record names - with the same per-task wiring,
+#              and publishes it in the same record transaction. What comes back
+#              from the record is the WORKTREE: it and every uncommitted change
+#              in it are reused untouched; nothing is reset or re-cloned.
 #              A prefixed raw-command basename cannot reconstruct its launch
 #              command, so relaunch requires an explicit --harness for it.
 #              --note is required for a ship or scout, whose replacement
@@ -456,7 +467,16 @@ do_exit() {
       return 0
       ;;
     alive) ;;
-    missing) die "task $ID's recorded endpoint is gone, so there is no agent to stop; reconcile the task before any further control action" ;;
+    missing)
+      # The endpoint the record names is authoritatively absent - a session
+      # provider was restarted, or the pane was closed out from under the task.
+      # An agent cannot outlive the endpoint it ran in, so there is nothing
+      # left to stop and nothing for this verb to change: report the state
+      # honestly and succeed, so the documented exit-then-relaunch recovery is
+      # not blocked by a stop that had no work to do (issue #9).
+      printf 'already-stopped'
+      return 0
+      ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle command into an unattributed endpoint" ;;
   esac
   # A busy agent is interrupted first before the exit command is submitted.
@@ -524,6 +544,13 @@ TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
 
+# journal_write: replace the journal with one record for <phase>. The caller
+# replays CHECKPOINT_LINES into every phase, so the fields safe_checkpoint
+# proved are the SAME bytes in each record: in particular
+# pre_exit_endpoint_state is the classifier state read once, before the agent
+# was stopped, and it is deliberately not refreshed in the later records - a
+# `complete` record still reporting `missing` is the durable evidence of why
+# the exit half of this transaction had no agent to stop.
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
   shift
@@ -724,7 +751,8 @@ safe_checkpoint() {
   else
     dirty=no
   fi
-  CHECKPOINT_LINES+=("worktree_head=$head" "worktree_dirty=$dirty")
+  CHECKPOINT_LINES+=("worktree_head=$head" "worktree_dirty=$dirty" \
+    "pre_exit_endpoint_state=$(agent_state)")
   if [ "$KIND" = secondmate ]; then
     # A secondmate's own crewmates outlive its relaunch: they run in their own
     # endpoints, and the relaunched secondmate reconciles them from its home's
@@ -842,6 +870,20 @@ do_relaunch() {
     [ "$(fm_meta_get "$META" control_relaunch_tx)" != "$RELAUNCH_TX" ] \
       || RELAUNCH_META_PUBLISHED=1
     die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
+  fi
+
+  # The launch owner recreates a structurally missing endpoint rather than
+  # adopting it, and publishes the new one in the same record transaction, so
+  # the endpoint this side verifies against has to be re-read from the record
+  # before the replacement's liveness is judged - otherwise a successful
+  # recovery would be reported as a failure against an endpoint that no longer
+  # exists.
+  if fm_backend_validate_task_endpoint "$META" "$ID"; then
+    [ "$FM_BACKEND_VALIDATED_BACKEND" = "$BACKEND" ] \
+      || die "$ID's replacement was launched but its record now names backend '$FM_BACKEND_VALIDATED_BACKEND' rather than '$BACKEND'; its work is preserved at $WT"
+    T=$FM_BACKEND_VALIDATED_TARGET
+  else
+    die "$ID's replacement was launched but its published endpoint cannot be read back; its work is preserved at $WT"
   fi
 
   state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {

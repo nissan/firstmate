@@ -92,6 +92,12 @@ case "${1:-}" in
         'export TRACEPARENT='*)
           [ -z "${FM_FAKE_TRACE_EXPORTED:-}" ] || : > "$FM_FAKE_TRACE_EXPORTED"
           ;;
+        'cd -- '*)
+          # FM_FAKE_CD_IGNORED models a shell that never reaches the recorded
+          # worktree, so the caller's own post-cd confirmation is what fails.
+          cdpath=${payload#cd -- \'}
+          [ -n "${FM_FAKE_CD_IGNORED:-}" ] || printf '%s' "${cdpath%\'}" > "$D/cwd"
+          ;;
       esac
     fi
     exit 0 ;;
@@ -111,6 +117,43 @@ case "${1:-}" in
     printf 'fakepane\n'; exit 0 ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
   list-windows) [ -f "$D/windows" ] && cat "$D/windows"; exit 0 ;;
+  has-session) exit 0 ;;
+  new-window)
+    # Model window creation the way fm_backend_tmux_create_task consumes it: a
+    # stable window id on stdout, and the new name joining the session
+    # inventory so the endpoint classifier stops reading the task as missing.
+    shift
+    wname=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -n) wname=${2:-}; shift 2 ;;
+        -t|-c|-F) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$wname" ] || printf '%s\n' "$wname" >> "$D/windows"
+    printf '@%s\n' "${RANDOM}"
+    exit 0 ;;
+  kill-window)
+    # The inventory is the session's truth, so a closed window has to leave it -
+    # otherwise nothing here can tell an orphan endpoint from a cleaned-up one.
+    shift
+    target=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -t) target=${2:-}; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    wname=${target#*:}
+    wname=${wname#=}
+    if [ -n "$wname" ] && [ -f "$D/windows" ]; then
+      grep -vFx "$wname" "$D/windows" > "$D/windows.next" || true
+      cat "$D/windows.next" > "$D/windows"
+      rm -f "$D/windows.next"
+    fi
+    exit 0 ;;
+  set-window-option) exit 0 ;;
 esac
 exit 0
 SH
@@ -185,6 +228,7 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_TRACE_RELEASE="${FM_FAKE_TRACE_RELEASE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
+    FM_FAKE_CD_IGNORED="${FM_FAKE_CD_IGNORED:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -197,6 +241,7 @@ run_spawn() {  # <case-dir> <args...>
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
+    FM_FAKE_CD_IGNORED="${FM_FAKE_CD_IGNORED:-}" \
     "$SPAWN" "$@" 2>&1
 }
 
@@ -1558,6 +1603,135 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
   pass "relaunch heals an item that drifted out of In flight while the task stayed live"
 }
 
+# --- 7. a structurally missing endpoint is recoverable -----------------------
+#
+# After a session provider restarts, every task in the home reads `missing`:
+# the pane, tab, or window the record names is authoritatively gone. Nothing
+# can still be running in an endpoint that does not exist, so this is the same
+# positive agent-free proof `dead` is - and the recorded worktree, with every
+# uncommitted change in it, is still exactly where the previous worker left it.
+# Relaunch therefore recreates the endpoint instead of refusing (issue #9).
+#
+# Coverage here is tmux-only: this suite is hermetic (stubbed session provider,
+# no real agent), and exercising the same path on Herdr would mean driving a
+# real Herdr server's lifecycle, which belongs in a `--herdr-lab` guarded test
+# rather than here. Both backends reach the same shared decision in
+# bin/fm-spawn.sh; only the create-the-endpoint half differs per adapter.
+
+# make_endpoint_missing <case-dir>: empty the session inventory, so the task's
+# recorded window is authoritatively absent rather than merely agent-less.
+make_endpoint_missing() {  # <case-dir>
+  : > "$1/fake/windows"
+}
+
+test_relaunch_recreates_a_structurally_missing_endpoint() {
+  local dir out rc window
+  dir=$(new_case missing-endpoint rl50)
+  add_ship_task "$dir" rl50 claude
+  # Uncommitted work the recovery must not touch, plus a committed one so both
+  # halves of "preserve the local copy" are pinned.
+  printf 'half-finished edit\n' > "$dir/wt/uncommitted.txt"
+  cp "$dir/wt/uncommitted.txt" "$dir/uncommitted.expected"
+  # A recreated endpoint is built in the project, not the worktree: start the
+  # pane there so the recovery has to steer it back into the recorded copy.
+  printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rl50 relaunch --note "session provider restarted"); rc=$?
+  expect_code 0 "$rc" "a relaunch onto a structurally missing endpoint should recover it"$'\n'"$out"
+  assert_contains "$out" "relaunched rl50 harness=claude from=claude" \
+    "the outcome should name the completed transition"
+
+  window=$(meta_field "$dir" rl50 window)
+  [ -n "$window" ] && [ "$window" != "fmses:fm-rl50" ] \
+    || fail "the record still names the gone endpoint '$window' instead of the recreated one"
+  case "$window" in
+    *:fm-rl50) ;;
+    *) fail "the recreated endpoint '$window' is not this task's own window" ;;
+  esac
+  assert_grep "fm-rl50" "$dir/fake/windows" "the endpoint should have been recreated in the session"
+
+  [ "$(meta_field "$dir" rl50 worktree)" = "$dir/wt" ] \
+    || fail "the recorded local copy must be reused, not reallocated"
+  cmp -s "$dir/uncommitted.expected" "$dir/wt/uncommitted.txt" \
+    || fail "the uncommitted change did not survive the recovery byte-identically"
+  [ "$(journal_field "$dir" rl50 phase)" = complete ] \
+    || fail "the transaction journal should end complete"
+  [ "$(journal_field "$dir" rl50 pre_exit_endpoint_state)" = missing ] \
+    || fail "the journal should record that the endpoint was gone when the work was checkpointed"
+  assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement should have been launched"
+  assert_grep "session provider restarted" "$dir/home/data/rl50/brief.md" \
+    "the replacement's instructions should carry the progress note"
+  pass "fm-control relaunch: a structurally missing endpoint is recreated and the local copy is preserved"
+}
+
+test_exit_on_a_missing_endpoint_is_idempotent_success() {
+  local dir out rc before after
+  dir=$(new_case missing-exit rl51)
+  add_ship_task "$dir" rl51 claude
+  make_endpoint_missing "$dir"
+  before=$(cat "$dir/home/state/rl51.meta")
+
+  out=$(run_control "$dir" rl51 exit); rc=$?
+  expect_code 0 "$rc" "exiting a gone endpoint should succeed; there is nothing to stop"$'\n'"$out"
+  assert_contains "$out" "already-stopped rl51" "the outcome should report the agent as already stopped"
+  after=$(cat "$dir/home/state/rl51.meta")
+  [ "$before" = "$after" ] || fail "exit on a gone endpoint changed the durable record"
+  [ ! -s "$dir/fake/literal" ] || fail "exit on a gone endpoint sent a command into it"
+  pass "fm-control exit: a structurally missing endpoint is idempotent success"
+}
+
+# A recreate-relaunch builds a real endpoint in the middle of the transaction.
+# If the transaction then aborts, that endpoint must not survive: the record
+# still names the OLD gone one, so nothing else will ever learn the new one
+# exists, and the task's own window name is now taken. The retry is then
+# stranded a second time - behind an orphan only manual surgery could clear -
+# which is exactly the outcome the recovery verb exists to prevent.
+test_an_aborted_recreate_relaunch_leaves_no_orphan_endpoint() {
+  local dir out rc
+  dir=$(new_case orphan-endpoint rl53)
+  add_ship_task "$dir" rl53 claude
+  printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  make_endpoint_missing "$dir"
+
+  FM_FAKE_CD_IGNORED=1
+  out=$(run_control "$dir" rl53 relaunch --note "session provider restarted"); rc=$?
+  FM_FAKE_CD_IGNORED=
+  expect_code 1 "$rc" "a replacement that never reaches the recorded worktree must fail"$'\n'"$out"
+  [ "$(meta_field "$dir" rl53 window)" = "fmses:fm-rl53" ] \
+    || fail "an aborted relaunch rewrote the durable record to '$(meta_field "$dir" rl53 window)'"
+  if grep -qx "fm-rl53" "$dir/fake/windows"; then
+    fail "the endpoint the aborted relaunch created was left running in the session"
+  fi
+
+  # The retry is the whole point: recovery through the control plane has to stay
+  # available after a failed attempt.
+  printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  out=$(run_control "$dir" rl53 relaunch --note "retry after the aborted recovery"); rc=$?
+  expect_code 0 "$rc" "the retry must recover the task rather than collide with an orphan"$'\n'"$out"
+  assert_grep "fm-rl53" "$dir/fake/windows" "the retry should have recreated the endpoint"
+  case "$(meta_field "$dir" rl53 window)" in
+    *:fm-rl53) ;;
+    *) fail "the retry did not publish a recreated endpoint for the task" ;;
+  esac
+  pass "fm-control relaunch: an aborted recreate closes its endpoint, so the retry still recovers the task"
+}
+
+test_documented_exit_then_relaunch_sequence_recovers_a_missing_endpoint() {
+  local dir out rc
+  dir=$(new_case missing-sequence rl52)
+  add_ship_task "$dir" rl52 claude
+  printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  make_endpoint_missing "$dir"
+
+  out=$(run_control "$dir" rl52 exit); rc=$?
+  expect_code 0 "$rc" "the documented first step must not refuse"$'\n'"$out"
+  out=$(run_spawn "$dir" rl52 --relaunch --harness claude); rc=$?
+  expect_code 0 "$rc" "the documented second step must not refuse"$'\n'"$out"
+  assert_grep "fm-rl52" "$dir/fake/windows" "the launch owner should have recreated the endpoint"
+  pass "fm-control/fm-spawn: the documented exit-then-relaunch recovery is no longer circular"
+}
+
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_from_linked_home_preserves_recorded_worktree
 test_relaunch_preserves_durable_task_metadata
@@ -1611,3 +1785,7 @@ test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
+test_relaunch_recreates_a_structurally_missing_endpoint
+test_an_aborted_recreate_relaunch_leaves_no_orphan_endpoint
+test_exit_on_a_missing_endpoint_is_idempotent_success
+test_documented_exit_then_relaunch_sequence_recovers_a_missing_endpoint
