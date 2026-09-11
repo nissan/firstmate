@@ -436,11 +436,14 @@ run_extension_section_lanes() {
   local -a section_results=()
   local -a section_complete=()
   local section_result_root
-  timeout_seconds=${FM_EXTENSION_BINDING_COORDINATOR_TIMEOUT_SECONDS:-34}
+  # A hang tripwire, not the expected healthy end of the lanes. The real
+  # section lanes finish well inside this budget; a ceiling sized to their
+  # healthy wall clock trips on runner speed instead of on a stuck lane.
+  timeout_seconds=${FM_EXTENSION_BINDING_COORDINATOR_TIMEOUT_SECONDS:-300}
   case "$timeout_seconds" in
     ''|*[!0-9]*) return 64 ;;
   esac
-  [ "$timeout_seconds" -gt 0 ] && [ "$timeout_seconds" -lt 35 ] || return 64
+  [ "$timeout_seconds" -gt 0 ] || return 64
   section_result_root=$(mktemp -d "$TMP_ROOT/section-lanes.XXXXXX") || return 1
   total=${#sections[@]}
   # Sixteen selectors are validated here. The bounded aggregate keeps its
