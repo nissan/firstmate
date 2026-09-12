@@ -923,6 +923,7 @@ RELAUNCH_REPLACEMENT_STATE=
 RELAUNCH_REPLACEMENT_WT=
 CONFIG_INHERIT_LOCK=
 CONFIG_INHERIT_LOCK_HELD=0
+CLAUDE_REVIEW_ACK_HELPER=
 
 spawn_fresh_commit_rollback() {
   if fm_backlog_atomic_transition rollback "$STATE/$ID.meta" \
@@ -953,6 +954,9 @@ parse_orca_worktree_result() {
 
 spawn_abort_cleanup() {
   local status=$?
+  if [ "$status" -ne 0 ] && [ -n "$CLAUDE_REVIEW_ACK_HELPER" ]; then
+    rm -f -- "$CLAUDE_REVIEW_ACK_HELPER" 2>/dev/null || true
+  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] \
      && [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] \
      && [ -n "$SPAWN_META_TMP" ] \
@@ -2345,12 +2349,24 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   SOURCE_BRIEF=$BRIEF
   BRIEF="$DATA/$ID/launch-brief.md"
   BRIEF_TMP="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"
+  CLAUDE_REVIEW_BRIEF_ACK_HELPER=
+  if [ "$CLAUDE_REVIEW_ACTIVE" = 1 ]; then
+    review_state_real=$(cd "$STATE" && pwd -P) || exit 1
+    CLAUDE_REVIEW_BRIEF_ACK_HELPER="$review_state_real/$ID.claude-review-ack.sh"
+  fi
   {
     cat "$SOURCE_BRIEF" &&
       printf '\n' &&
       fm_brief_worker_role &&
       if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
         fm_brief_intent_overlay "$CAPTAIN_INTENT"
+      fi &&
+      if [ "$CLAUDE_REVIEW_ACTIVE" = 1 ]; then
+        printf '%s\n' '' '## Claude review inbox acknowledgement' '' \
+          "For this permission-restricted review, do not run the scaffold's mv command directly." \
+          "After reading this task's own pending inbox message, acknowledge exactly one oldest message by running this no-argument helper:" \
+          "  $CLAUDE_REVIEW_BRIEF_ACK_HELPER" \
+          'Run it once per handled message; it cannot accept arguments or access another task.'
       fi
   } > "$BRIEF_TMP" || { rm -f -- "$BRIEF_TMP"; echo "error: could not render current launch contract for $SOURCE_BRIEF" >&2; exit 1; }
   if ! mv "$BRIEF_TMP" "$BRIEF"; then
@@ -3932,6 +3948,55 @@ MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
 if [ "$CLAUDE_REVIEW_ACTIVE" -eq 1 ]; then
   DATA_REAL=$(cd "$DATA" && pwd -P) || exit 1
+  CLAUDE_REVIEW_ACK_HELPER="$STATE_REAL/$ID.claude-review-ack.sh"
+  claude_review_ack_tmp="$STATE_REAL/.$ID.claude-review-ack.${BASHPID:-$$}"
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'set -eu'
+    printf 'EXPECTED_HELPER=%s\n' "$(shell_quote "$CLAUDE_REVIEW_ACK_HELPER")"
+    printf 'STATE=%s\n' "$(shell_quote "$STATE_REAL")"
+    printf 'ID=%s\n' "$(shell_quote "$ID")"
+    cat <<'CLAUDE_REVIEW_ACK'
+[ "$#" -eq 0 ] || { echo "error: review acknowledgement helper accepts no arguments" >&2; exit 2; }
+[ "$0" = "$EXPECTED_HELPER" ] || { echo "error: review acknowledgement helper must be invoked by its exact absolute path" >&2; exit 1; }
+[ ! -L "$EXPECTED_HELPER" ] && [ -f "$EXPECTED_HELPER" ] || { echo "error: review acknowledgement helper identity is unsafe" >&2; exit 1; }
+state_real=$(cd -P -- "$STATE" 2>/dev/null && pwd -P) || { echo "error: review state path is unreadable" >&2; exit 1; }
+[ "$state_real" = "$STATE" ] || { echo "error: review state path is ambiguous" >&2; exit 1; }
+META="$STATE/$ID.meta"
+[ -f "$META" ] && [ ! -L "$META" ] || { echo "error: review task record is missing or unsafe" >&2; exit 1; }
+[ "$(sed -n 's/^endpoint_task_id=//p' "$META")" = "$ID" ] \
+  && [ "$(sed -n 's/^kind=//p' "$META")" = scout ] \
+  && [ "$(sed -n 's/^harness=//p' "$META")" = claude ] \
+  && [ "$(sed -n 's/^claude_review=//p' "$META")" = on ] \
+  || { echo "error: review task identity does not match this helper" >&2; exit 1; }
+INBOX="$STATE/$ID.inbox"
+HANDLED="$INBOX/handled"
+[ -e "$INBOX" ] || exit 0
+[ -d "$INBOX" ] && [ ! -L "$INBOX" ] || { echo "error: review inbox is unsafe" >&2; exit 1; }
+[ -d "$HANDLED" ] && [ ! -L "$HANDLED" ] || { echo "error: review handled inbox is unsafe" >&2; exit 1; }
+LOCK="$STATE/.$ID.claude-review-ack.lock"
+mkdir "$LOCK" 2>/dev/null || { echo "error: review acknowledgement is already running" >&2; exit 1; }
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT HUP INT TERM
+oldest=
+for candidate in "$INBOX"/*.msg; do
+  [ -e "$candidate" ] || continue
+  [ -f "$candidate" ] && [ ! -L "$candidate" ] \
+    || { echo "error: review inbox message is unsafe" >&2; exit 1; }
+  name=${candidate##*/}
+  printf '%s\n' "$name" | grep -Eq '^[0-9]+[.]msg$' \
+    || { echo "error: review inbox message name is ambiguous" >&2; exit 1; }
+  if [ -z "$oldest" ] || [ "$candidate" \< "$oldest" ]; then oldest=$candidate; fi
+done
+[ -n "$oldest" ] || exit 0
+destination="$HANDLED/${oldest##*/}"
+[ ! -e "$destination" ] && [ ! -L "$destination" ] \
+  || { echo "error: review inbox acknowledgement already exists" >&2; exit 1; }
+mv -- "$oldest" "$destination"
+CLAUDE_REVIEW_ACK
+  } > "$claude_review_ack_tmp" || { rm -f -- "$claude_review_ack_tmp"; exit 1; }
+  chmod 0700 "$claude_review_ack_tmp" || { rm -f -- "$claude_review_ack_tmp"; exit 1; }
+  mv -f -- "$claude_review_ack_tmp" "$CLAUDE_REVIEW_ACK_HELPER" || { rm -f -- "$claude_review_ack_tmp"; exit 1; }
+  [ ! -L "$CLAUDE_REVIEW_ACK_HELPER" ] || { echo "error: Claude review acknowledgement helper publication produced a symlink" >&2; exit 1; }
+
   claude_review_statuses=("$STATE/$ID.status")
   claude_review_reports=("$DATA/$ID/report.md")
   claude_review_inboxes=("$STATE/$ID.inbox")
@@ -3956,12 +4021,12 @@ if [ "$CLAUDE_REVIEW_ACTIVE" -eq 1 ]; then
     claude_review_escaped=$(printf '%s' "$claude_review_inbox" | sed 's/[][*?\\]/\\&/g')
     for claude_review_rule in \
       "Read(/$claude_review_escaped/**)" \
-      "Glob(/$claude_review_escaped/*.msg)" \
-      "Bash(mv $claude_review_inbox/*.msg $claude_review_inbox/handled/*.msg)" \
-      "Bash(mv '$claude_review_inbox/*.msg' '$claude_review_inbox/handled/*.msg')"; do
+      "Glob(/$claude_review_escaped/*.msg)"; do
       CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
     done
   done
+  claude_review_rule="Bash($CLAUDE_REVIEW_ACK_HELPER)"
+  CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
 else
   CLAUDEPERMISSIONS='--dangerously-skip-permissions '
 fi

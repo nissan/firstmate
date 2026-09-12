@@ -492,8 +492,9 @@ fm_test_claude_review_permissions() {
     rules+=" 'Bash(echo * >> '\''$status'\'')'"
   done
   for inbox in "${inboxes[@]}"; do
-    rules+=" 'Read(/$inbox/**)' 'Glob(/$inbox/*.msg)' 'Bash(mv $inbox/*.msg $inbox/handled/*.msg)' 'Bash(mv '\''$inbox/*.msg'\'' '\''$inbox/handled/*.msg'\'')'"
+    rules+=" 'Read(/$inbox/**)' 'Glob(/$inbox/*.msg)'"
   done
+  rules+=" 'Bash($state_real/$id.claude-review-ack.sh)'"
   printf 'claude --permission-mode default --allowedTools%s --settings' "$rules"
 }
 

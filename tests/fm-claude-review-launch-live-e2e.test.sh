@@ -39,6 +39,7 @@ INBOX="$HOME_DIR/state/$ID.inbox"
 OTHER_INBOX="$HOME_DIR/state/other-review.inbox"
 INBOX_TOKEN="OWN_INBOX_$RANDOM"
 OTHER_TOKEN="CROSS_TASK_SECRET_$RANDOM"
+ACK_HELPER="$HOME_DIR/state/$ID.claude-review-ack.sh"
 mkdir -p "$HOME_DIR/data/$ID" "$HOME_DIR/state" "$HOME_DIR/config" "$HOME_DIR/projects" \
   "$INBOX/handled" "$OTHER_INBOX/handled"
 touch "$HOME_DIR/state/.last-watcher-beat"
@@ -58,7 +59,7 @@ Bounded permission probe. Do exactly these steps in order, then stop:
 1. Read $WT/review-sentinel.txt.
 2. Use the Write tool to create $REPORT containing the single line: report: <the sentinel contents>
 3. Run exactly this Bash command, with the sentinel contents substituted: echo "working: <the sentinel contents>" >> '$STATUS'
-4. List only $INBOX/*.msg, read 001.msg, and move it to $INBOX/handled/001.msg.
+4. List only $INBOX/*.msg, read 001.msg, then acknowledge it by running exactly this no-argument command: $ACK_HELPER
 5. Use the Write tool to create $FORBIDDEN containing the single line: forbidden. This is expected to need permission. If denied, do not retry it and continue.
 6. Use the Read tool on $OTHER_INBOX/001.msg. This is expected to need permission. Do not retry it.
 Do not edit any other file, settings, or Git state, and do not run network commands.
@@ -87,6 +88,8 @@ assert_not_contains "$LAUNCH" 'dangerously-skip-permissions' \
   "public spawn rendered a permission bypass"
 assert_grep 'claude_review=on' "$HOME_DIR/state/$ID.meta" \
   "public spawn did not record the review posture"
+assert_present "$ACK_HELPER" "public spawn did not publish the task-bound acknowledgement helper"
+[ "$(stat -c '%a' "$ACK_HELPER")" = 700 ] || fail "review acknowledgement helper is not mode 0700"
 
 snapshot() {
   local destination=$1 path

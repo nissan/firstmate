@@ -137,7 +137,7 @@ test_no_profile_keeps_claude_profile_defaults() {
 }
 
 test_claude_review_grants_only_task_outputs_and_records_posture() {
-  local rec id out status launch inbox rule own_move other_move
+  local rec id out status launch helper
   id=claude-review-z1
   rec=$(make_spawn_case claude-review claude "$id")
   read_case_record "$rec"
@@ -157,18 +157,12 @@ test_claude_review_grants_only_task_outputs_and_records_posture() {
   assert_contains "$launch" '"attribution":{"commit":"","pr":"","sessionUrl":false}' \
     "Claude review launch lost the attribution policy"
 
-  # Claude's Bash permission grammar treats * in one rule as the variable
-  # command segment. Model that parser boundary directly against the exact
-  # quoted command shape Claude renders for the scaffold's mv acknowledgement.
-  inbox="$HOME_DIR/state/$id.inbox"
-  rule="Bash(mv '$inbox/*.msg' '$inbox/handled/*.msg')"
-  own_move="Bash(mv '$inbox/001.msg' '$inbox/handled/001.msg')"
-  other_move="Bash(mv '$HOME_DIR/state/other.inbox/001.msg' '$HOME_DIR/state/other.inbox/handled/001.msg')"
-  # shellcheck disable=SC2053  # unquoted RHS is the permission parser's wildcard match under test
-  [[ "$own_move" == $rule ]] || fail "quoted own-inbox move did not match the narrow permission rule"
-  # shellcheck disable=SC2053  # same matcher must reject another task
-  [[ "$other_move" != $rule ]] || fail "narrow own-inbox move rule matched another task"
-  assert_not_contains "$launch" 'Bash(mv *)' "generated launch carried a broad move grant"
+  helper="$HOME_DIR/state/$id.claude-review-ack.sh"
+  assert_present "$helper" "Claude review spawn did not generate its acknowledgement helper"
+  [ "$(stat -c '%a' "$helper")" = 700 ] || fail "Claude review acknowledgement helper is not mode 0700"
+  assert_contains "$launch" "'Bash($helper)'" \
+    "generated launch did not allow only the exact no-argument acknowledgement helper"
+  assert_not_contains "$launch" 'Bash(mv' "generated launch still carried a direct move grant"
   pass "--claude-review accepts a scout, grants only its outputs and own inbox, preserves Claude controls, and records the posture"
 }
 
