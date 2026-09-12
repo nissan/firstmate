@@ -19,6 +19,7 @@ LAB=$(mktemp -d "${TMPDIR:-/tmp}/fm-claude-review-live.XXXXXX")
 SOCKET="fm-claude-review-$$"
 SESSION=reviewlive
 TIMEOUT=${FM_CLAUDE_REVIEW_LIVE_TIMEOUT:-240}
+CROSS_ONLY=${FM_CLAUDE_REVIEW_LIVE_CROSS_ONLY:-0}
 
 cleanup() {
   tmux -L "$SOCKET" kill-server 2>/dev/null || true
@@ -152,16 +153,17 @@ RUNNER="$LAB/run-review.sh"
   printf '%s\n' "$LAUNCH"
 } > "$RUNNER"
 chmod +x "$RUNNER"
-tmux -L "$SOCKET" new-session -d -s "$SESSION" -x 220 -y 50 -- "$RUNNER"
-
-wait_until review_outputs_written \
-  || live_fail "the sentinel did not reach the status line and report without a prompt within ${TIMEOUT}s"
-wait_until project_write_prompted \
-  || live_fail "the attempted project write did not stop at a permission prompt within ${TIMEOUT}s"
-[ ! -e "$FORBIDDEN" ] || live_fail "the attempted project write landed without authority"
-tmux -L "$SOCKET" send-keys -t "$SESSION" Escape
-tmux -L "$SOCKET" kill-server 2>/dev/null || true
-[ ! -e "$FORBIDDEN" ] || live_fail "the attempted project write landed without authority"
+if [ "$CROSS_ONLY" != 1 ]; then
+  tmux -L "$SOCKET" new-session -d -s "$SESSION" -x 220 -y 50 -- "$RUNNER"
+  wait_until review_outputs_written \
+    || live_fail "the sentinel did not reach the status line and report without a prompt within ${TIMEOUT}s"
+  wait_until project_write_prompted \
+    || live_fail "the attempted project write did not stop at a permission prompt within ${TIMEOUT}s"
+  [ ! -e "$FORBIDDEN" ] || live_fail "the attempted project write landed without authority"
+  tmux -L "$SOCKET" send-keys -t "$SESSION" Escape
+  tmux -L "$SOCKET" kill-server 2>/dev/null || true
+  [ ! -e "$FORBIDDEN" ] || live_fail "the attempted project write landed without authority"
+fi
 
 # A rejected permission ends Claude's turn, so cross-task isolation is a
 # separate fresh session using the same public-spawn command and grants.
@@ -183,5 +185,9 @@ cmp -s "$LAB/before" "$LAB/after" || {
   diff -u "$LAB/before" "$LAB/after" >&2 || true
   exit 1
 }
-printf 'ok - Claude %s: scout review read its target, wrote only its outputs, acknowledged its own inbox, denied project/cross-task access, and preserved repository/settings state\n' \
-  "$CLAUDE_VERSION"
+if [ "$CROSS_ONLY" = 1 ]; then
+  printf 'ok - Claude %s: a fresh restricted review session denied another task inbox and preserved repository/settings state\n' "$CLAUDE_VERSION"
+else
+  printf 'ok - Claude %s: scout review read its target, wrote only its outputs, acknowledged its own inbox, denied project/cross-task access, and preserved repository/settings state\n' \
+    "$CLAUDE_VERSION"
+fi
