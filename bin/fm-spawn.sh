@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--claude-review]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--claude-review]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -61,15 +61,16 @@
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
 #   --claude-review is an opt-in task launch posture for an independent Claude
 #   reviewer. It replaces Claude's ordinary permission bypass with
-#   `--permission-mode default` plus `--allowedTools` Edit rules naming only
-#   this task's state/<id>.status and data/<id>/report.md, so the brief's status
-#   append and report writes proceed while every other edit, mutating command,
-#   or push still waits on Claude's own permission prompt. It preserves the
-#   launch's trust registration, feedback controls, hooks, model, effort,
-#   environment, and backend behavior. It is accepted only for a canonical
-#   Claude ship or scout launch (never a raw launch command), recorded as
-#   claude_review=on, and preserved by a same-harness relaunch. A relaunch may
-#   opt an existing Claude task in explicitly; switching a recorded review task
+#   `--permission-mode default` plus exact `--allowedTools` rules naming only
+#   this scout's status, report, and own inbox intake/acknowledgement paths.
+#   Those durable outputs proceed while every project edit, unrelated task
+#   path, other mutating command, or push still waits on Claude's own permission
+#   prompt. It preserves the launch's trust registration, feedback controls,
+#   hooks, model, effort, environment, and backend behavior. It is accepted
+#   only for a canonical Claude scout launch (never a ship, secondmate, or raw
+#   launch command), recorded as claude_review=on, and preserved by a same-
+#   harness relaunch. A relaunch may opt an existing Claude scout in explicitly;
+#   switching a recorded review task
 #   to another harness is refused before launch rather than silently weakening
 #   its permissions. Ordinary Claude launches remain unchanged.
 #   --backend <name> is the explicit runtime session-provider backend for this
@@ -570,8 +571,8 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
 else
-  [ "$CLAUDE_REVIEW_REQUESTED" -eq 0 ] || [ "$KIND" != secondmate ] || {
-    echo "error: --claude-review is task-scoped and cannot launch a persistent secondmate" >&2
+  [ "$CLAUDE_REVIEW_REQUESTED" -eq 0 ] || [ "$KIND" = scout ] || {
+    echo "error: --claude-review is scout-only and cannot launch a ship or persistent secondmate" >&2
     exit 1
   }
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
@@ -1740,8 +1741,8 @@ if [ "$CLAUDE_REVIEW_ACTIVE" -eq 1 ]; then
     echo "error: --claude-review and recorded claude_review=on apply only to the claude harness, not '$HARNESS'" >&2
     exit 1
   }
-  [ "$KIND" != secondmate ] || {
-    echo "error: --claude-review is task-scoped and cannot launch a persistent secondmate" >&2
+  [ "$KIND" = scout ] || {
+    echo "error: --claude-review is scout-only and cannot launch a ship or persistent secondmate" >&2
     exit 1
   }
   [ "$RAW_LAUNCH" = 0 ] || {
@@ -3931,13 +3932,35 @@ MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
 if [ "$CLAUDE_REVIEW_ACTIVE" -eq 1 ]; then
   DATA_REAL=$(cd "$DATA" && pwd -P) || exit 1
-  claude_review_outputs=("$STATE/$ID.status" "$DATA/$ID/report.md")
-  [ "$STATE_REAL" = "$STATE" ] || claude_review_outputs+=("$STATE_REAL/$ID.status")
-  [ "$DATA_REAL" = "$DATA" ] || claude_review_outputs+=("$DATA_REAL/$ID/report.md")
+  claude_review_statuses=("$STATE/$ID.status")
+  claude_review_reports=("$DATA/$ID/report.md")
+  claude_review_inboxes=("$STATE/$ID.inbox")
+  [ "$STATE_REAL" = "$STATE" ] || {
+    claude_review_statuses+=("$STATE_REAL/$ID.status")
+    claude_review_inboxes+=("$STATE_REAL/$ID.inbox")
+  }
+  [ "$DATA_REAL" = "$DATA" ] || claude_review_reports+=("$DATA_REAL/$ID/report.md")
   CLAUDEPERMISSIONS='--permission-mode default --allowedTools '
-  for claude_review_output in "${claude_review_outputs[@]}"; do
-    claude_review_rule="Edit(/$(printf '%s' "$claude_review_output" | sed 's/[][*?\\]/\\&/g'))"
+  for claude_review_output in "${claude_review_statuses[@]}" "${claude_review_reports[@]}"; do
+    claude_review_escaped=$(printf '%s' "$claude_review_output" | sed 's/[][*?\\]/\\&/g')
+    for claude_review_tool in Edit Write; do
+      claude_review_rule="$claude_review_tool(/$claude_review_escaped)"
+      CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
+    done
+  done
+  for claude_review_status in "${claude_review_statuses[@]}"; do
+    claude_review_rule="Bash(echo * >> '$claude_review_status')"
     CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
+  done
+  for claude_review_inbox in "${claude_review_inboxes[@]}"; do
+    claude_review_escaped=$(printf '%s' "$claude_review_inbox" | sed 's/[][*?\\]/\\&/g')
+    for claude_review_rule in \
+      "Read(/$claude_review_escaped/**)" \
+      "Glob(/$claude_review_escaped/*.msg)" \
+      "Bash(mv $claude_review_inbox/*.msg $claude_review_inbox/handled/*.msg)" \
+      "Bash(mv '$claude_review_inbox/*.msg' '$claude_review_inbox/handled/*.msg')"; do
+      CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
+    done
   done
 else
   CLAUDEPERMISSIONS='--dangerously-skip-permissions '

@@ -349,6 +349,7 @@ test_claude_review_relaunch_preserves_or_explicitly_adds_posture() {
 
   dir=$(new_case review-preserved rv1)
   add_ship_task "$dir" rv1 claude
+  sed -i 's/^kind=ship$/kind=scout/' "$dir/home/state/rv1.meta"
   printf '%s\n' 'claude_review=on' >> "$dir/home/state/rv1.meta"
   out=$(run_control "$dir" rv1 relaunch --note "continue exact-head review"); rc=$?
   expect_code 0 "$rc" "a Claude review relaunch should preserve its posture"$'\n'"$out"
@@ -362,6 +363,7 @@ test_claude_review_relaunch_preserves_or_explicitly_adds_posture() {
 
   dir=$(new_case review-opt-in rv2)
   add_ship_task "$dir" rv2 claude
+  sed -i 's/^kind=ship$/kind=scout/' "$dir/home/state/rv2.meta"
   out=$(run_control "$dir" rv2 relaunch --claude-review --note "resume as independent reviewer"); rc=$?
   expect_code 0 "$rc" "control should opt an existing Claude task into review posture"$'\n'"$out"
   launch=$(cat "$dir/fake/literal")
@@ -369,13 +371,14 @@ test_claude_review_relaunch_preserves_or_explicitly_adds_posture() {
     "explicit control opt-in did not launch Claude with its scoped Manual permissions"
   [ "$(meta_field "$dir" rv2 claude_review)" = on ] \
     || fail "explicit control opt-in did not publish its durable posture"
-  pass "Claude review posture is durable across relaunch and can be added through fm-control"
+  pass "Claude review scout posture is durable across relaunch and can be added through fm-control"
 }
 
 test_claude_review_relaunch_rejects_unsupported_switch_before_stop() {
   local dir out rc
   dir=$(new_case review-switch-refused rv3)
   add_ship_task "$dir" rv3 claude
+  sed -i 's/^kind=ship$/kind=scout/' "$dir/home/state/rv3.meta"
   printf '%s\n' 'claude_review=on' >> "$dir/home/state/rv3.meta"
 
   out=$(run_control "$dir" rv3 relaunch --harness codex --note "switch reviewer"); rc=$?
@@ -386,6 +389,24 @@ test_claude_review_relaunch_rejects_unsupported_switch_before_stop() {
   [ ! -s "$dir/fake/literal" ] \
     || fail "unsupported review harness switch sent lifecycle or launch input"
   pass "Claude review harness switches refuse before stopping the original worker"
+}
+
+test_claude_review_ship_relaunch_refuses_before_stop_or_record_change() {
+  local dir out rc before after
+  dir=$(new_case review-ship-refused rvship)
+  add_ship_task "$dir" rvship claude
+  before=$(sha256sum "$dir/home/state/rvship.meta")
+
+  out=$(run_control "$dir" rvship relaunch --claude-review --note "review only"); rc=$?
+  expect_code 1 "$rc" "a ship relaunch must refuse the scout-only Claude review posture"
+  assert_contains "$out" 'scout-only' "ship relaunch refusal was not actionable"
+  after=$(sha256sum "$dir/home/state/rvship.meta")
+  [ "$before" = "$after" ] || fail "ship relaunch refusal changed the task record"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "ship relaunch refusal stopped the existing worker"
+  [ ! -s "$dir/fake/literal" ] \
+    || fail "ship relaunch refusal sent lifecycle or launch input"
+  pass "Claude review ship relaunch refuses before stopping or changing its task"
 }
 
 test_claude_review_relaunch_rejects_unrecognized_record_before_stop() {
@@ -1794,6 +1815,7 @@ test_documented_exit_then_relaunch_sequence_recovers_a_missing_endpoint() {
 
 test_claude_review_relaunch_preserves_or_explicitly_adds_posture
 test_claude_review_relaunch_rejects_unsupported_switch_before_stop
+test_claude_review_ship_relaunch_refuses_before_stop_or_record_change
 test_claude_review_relaunch_rejects_unrecognized_record_before_stop
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_from_linked_home_preserves_recorded_worktree

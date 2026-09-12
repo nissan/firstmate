@@ -137,17 +137,17 @@ test_no_profile_keeps_claude_profile_defaults() {
 }
 
 test_claude_review_grants_only_task_outputs_and_records_posture() {
-  local rec id out status launch
+  local rec id out status launch inbox rule own_move other_move
   id=claude-review-z1
   rec=$(make_spawn_case claude-review claude "$id")
   read_case_record "$rec"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --claude-review)
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout --harness claude --claude-review)
   status=$?
-  expect_code 0 "$status" "Claude review spawn should succeed"
+  expect_code 0 "$status" "Claude review scout spawn should succeed"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "$(fm_test_claude_review_permissions "$HOME_DIR/state" "$HOME_DIR/data" "$id")" \
-    "Claude review launch did not use Manual permissions with grants for only its status file and report"
+    "Claude review launch did not grant only its durable outputs and own inbox intake"
   assert_not_contains "$launch" "dangerously-skip-permissions" \
     "Claude review launch rendered the ordinary permission bypass"
   assert_grep 'claude_review=on' "$HOME_DIR/state/$id.meta" \
@@ -156,7 +156,20 @@ test_claude_review_grants_only_task_outputs_and_records_posture() {
     "Claude review launch lost the feedback control"
   assert_contains "$launch" '"attribution":{"commit":"","pr":"","sessionUrl":false}' \
     "Claude review launch lost the attribution policy"
-  pass "--claude-review grants only its status and report writes, preserves Claude controls, and records the posture"
+
+  # Claude's Bash permission grammar treats * in one rule as the variable
+  # command segment. Model that parser boundary directly against the exact
+  # quoted command shape Claude renders for the scaffold's mv acknowledgement.
+  inbox="$HOME_DIR/state/$id.inbox"
+  rule="Bash(mv '$inbox/*.msg' '$inbox/handled/*.msg')"
+  own_move="Bash(mv '$inbox/001.msg' '$inbox/handled/001.msg')"
+  other_move="Bash(mv '$HOME_DIR/state/other.inbox/001.msg' '$HOME_DIR/state/other.inbox/handled/001.msg')"
+  # shellcheck disable=SC2053  # unquoted RHS is the permission parser's wildcard match under test
+  [[ "$own_move" == $rule ]] || fail "quoted own-inbox move did not match the narrow permission rule"
+  # shellcheck disable=SC2053  # same matcher must reject another task
+  [[ "$other_move" != $rule ]] || fail "narrow own-inbox move rule matched another task"
+  assert_not_contains "$launch" 'Bash(mv *)' "generated launch carried a broad move grant"
+  pass "--claude-review accepts a scout, grants only its outputs and own inbox, preserves Claude controls, and records the posture"
 }
 
 test_claude_review_refuses_raw_launch_command() {
@@ -164,7 +177,7 @@ test_claude_review_refuses_raw_launch_command() {
   id=claude-review-raw-z1
   rec=$(make_spawn_case claude-review-raw claude "$id")
   read_case_record "$rec"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout \
     'claude --dangerously-skip-permissions' --claude-review 2>&1)
   status=$?
   expect_code 1 "$status" "a raw Claude launch command must not record a review posture it never applies"
@@ -179,7 +192,7 @@ test_claude_review_rejects_unsupported_and_persistent_harnesses() {
   id=claude-review-codex-z1
   rec=$(make_spawn_case claude-review-codex codex "$id")
   read_case_record "$rec"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --claude-review 2>&1)
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout --harness codex --claude-review 2>&1)
   status=$?
   expect_code 1 "$status" "Claude review mode on Codex must be refused"
   assert_contains "$out" "apply only to the claude harness" "unsupported review harness refusal was unclear"
@@ -192,9 +205,19 @@ test_claude_review_rejects_unsupported_and_persistent_harnesses() {
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$CASE_DIR/secondmate" --secondmate --harness claude --claude-review 2>&1)
   status=$?
   expect_code 1 "$status" "Claude review mode on a secondmate must be refused"
-  assert_contains "$out" "task-scoped" "persistent secondmate review refusal was unclear"
+  assert_contains "$out" "scout-only" "persistent secondmate review refusal was unclear"
   assert_absent "$HOME_DIR/state/$id.meta" "secondmate review refusal published metadata"
-  pass "--claude-review rejects unsupported and persistent harness combinations"
+
+  id=claude-review-ship-z1
+  rec=$(make_spawn_case claude-review-ship claude "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude --claude-review 2>&1)
+  status=$?
+  expect_code 1 "$status" "Claude review mode on a ship must be refused"
+  assert_contains "$out" "scout-only" "ship review refusal was unclear"
+  assert_absent "$HOME_DIR/state/$id.meta" "ship review refusal published metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "ship review refusal launched an agent"
+  pass "--claude-review rejects ship, unsupported harness, and persistent secondmate combinations"
 }
 
 test_non_cursor_launch_clears_inherited_cursor_markers() {

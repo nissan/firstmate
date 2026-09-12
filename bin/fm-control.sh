@@ -38,9 +38,10 @@
 #              on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
 #              of this verb. An explicit `default` model or effort clears that
-#              axis for the replacement. --claude-review opts a Claude ship or
-#              scout replacement into the permission-respecting review posture.
-#              A Claude review task keeps that posture on an ordinary same-
+#              axis for the replacement. --claude-review opts a Claude scout
+#              replacement into the permission-respecting review posture.
+#              Ships and secondmates are refused before their current worker is
+#              stopped. A Claude review task keeps that posture on an ordinary same-
 #              harness relaunch; switching it to another harness is refused
 #              before the old agent is stopped. With no explicit axis, a
 #              secondmate re-resolves its durable config/secondmate-harness pin (harness
@@ -724,12 +725,12 @@ resolve_relaunch_profile() {
     *) die "task $ID records invalid claude_review='$PRIOR_CLAUDE_REVIEW'; refusing an ambiguous relaunch" ;;
   esac
   if [ "$CLAUDE_REVIEW_SET" = 1 ]; then
-    [ "$KIND" != secondmate ] \
-      || die "--claude-review is task-scoped and cannot relaunch a persistent secondmate"
+    [ "$KIND" = scout ] \
+      || die "--claude-review is scout-only and cannot relaunch a ship or persistent secondmate"
     [ "$TARGET_HARNESS" = claude ] \
       || die "--claude-review applies only to the claude harness, not '$TARGET_HARNESS'"
-  elif [ "$PRIOR_CLAUDE_REVIEW" = on ] && [ "$KIND" = secondmate ]; then
-    die "task $ID records claude_review=on for a persistent secondmate; refusing the unsupported relaunch before stopping it"
+  elif [ "$PRIOR_CLAUDE_REVIEW" = on ] && [ "$KIND" != scout ]; then
+    die "task $ID records claude_review=on for a non-scout task; refusing the unsupported relaunch before stopping it"
   elif [ "$PRIOR_CLAUDE_REVIEW" = on ] && [ "$TARGET_HARNESS" != claude ]; then
     die "task $ID is a permission-respecting Claude review; refusing to switch it to '$TARGET_HARNESS' and silently weaken its launch posture"
   fi
