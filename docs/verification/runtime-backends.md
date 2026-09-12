@@ -307,13 +307,15 @@ The composer-classification record below observes the same gate from the other s
 ## Claude permission-respecting review launch
 
 Verified 2026-09-12 on Claude Code 2.1.266 with real credentials and tmux.
-The public `fm-spawn.sh --claude-review` interface generated and durably recorded a Claude ship launch using `--permission-mode default` plus `--allowedTools` `Edit(//…)` grants naming only that task's `state/<id>.status` and `data/<id>/report.md`; the rendered launch contained no `--dangerously-skip-permissions` string.
-The real launched worker read one tracked sentinel. Without a prompt, it created the report with the Write tool and appended its status line with the brief's `echo … >> <status>` command; both carried the exact sentinel.
+The public `fm-spawn.sh --claude-review` interface generated and durably recorded a Claude scout launch using `--permission-mode default` plus exact output, own-inbox read, and no-argument acknowledgement-helper grants; the rendered launch contained no `--dangerously-skip-permissions` string.
+The first real worker read one tracked sentinel, wrote its report and status, and invoked the generated mode-0700 helper, which moved exactly its own oldest inbox message into `handled/` without a prompt.
 Its next step, a Write to a new file in the worktree, stopped at Claude's permission prompt, and that file never appeared.
-Before/after Git HEAD, full untracked-aware status, and the exact launch's user/project/local `settings.json` and `settings.local.json` files remained byte-identical.
-The portable interface coverage is `tests/fm-spawn-dispatch-profile.test.sh` plus `tests/fm-control-relaunch.test.sh`. Those suites also prove:
+Because rejecting a permission ends Claude's turn, a separate fresh-session arm attempted only another task's inbox read; it stopped at the permission prompt without exposing or changing the other task's message.
+Across both arms, Git HEAD, full untracked-aware status, and the exact launch's user/project/local `settings.json` and `settings.local.json` files remained byte-identical.
+The portable interface coverage is `tests/fm-spawn-dispatch-profile.test.sh`, `tests/fm-control-relaunch.test.sh`, and `tests/fm-claude-review-ack.test.sh`. Those suites also prove:
 - ordinary Claude launch behavior stays unchanged;
-- unsupported harnesses, secondmates, and raw launch commands refuse;
+- ships, unsupported harnesses, secondmates, and raw launch commands refuse;
+- the helper is task-bound, argument-free, mode-0700, symlink-safe, one-message-at-a-time, destination-exclusive, and removed by normal cleanup;
 - a recorded posture value other than `on` refuses before stopping its worker;
 - same-harness relaunch preserves the durable posture, and an existing Claude task can opt in through control;
 - an unsupported switch refuses before stopping its worker.
@@ -321,8 +323,8 @@ The portable interface coverage is `tests/fm-spawn-dispatch-profile.test.sh` plu
 Refresh the credentialed proof after a Claude upgrade:
 
 ```console
-$ FM_CLAUDE_REVIEW_LIVE_E2E=1 bash tests/fm-claude-review-launch-live-e2e.test.sh
-ok - Claude 2.1.266 (Claude Code): public --claude-review launch omitted bypass, read the exact target, wrote only its status line and report, held a project write at the permission prompt, and preserved repository/settings state
+$ FM_CLAUDE_REVIEW_LIVE_E2E=1 FM_CLAUDE_REVIEW_LIVE_CROSS_ONLY=1 bash tests/fm-claude-review-launch-live-e2e.test.sh
+ok - Claude 2.1.266 (Claude Code): a fresh restricted review session denied another task inbox and preserved repository/settings state
 ```
 
 ## Composer classification matrix

@@ -732,6 +732,8 @@ test_local_only_fork_remote_allows() {
   # The supervision branch's bounded per-task outcome cache is a footprint of
   # the retired task, not a record anything reads after it is gone.
   printf 'fm-branch-outcome-index-v1\t5\t0\t-\n' > "$case_dir/state/.task-x1.branch-outcome-index"
+  : > "$case_dir/state/task-x1.claude-review-ack.sh"
+  mkdir "$case_dir/state/.task-x1.claude-review-ack.lock"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -742,6 +744,10 @@ test_local_only_fork_remote_allows() {
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
   [ ! -e "$case_dir/state/.task-x1.branch-outcome-index" ] \
     || fail "fork-allow: teardown left the task's branch outcome index behind"
+  [ ! -e "$case_dir/state/task-x1.claude-review-ack.sh" ] \
+    || fail "fork-allow: teardown left the Claude review acknowledgement helper behind"
+  [ ! -e "$case_dir/state/.task-x1.claude-review-ack.lock" ] \
+    || fail "fork-allow: teardown left the Claude review acknowledgement lock behind"
   # The supervision branch reports the teardown it just performed AFTER the
   # task's records are gone (bin/fm-branch-prompt.sh); that report must be
   # stored, must publish its ready sequence, and must not recreate the index.
