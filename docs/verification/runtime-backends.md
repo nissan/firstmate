@@ -304,6 +304,20 @@ This change does not address that warning and does not claim to.
 That automated spawn case runs against a fake claude, so it asserts the store entry and the launch command and nothing more; the live arms above are what establish that the entry actually suppresses the dialog.
 The composer-classification record below observes the same gate from the other side, where an untrusted worktree left Claude, Grok, and Muse unverified because the guard reads a first-launch trust dialog as an unreadable composer.
 
+## Claude permission-respecting review launch
+
+Verified 2026-09-12 on Claude Code 2.1.266 with real credentials and tmux.
+The public `fm-spawn.sh --claude-review` interface generated and durably recorded a Claude ship launch using `--permission-mode plan`; the rendered launch contained no `--dangerously-skip-permissions` string.
+The real launched worker read one bounded tracked sentinel and returned its exact value, while before/after Git HEAD, full untracked-aware status, and the exact launch's user/project/local `settings.json` and `settings.local.json` files remained byte-identical.
+The portable interface coverage is `tests/fm-spawn-dispatch-profile.test.sh` plus `tests/fm-control-relaunch.test.sh`; those suites also prove ordinary Claude launch behavior stays unchanged, unsupported harnesses and secondmates refuse, same-harness relaunch preserves the durable posture, an existing Claude task can opt in through control, and an unsupported switch refuses before stopping its worker.
+
+Refresh the credentialed proof after a Claude upgrade:
+
+```console
+$ FM_CLAUDE_REVIEW_LIVE_E2E=1 bash tests/fm-claude-review-launch-live-e2e.test.sh
+ok - Claude 2.1.266 (Claude Code): public --claude-review launch omitted bypass, read the bounded sentinel, and preserved repository/settings state
+```
+
 ## Composer classification matrix
 
 The shared composer classifier (`bin/fm-composer-lib.sh`, `fm_composer_classify_screen`) owns every composer shape fleet-wide; each backend contributes only a capture and a capability descriptor.

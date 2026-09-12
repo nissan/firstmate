@@ -29,6 +29,18 @@ Never send Enter to that one either: it was observed rendering in the same shape
 Firstmate cannot move a selection with Enter, Escape, and C-c alone, so it cannot accept this dialog at all, and an operator accepts it once per machine instead.
 Inspect the pane to identify which dialog is on screen, and report it rather than answering it.
 
+## Permission-respecting review launch
+
+`fm-spawn.sh --claude-review` is the explicit task-scoped posture for an independent Claude ship or scout that must not bypass permissions.
+It launches Claude with `--permission-mode plan` instead of `--dangerously-skip-permissions`, while retaining the ordinary workspace-trust registration, feedback and attribution settings, busy hooks, model, effort, environment, and backend path.
+The task record carries `claude_review=on`, and `fm-control.sh relaunch` preserves it for Claude or can opt an existing Claude task in with the same flag.
+Fresh review launches use the same command-delivery path on tmux, Herdr, Zellij, Orca, and cmux; relaunch remains limited to tmux and Herdr by the control plane's existing recovery-grade state requirement.
+The public interfaces refuse this flag for every other harness and for secondmates, and refuse switching a recorded Claude review to another harness rather than silently weakening its posture.
+Ordinary Claude workers keep the unattended permission-bypass launch unchanged.
+
+Run `FM_CLAUDE_REVIEW_LIVE_E2E=1 tests/fm-claude-review-launch-live-e2e.test.sh` after a Claude upgrade to prove the real credentialed CLI still accepts the launch, performs bounded read-only inspection, and leaves repository plus watched user/project/local settings unchanged.
+`../../../docs/verification/runtime-backends.md` records the current empirical result.
+
 ## Composer ghost
 
 Completed turns can render dim predicted text inside an empty composer, indistinguishable in plain `tmux capture-pane`.

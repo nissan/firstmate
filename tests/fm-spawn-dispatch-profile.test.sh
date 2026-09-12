@@ -136,6 +136,52 @@ test_no_profile_keeps_claude_profile_defaults() {
   pass "no --model/--effort records defaults and types the claude launch instructions"
 }
 
+test_claude_review_uses_plan_permissions_and_records_posture() {
+  local rec id out status launch
+  id=claude-review-z1
+  rec=$(make_spawn_case claude-review claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --claude-review)
+  status=$?
+  expect_code 0 "$status" "Claude review spawn should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "claude --permission-mode plan --settings" \
+    "Claude review launch did not use its permission-respecting plan mode"
+  assert_not_contains "$launch" "dangerously-skip-permissions" \
+    "Claude review launch rendered the ordinary permission bypass"
+  assert_grep 'claude_review=on' "$HOME_DIR/state/$id.meta" \
+    "Claude review posture was not recorded durably"
+  assert_contains "$launch" 'CLAUDE_CODE_SEND_FEEDBACK=0' \
+    "Claude review launch lost the feedback control"
+  assert_contains "$launch" '"attribution":{"commit":"","pr":"","sessionUrl":false}' \
+    "Claude review launch lost the attribution policy"
+  pass "--claude-review uses plan permissions, preserves Claude controls, and records the posture"
+}
+
+test_claude_review_rejects_unsupported_and_persistent_harnesses() {
+  local rec id out status
+  id=claude-review-codex-z1
+  rec=$(make_spawn_case claude-review-codex codex "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --claude-review 2>&1)
+  status=$?
+  expect_code 1 "$status" "Claude review mode on Codex must be refused"
+  assert_contains "$out" "apply only to the claude harness" "unsupported review harness refusal was unclear"
+  assert_absent "$HOME_DIR/state/$id.meta" "unsupported review harness published metadata"
+
+  id=claude-review-secondmate-z1
+  rec=$(make_spawn_case claude-review-secondmate claude "$id")
+  read_case_record "$rec"
+  make_seeded_secondmate_home "$CASE_DIR/secondmate" "$id"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$CASE_DIR/secondmate" --secondmate --harness claude --claude-review 2>&1)
+  status=$?
+  expect_code 1 "$status" "Claude review mode on a secondmate must be refused"
+  assert_contains "$out" "task-scoped" "persistent secondmate review refusal was unclear"
+  assert_absent "$HOME_DIR/state/$id.meta" "secondmate review refusal published metadata"
+  pass "--claude-review rejects unsupported and persistent harness combinations"
+}
+
 test_non_cursor_launch_clears_inherited_cursor_markers() {
   local rec id out status launch
   id=profile-claude-cursor-markers-z1b
@@ -1205,6 +1251,8 @@ SH
 
 test_worker_launch_delivers_role_scope
 test_no_profile_keeps_claude_profile_defaults
+test_claude_review_uses_plan_permissions_and_records_posture
+test_claude_review_rejects_unsupported_and_persistent_harnesses
 test_non_cursor_launch_clears_inherited_cursor_markers
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
