@@ -321,7 +321,7 @@ The portable interface coverage is `tests/fm-spawn-dispatch-profile.test.sh`, `t
 - a review relaunch's generated launch brief carries the progress note and the exact published helper path, and that helper acknowledges a steer sent before the relaunch;
 - a relaunch that fails after republishing its record keeps the live worker's helper;
 - a recorded posture value other than `on` refuses before stopping its worker;
-- same-harness relaunch preserves the durable posture, and an existing Claude task can opt in through control;
+- same-harness relaunch preserves the durable posture, and an existing Claude scout can opt in through control;
 - an unsupported switch refuses before stopping its worker.
 
 Refresh the credentialed proof after a Claude upgrade:

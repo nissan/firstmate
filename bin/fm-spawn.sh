@@ -26,7 +26,7 @@
 #   Ship/scout launches always supply fm-dod-lib.sh's current worker role scope
 #   using the same private launch-brief overlay. This never rewrites a project's
 #   instruction files or a secondmate's charter.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--claude-review]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree instead of acquiring one, and into its recorded
 #   endpoint when that endpoint still exists. It is
@@ -37,9 +37,9 @@
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
-#   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. It refuses unless the recorded endpoint is positively
-#   agent-free on a backend with a recovery-grade agent-state classifier (tmux
+#   model, effort, and a --claude-review opt-in may change, which is what makes
+#   a harness switch one ordinary relaunch. It refuses unless the recorded
+#   endpoint is positively agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
 #   the new incarnation. Both `dead` (the endpoint exists and holds no agent)
 #   and `missing` (the endpoint is structurally gone, as after a session-provider
