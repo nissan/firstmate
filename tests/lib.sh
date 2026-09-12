@@ -464,6 +464,20 @@ fm_git_worktree() {
   git -C "$repo" worktree add --quiet -b "$branch" "$worktree"
 }
 
+# fm_test_claude_review_permissions <state-dir> <data-dir> <id>
+# The exact Claude launch fragment fm-spawn.sh --claude-review renders: Manual
+# permissions plus Edit grants for only this task's status file and report, by
+# given and resolved path.
+fm_test_claude_review_permissions() {
+  local state=$1 data=$2 id=$3 state_real data_real rules
+  state_real=$(cd "$state" && pwd -P) || return 1
+  data_real=$(cd "$data" && pwd -P) || return 1
+  rules="'Edit(/$state/$id.status)' 'Edit(/$data/$id/report.md)'"
+  [ "$state_real" = "$state" ] || rules="$rules 'Edit(/$state_real/$id.status)'"
+  [ "$data_real" = "$data" ] || rules="$rules 'Edit(/$data_real/$id/report.md)'"
+  printf 'claude --permission-mode default --allowedTools %s --settings' "$rules"
+}
+
 # --- state/<id>.meta writers ------------------------------------------------
 
 # fm_write_meta <file> <key=val> ...: write the given key=val lines to a meta

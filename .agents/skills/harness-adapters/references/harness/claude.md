@@ -32,13 +32,17 @@ Inspect the pane to identify which dialog is on screen, and report it rather tha
 ## Permission-respecting review launch
 
 `fm-spawn.sh --claude-review` is the explicit task-scoped posture for an independent Claude ship or scout that must not bypass permissions.
-It launches Claude with `--permission-mode plan` instead of `--dangerously-skip-permissions`, while retaining the ordinary workspace-trust registration, feedback and attribution settings, busy hooks, model, effort, environment, and backend path.
+It launches Claude with `--permission-mode default` (Manual) instead of `--dangerously-skip-permissions`, plus `--allowedTools` `Edit(//…)` rules naming only this task's `state/<id>.status` and `data/<id>/report.md`, each by its given and resolved path.
+Those two grants let the brief's `echo … >> <status>` append through, because Claude checks an output redirect's target against `Edit` rules, and let the report be written with Claude's file tools.
+Every other edit, mutating shell command, or push still stops at Claude's own permission prompt; that includes the steering inbox's `mv` acknowledgement.
+Nothing answers that prompt on the worker's behalf, so report it like any other dialog.
+The launch otherwise keeps the ordinary workspace-trust registration, feedback and attribution settings, busy hooks, model, effort, environment, and backend path.
 The task record carries `claude_review=on`, and `fm-control.sh relaunch` preserves it for Claude or can opt an existing Claude task in with the same flag.
 Fresh review launches use the same command-delivery path on tmux, Herdr, Zellij, Orca, and cmux; relaunch remains limited to tmux and Herdr by the control plane's existing recovery-grade state requirement.
-The public interfaces refuse this flag for every other harness and for secondmates, and refuse switching a recorded Claude review to another harness rather than silently weakening its posture.
+The public interfaces refuse this flag for every other harness, for secondmates, and for a raw launch command that would silently drop the posture, and refuse switching a recorded Claude review to another harness rather than silently weakening its posture.
 Ordinary Claude workers keep the unattended permission-bypass launch unchanged.
 
-Run `FM_CLAUDE_REVIEW_LIVE_E2E=1 tests/fm-claude-review-launch-live-e2e.test.sh` after a Claude upgrade to prove the real credentialed CLI still accepts the launch, performs bounded read-only inspection, and leaves repository plus watched user/project/local settings unchanged.
+Run `FM_CLAUDE_REVIEW_LIVE_E2E=1 tests/fm-claude-review-launch-live-e2e.test.sh` after a Claude upgrade. It proves the real credentialed CLI still accepts the launch, reads the exact target, writes only its status line and report without a prompt, stops a project write at the permission prompt, and leaves repository plus watched user/project/local settings unchanged.
 `../../../docs/verification/runtime-backends.md` records the current empirical result.
 
 ## Composer ghost

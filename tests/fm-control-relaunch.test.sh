@@ -353,8 +353,8 @@ test_claude_review_relaunch_preserves_or_explicitly_adds_posture() {
   out=$(run_control "$dir" rv1 relaunch --note "continue exact-head review"); rc=$?
   expect_code 0 "$rc" "a Claude review relaunch should preserve its posture"$'\n'"$out"
   launch=$(cat "$dir/fake/literal")
-  assert_contains "$launch" 'claude --permission-mode plan --settings' \
-    "same-harness review relaunch did not preserve plan permissions"
+  assert_contains "$launch" "$(fm_test_claude_review_permissions "$dir/home/state" "$dir/home/data" rv1)" \
+    "same-harness review relaunch did not preserve its scoped Manual permissions"
   assert_not_contains "$launch" 'dangerously-skip-permissions' \
     "same-harness review relaunch restored permission bypass"
   [ "$(meta_field "$dir" rv1 claude_review)" = on ] \
@@ -365,8 +365,8 @@ test_claude_review_relaunch_preserves_or_explicitly_adds_posture() {
   out=$(run_control "$dir" rv2 relaunch --claude-review --note "resume as independent reviewer"); rc=$?
   expect_code 0 "$rc" "control should opt an existing Claude task into review posture"$'\n'"$out"
   launch=$(cat "$dir/fake/literal")
-  assert_contains "$launch" 'claude --permission-mode plan --settings' \
-    "explicit control opt-in did not launch Claude with plan permissions"
+  assert_contains "$launch" "$(fm_test_claude_review_permissions "$dir/home/state" "$dir/home/data" rv2)" \
+    "explicit control opt-in did not launch Claude with its scoped Manual permissions"
   [ "$(meta_field "$dir" rv2 claude_review)" = on ] \
     || fail "explicit control opt-in did not publish its durable posture"
   pass "Claude review posture is durable across relaunch and can be added through fm-control"
@@ -386,6 +386,22 @@ test_claude_review_relaunch_rejects_unsupported_switch_before_stop() {
   [ ! -s "$dir/fake/literal" ] \
     || fail "unsupported review harness switch sent lifecycle or launch input"
   pass "Claude review harness switches refuse before stopping the original worker"
+}
+
+test_claude_review_relaunch_rejects_unrecognized_record_before_stop() {
+  local dir out rc
+  dir=$(new_case review-off-refused rv4)
+  add_ship_task "$dir" rv4 claude
+  printf '%s\n' 'claude_review=off' >> "$dir/home/state/rv4.meta"
+
+  out=$(run_control "$dir" rv4 relaunch --note "resume reviewer"); rc=$?
+  expect_code 1 "$rc" "a recorded claude_review value other than on must refuse"
+  assert_contains "$out" "invalid claude_review='off'" "unrecognized review record refusal was not explicit"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "unrecognized review record stopped the original agent"
+  [ ! -s "$dir/fake/literal" ] \
+    || fail "unrecognized review record sent lifecycle or launch input"
+  pass "a recorded claude_review value other than on refuses before stopping the worker"
 }
 
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
@@ -1778,6 +1794,7 @@ test_documented_exit_then_relaunch_sequence_recovers_a_missing_endpoint() {
 
 test_claude_review_relaunch_preserves_or_explicitly_adds_posture
 test_claude_review_relaunch_rejects_unsupported_switch_before_stop
+test_claude_review_relaunch_rejects_unrecognized_record_before_stop
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_from_linked_home_preserves_recorded_worktree
 test_relaunch_preserves_durable_task_metadata

@@ -136,7 +136,7 @@ test_no_profile_keeps_claude_profile_defaults() {
   pass "no --model/--effort records defaults and types the claude launch instructions"
 }
 
-test_claude_review_uses_plan_permissions_and_records_posture() {
+test_claude_review_grants_only_task_outputs_and_records_posture() {
   local rec id out status launch
   id=claude-review-z1
   rec=$(make_spawn_case claude-review claude "$id")
@@ -146,8 +146,8 @@ test_claude_review_uses_plan_permissions_and_records_posture() {
   status=$?
   expect_code 0 "$status" "Claude review spawn should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "claude --permission-mode plan --settings" \
-    "Claude review launch did not use its permission-respecting plan mode"
+  assert_contains "$launch" "$(fm_test_claude_review_permissions "$HOME_DIR/state" "$HOME_DIR/data" "$id")" \
+    "Claude review launch did not use Manual permissions with grants for only its status file and report"
   assert_not_contains "$launch" "dangerously-skip-permissions" \
     "Claude review launch rendered the ordinary permission bypass"
   assert_grep 'claude_review=on' "$HOME_DIR/state/$id.meta" \
@@ -156,7 +156,22 @@ test_claude_review_uses_plan_permissions_and_records_posture() {
     "Claude review launch lost the feedback control"
   assert_contains "$launch" '"attribution":{"commit":"","pr":"","sessionUrl":false}' \
     "Claude review launch lost the attribution policy"
-  pass "--claude-review uses plan permissions, preserves Claude controls, and records the posture"
+  pass "--claude-review grants only its status and report writes, preserves Claude controls, and records the posture"
+}
+
+test_claude_review_refuses_raw_launch_command() {
+  local rec id out status
+  id=claude-review-raw-z1
+  rec=$(make_spawn_case claude-review-raw claude "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+    'claude --dangerously-skip-permissions' --claude-review 2>&1)
+  status=$?
+  expect_code 1 "$status" "a raw Claude launch command must not record a review posture it never applies"
+  assert_contains "$out" "canonical --harness claude launch" "raw review refusal was not actionable"
+  assert_absent "$HOME_DIR/state/$id.meta" "raw review refusal published metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "raw review refusal launched an agent"
+  pass "--claude-review refuses a raw launch command before provisioning"
 }
 
 test_claude_review_rejects_unsupported_and_persistent_harnesses() {
@@ -1251,7 +1266,8 @@ SH
 
 test_worker_launch_delivers_role_scope
 test_no_profile_keeps_claude_profile_defaults
-test_claude_review_uses_plan_permissions_and_records_posture
+test_claude_review_grants_only_task_outputs_and_records_posture
+test_claude_review_refuses_raw_launch_command
 test_claude_review_rejects_unsupported_and_persistent_harnesses
 test_non_cursor_launch_clears_inherited_cursor_markers
 test_relative_home_overrides_launch_with_absolute_cross_process_paths

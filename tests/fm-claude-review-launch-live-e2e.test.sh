@@ -4,8 +4,10 @@
 # Run with FM_CLAUDE_REVIEW_LIVE_E2E=1. The portable spawn and control suites
 # own interface and relaunch coverage; this guard spends one short Claude turn
 # to prove the command built by the public spawn interface starts the real CLI
-# without a permission bypass, reads a bounded repository file in plan mode,
-# and leaves the repository plus user/project/local settings unchanged.
+# without a permission bypass, reads the exact target, writes its designated
+# status line and report without a prompt, holds an attempted project write at
+# Claude's permission prompt, and leaves the repository plus user/project/local
+# settings unchanged.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -30,6 +32,9 @@ PROJ="$LAB/project"
 WT="$LAB/wt"
 ID=claude-review-live
 LAUNCH_LOG="$LAB/launch"
+STATUS="$HOME_DIR/state/$ID.status"
+REPORT="$HOME_DIR/data/$ID/report.md"
+FORBIDDEN="$WT/review-forbidden.txt"
 mkdir -p "$HOME_DIR/data/$ID" "$HOME_DIR/state" "$HOME_DIR/config" "$HOME_DIR/projects"
 touch "$HOME_DIR/state/.last-watcher-beat"
 printf '%s\n' claude > "$HOME_DIR/config/crew-harness"
@@ -42,10 +47,16 @@ git -C "$WT" push -q origin HEAD:main
 cat > "$HOME_DIR/data/$ID/brief.md" <<EOF
 # Task
 ## Captain's intent
-Inspect only: read review-sentinel.txt from this repository and reply with exactly its one-line contents. Do not edit files, settings, Git state, or run network commands.
+Bounded permission probe. Do exactly these four steps in order, then stop:
+1. Read $WT/review-sentinel.txt.
+2. Use the Write tool to create $REPORT containing the single line: report: <the sentinel contents>
+3. Run exactly this Bash command, with the sentinel contents substituted: echo "working: <the sentinel contents>" >> '$STATUS'
+4. Use the Write tool to create $FORBIDDEN containing the single line: forbidden
+Step 4 is expected to need permission. Do not retry it, and do not reach that path any other way.
+Do not edit any other file, settings, or Git state, and do not run network commands.
 
 ## Firstmate spec
-This is a bounded live review-launch check. Use a read-only file inspection and return only the sentinel text.
+This is a bounded live review-launch permission check.
 EOF
 
 FAKEBIN=$(fm_test_make_spawn_fakebin "$LAB/fake")
@@ -60,8 +71,8 @@ out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
 rc=$?
 expect_code 0 "$rc" "public Claude review spawn failed: $out"
 LAUNCH=$(cat "$LAUNCH_LOG")
-assert_contains "$LAUNCH" 'claude --permission-mode plan --settings' \
-  "public spawn did not render Claude plan permissions"
+assert_contains "$LAUNCH" "$(fm_test_claude_review_permissions "$HOME_DIR/state" "$HOME_DIR/data" "$ID")" \
+  "public spawn did not render Manual permissions with grants for only the status file and report"
 assert_not_contains "$LAUNCH" 'dangerously-skip-permissions' \
   "public spawn rendered a permission bypass"
 assert_grep 'claude_review=on' "$HOME_DIR/state/$ID.meta" \
@@ -85,6 +96,34 @@ snapshot() {
   } > "$destination"
 }
 
+CLAUDE_VERSION=$(claude --version 2>/dev/null | head -1)
+pane() {
+  tmux -L "$SOCKET" capture-pane -p -t "$SESSION" 2>/dev/null || true
+}
+live_fail() {
+  printf 'not ok - Claude %s: %s\n' "$CLAUDE_VERSION" "$1" >&2
+  pane | grep '[^[:space:]]' | tail -12 | sed 's/^/#   /' >&2
+  exit 1
+}
+wait_until() {
+  local i=0
+  while [ "$i" -lt "$TIMEOUT" ]; do
+    "$@" && return 0
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+review_outputs_written() {
+  grep -qF "working: $TOKEN" "$STATUS" 2>/dev/null && grep -qF "$TOKEN" "$REPORT" 2>/dev/null
+}
+project_write_prompted() {
+  local screen
+  screen=$(pane)
+  printf '%s\n' "$screen" | grep -qF 'review-forbidden.txt' \
+    && printf '%s\n' "$screen" | grep -qF 'Do you want'
+}
+
 snapshot "$LAB/before"
 RUNNER="$LAB/run-review.sh"
 {
@@ -94,29 +133,18 @@ RUNNER="$LAB/run-review.sh"
 chmod +x "$RUNNER"
 tmux -L "$SOCKET" new-session -d -s "$SESSION" -x 220 -y 50 -- "$RUNNER"
 
-i=0
-seen=0
-while [ "$i" -lt "$TIMEOUT" ]; do
-  pane=$(tmux -L "$SOCKET" capture-pane -p -t "$SESSION" 2>/dev/null || true)
-  if printf '%s\n' "$pane" | grep -qF "$TOKEN"; then
-    seen=1
-    break
-  fi
-  sleep 1
-  i=$((i + 1))
-done
-if [ "$seen" -ne 1 ]; then
-  printf 'not ok - Claude %s: bounded read did not return its sentinel within %ss\n' "$(claude --version 2>/dev/null | head -1)" "$TIMEOUT" >&2
-  tmux -L "$SOCKET" capture-pane -p -t "$SESSION" 2>/dev/null | grep '[^[:space:]]' | tail -12 | sed 's/^/#   /' >&2
-  exit 1
-fi
-# Let Stop hooks and any ordinary persistence finish before comparing.
-sleep 3
+wait_until review_outputs_written \
+  || live_fail "the sentinel did not reach the status line and report without a prompt within ${TIMEOUT}s"
+wait_until project_write_prompted \
+  || live_fail "the attempted project write did not stop at a permission prompt within ${TIMEOUT}s"
+[ ! -e "$FORBIDDEN" ] || live_fail "the attempted project write landed without authority"
+tmux -L "$SOCKET" kill-server 2>/dev/null || true
+[ ! -e "$FORBIDDEN" ] || live_fail "the attempted project write landed without authority"
 snapshot "$LAB/after"
 cmp -s "$LAB/before" "$LAB/after" || {
-  printf 'not ok - Claude %s: repository or watched settings changed during the review\n' "$(claude --version 2>/dev/null | head -1)" >&2
+  printf 'not ok - Claude %s: repository or watched settings changed during the review\n' "$CLAUDE_VERSION" >&2
   diff -u "$LAB/before" "$LAB/after" >&2 || true
   exit 1
 }
-printf 'ok - Claude %s: public --claude-review launch omitted bypass, read the bounded sentinel, and preserved repository/settings state\n' \
-  "$(claude --version 2>/dev/null | head -1)"
+printf 'ok - Claude %s: public --claude-review launch omitted bypass, read the exact target, wrote only its status line and report, held a project write at the permission prompt, and preserved repository/settings state\n' \
+  "$CLAUDE_VERSION"

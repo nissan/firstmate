@@ -61,9 +61,13 @@
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
 #   --claude-review is an opt-in task launch posture for an independent Claude
 #   reviewer. It replaces Claude's ordinary permission bypass with
-#   `--permission-mode plan`, while preserving the launch's trust registration,
-#   feedback controls, hooks, model, effort, environment, and backend behavior.
-#   It is accepted only for a Claude ship or scout, recorded as
+#   `--permission-mode default` plus `--allowedTools` Edit rules naming only
+#   this task's state/<id>.status and data/<id>/report.md, so the brief's status
+#   append and report writes proceed while every other edit, mutating command,
+#   or push still waits on Claude's own permission prompt. It preserves the
+#   launch's trust registration, feedback controls, hooks, model, effort,
+#   environment, and backend behavior. It is accepted only for a canonical
+#   Claude ship or scout launch (never a raw launch command), recorded as
 #   claude_review=on, and preserved by a same-harness relaunch. A relaunch may
 #   opt an existing Claude task in explicitly; switching a recorded review task
 #   to another harness is refused before launch rather than silently weakening
@@ -1722,7 +1726,7 @@ esac
 if [ "$RELAUNCH" -eq 1 ]; then
   recorded_claude_review=$(fm_meta_get "$RELAUNCH_META" claude_review)
   case "$recorded_claude_review" in
-    ''|off) ;;
+    '') ;;
     on) CLAUDE_REVIEW_ACTIVE=1 ;;
     *)
       echo "error: task $ID records invalid claude_review='$recorded_claude_review'; refusing an ambiguous relaunch" >&2
@@ -1738,6 +1742,10 @@ if [ "$CLAUDE_REVIEW_ACTIVE" -eq 1 ]; then
   }
   [ "$KIND" != secondmate ] || {
     echo "error: --claude-review is task-scoped and cannot launch a persistent secondmate" >&2
+    exit 1
+  }
+  [ "$RAW_LAUNCH" = 0 ] || {
+    echo "error: --claude-review requires the canonical --harness claude launch so its permission posture cannot be omitted" >&2
     exit 1
   }
 fi
@@ -3922,7 +3930,15 @@ sq_worktree=$(shell_quote "$WT")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
 if [ "$CLAUDE_REVIEW_ACTIVE" -eq 1 ]; then
-  CLAUDEPERMISSIONS='--permission-mode plan '
+  DATA_REAL=$(cd "$DATA" && pwd -P) || exit 1
+  claude_review_outputs=("$STATE/$ID.status" "$DATA/$ID/report.md")
+  [ "$STATE_REAL" = "$STATE" ] || claude_review_outputs+=("$STATE_REAL/$ID.status")
+  [ "$DATA_REAL" = "$DATA" ] || claude_review_outputs+=("$DATA_REAL/$ID/report.md")
+  CLAUDEPERMISSIONS='--permission-mode default --allowedTools '
+  for claude_review_output in "${claude_review_outputs[@]}"; do
+    claude_review_rule="Edit(/$(printf '%s' "$claude_review_output" | sed 's/[][*?\\]/\\&/g'))"
+    CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
+  done
 else
   CLAUDEPERMISSIONS='--dangerously-skip-permissions '
 fi

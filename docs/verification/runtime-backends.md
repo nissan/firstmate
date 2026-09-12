@@ -307,15 +307,22 @@ The composer-classification record below observes the same gate from the other s
 ## Claude permission-respecting review launch
 
 Verified 2026-09-12 on Claude Code 2.1.266 with real credentials and tmux.
-The public `fm-spawn.sh --claude-review` interface generated and durably recorded a Claude ship launch using `--permission-mode plan`; the rendered launch contained no `--dangerously-skip-permissions` string.
-The real launched worker read one bounded tracked sentinel and returned its exact value, while before/after Git HEAD, full untracked-aware status, and the exact launch's user/project/local `settings.json` and `settings.local.json` files remained byte-identical.
-The portable interface coverage is `tests/fm-spawn-dispatch-profile.test.sh` plus `tests/fm-control-relaunch.test.sh`; those suites also prove ordinary Claude launch behavior stays unchanged, unsupported harnesses and secondmates refuse, same-harness relaunch preserves the durable posture, an existing Claude task can opt in through control, and an unsupported switch refuses before stopping its worker.
+The public `fm-spawn.sh --claude-review` interface generated and durably recorded a Claude ship launch using `--permission-mode default` plus `--allowedTools` `Edit(//…)` grants naming only that task's `state/<id>.status` and `data/<id>/report.md`; the rendered launch contained no `--dangerously-skip-permissions` string.
+The real launched worker read one tracked sentinel. Without a prompt, it created the report with the Write tool and appended its status line with the brief's `echo … >> <status>` command; both carried the exact sentinel.
+Its next step, a Write to a new file in the worktree, stopped at Claude's permission prompt, and that file never appeared.
+Before/after Git HEAD, full untracked-aware status, and the exact launch's user/project/local `settings.json` and `settings.local.json` files remained byte-identical.
+The portable interface coverage is `tests/fm-spawn-dispatch-profile.test.sh` plus `tests/fm-control-relaunch.test.sh`. Those suites also prove:
+- ordinary Claude launch behavior stays unchanged;
+- unsupported harnesses, secondmates, and raw launch commands refuse;
+- a recorded posture value other than `on` refuses before stopping its worker;
+- same-harness relaunch preserves the durable posture, and an existing Claude task can opt in through control;
+- an unsupported switch refuses before stopping its worker.
 
 Refresh the credentialed proof after a Claude upgrade:
 
 ```console
 $ FM_CLAUDE_REVIEW_LIVE_E2E=1 bash tests/fm-claude-review-launch-live-e2e.test.sh
-ok - Claude 2.1.266 (Claude Code): public --claude-review launch omitted bypass, read the bounded sentinel, and preserved repository/settings state
+ok - Claude 2.1.266 (Claude Code): public --claude-review launch omitted bypass, read the exact target, wrote only its status line and report, held a project write at the permission prompt, and preserved repository/settings state
 ```
 
 ## Composer classification matrix

@@ -720,8 +720,7 @@ resolve_relaunch_profile() {
   fi
   PRIOR_CLAUDE_REVIEW=$(fm_meta_get "$META" claude_review)
   case "$PRIOR_CLAUDE_REVIEW" in
-    ''|off) ;;
-    on) ;;
+    ''|on) ;;
     *) die "task $ID records invalid claude_review='$PRIOR_CLAUDE_REVIEW'; refusing an ambiguous relaunch" ;;
   esac
   if [ "$CLAUDE_REVIEW_SET" = 1 ]; then
