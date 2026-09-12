@@ -1,0 +1,19 @@
+== status ==
+working: CLAUDE_REVIEW_READ_OK_16770
+steered: STEERED_28156
+== report ==
+report: CLAUDE_REVIEW_READ_OK_16770
+== inbox pending ==
+total 0
+drwxr-xr-x 3 nissan nissan  60 Sep 12 17:45 .
+drwxr-xr-x 4 nissan nissan 220 Sep 12 17:45 ..
+drwxr-xr-x 2 nissan nissan  60 Sep 12 17:45 handled
+== inbox handled ==
+total 4
+drwxr-xr-x 2 nissan nissan  60 Sep 12 17:45 .
+drwxr-xr-x 3 nissan nissan  60 Sep 12 17:45 ..
+-rw------- 1 nissan nissan 187 Sep 12 17:45 001.msg
+schema=fm-task-inbox.v1
+at=2026-09-12T07:45:43Z
+--
+Run exactly this Bash command: echo "steered: STEERED_28156" >> '/tmp/fm-claude-review-live.iCiV5o/home/state/claude-review-live.status'

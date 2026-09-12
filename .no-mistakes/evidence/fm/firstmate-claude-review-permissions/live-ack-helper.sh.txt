@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -eu
+EXPECTED_HELPER='/tmp/fm-claude-review-live.iCiV5o/home/state/claude-review-live.claude-review-ack.sh'
+STATE='/tmp/fm-claude-review-live.iCiV5o/home/state'
+ID='claude-review-live'
+[ "$#" -eq 0 ] || { echo "error: review acknowledgement helper accepts no arguments" >&2; exit 2; }
+[ "$0" = "$EXPECTED_HELPER" ] || { echo "error: review acknowledgement helper must be invoked by its exact absolute path" >&2; exit 1; }
+[ ! -L "$EXPECTED_HELPER" ] && [ -f "$EXPECTED_HELPER" ] || { echo "error: review acknowledgement helper identity is unsafe" >&2; exit 1; }
+state_real=$(cd -P -- "$STATE" 2>/dev/null && pwd -P) || { echo "error: review state path is unreadable" >&2; exit 1; }
+[ "$state_real" = "$STATE" ] || { echo "error: review state path is ambiguous" >&2; exit 1; }
+META="$STATE/$ID.meta"
+[ -f "$META" ] && [ ! -L "$META" ] || { echo "error: review task record is missing or unsafe" >&2; exit 1; }
+[ "$(sed -n 's/^endpoint_task_id=//p' "$META")" = "$ID" ] \
+  && [ "$(sed -n 's/^kind=//p' "$META")" = scout ] \
+  && [ "$(sed -n 's/^harness=//p' "$META")" = claude ] \
+  && [ "$(sed -n 's/^claude_review=//p' "$META")" = on ] \
+  || { echo "error: review task identity does not match this helper" >&2; exit 1; }
+INBOX="$STATE/$ID.inbox"
+HANDLED="$INBOX/handled"
+[ -e "$INBOX" ] || exit 0
+[ -d "$INBOX" ] && [ ! -L "$INBOX" ] || { echo "error: review inbox is unsafe" >&2; exit 1; }
+[ -d "$HANDLED" ] && [ ! -L "$HANDLED" ] || { echo "error: review handled inbox is unsafe" >&2; exit 1; }
+LOCK="$STATE/.$ID.claude-review-ack.lock"
+mkdir "$LOCK" 2>/dev/null || { echo "error: review acknowledgement is already running" >&2; exit 1; }
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT HUP INT TERM
+oldest=
+for candidate in "$INBOX"/*.msg; do
+  [ -e "$candidate" ] || continue
+  [ -f "$candidate" ] && [ ! -L "$candidate" ] \
+    || { echo "error: review inbox message is unsafe" >&2; exit 1; }
+  name=${candidate##*/}
+  printf '%s\n' "$name" | grep -Eq '^[0-9]+[.]msg$' \
+    || { echo "error: review inbox message name is ambiguous" >&2; exit 1; }
+  if [ -z "$oldest" ] || [ "$candidate" \< "$oldest" ]; then oldest=$candidate; fi
+done
+[ -n "$oldest" ] || exit 0
+destination="$HANDLED/${oldest##*/}"
+[ ! -e "$destination" ] && [ ! -L "$destination" ] \
+  || { echo "error: review inbox acknowledgement already exists" >&2; exit 1; }
+mv -- "$oldest" "$destination"

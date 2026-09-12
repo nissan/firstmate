@@ -1,0 +1,6 @@
+ok - Claude 2.1.266 (Claude Code): scout review read its target, wrote only its outputs, acknowledged a real fm-send steer through its helper, denied project/cross-task access, and preserved repository/settings state
+
+real	1m1.683s
+user	0m1.120s
+sys	0m0.629s
+exit=0

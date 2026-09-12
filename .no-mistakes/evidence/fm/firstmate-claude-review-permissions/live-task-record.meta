@@ -1,0 +1,12 @@
+window=firstmate:fm-claude-review-live
+endpoint_task_id=claude-review-live
+worktree=/tmp/fm-claude-review-live.iCiV5o/wt
+project=/tmp/fm-claude-review-live.iCiV5o/project
+harness=claude
+kind=scout
+tasktmp=/tmp/fm-claude-review-live
+model=default
+effort=default
+claude_review=on
+busy_gen=g1789199127.1946896.31810
+spawn_gen=s1789199127.1946592.16994

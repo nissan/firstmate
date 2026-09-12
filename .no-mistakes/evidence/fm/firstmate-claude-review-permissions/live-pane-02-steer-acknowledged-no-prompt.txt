@@ -1,0 +1,50 @@
+  When this task works on Firstmate itself, the repository root AGENTS.md (also imported by CLAUDE.md) is the primary/secondmate
+  supervisor's contract: follow this brief instead of that supervisor contract.                                                    No changes this session                                                                ✕
+  For that Firstmate task, do the assigned work yourself and report to firstmate; do not adopt the supervisor identity, delegate
+  the task, run fleet supervision, or address the captain.
+  This exception preserves this brief's safety and authority boundaries and applicable contributor guidance, including
+  CONTRIBUTING.md and firstmate-coding-guidelines for Firstmate changes.
+  Other projects retain their own instructions unchanged.
+
+  Claude review inbox acknowledgement
+
+  For this permission-restricted review, do not run the scaffold's mv command directly.
+  After reading this task's own pending inbox message, acknowledge exactly one oldest message by running this no-argument helper:
+    /tmp/fm-claude-review-live.iCiV5o/home/state/claude-review-live.claude-review-ack.sh
+  Run it once per handled message; it cannot accept arguments or access another task.
+
+  Read 1 file
+
+● Write(/tmp/fm-claude-review-live.iCiV5o/home/data/claude-review-live/report.md)
+  ⎿  Wrote 1 line to ../home/data/claude-review-live/report.md
+      1 report: CLAUDE_REVIEW_READ_OK_16770
+
+  Ran 1 shell command
+
+● I finished all three probe steps and am now waiting for firstmate.
+
+  1. The sentinel file review-sentinel.txt contains CLAUDE_REVIEW_READ_OK_16770.
+  2. I created /tmp/fm-claude-review-live.iCiV5o/home/data/claude-review-live/report.md with the single line report:
+     CLAUDE_REVIEW_READ_OK_16770.
+  3. I ran the exact echo command, which appended working: CLAUDE_REVIEW_READ_OK_16770 to claude-review-live.status. It exited
+     with no output.
+
+  No other files, settings or Git state were changed, and I ran no network commands. No inbox message has come in, so I haven't
+  run the acknowledgement helper. When a message arrives I'll handle it and then run the helper once for it.
+
+✻ Churned for 13s · done 5:45 PM
+
+❯ : Firstmate instruction waiting: list '/tmp/fm-claude-review-live.iCiV5o/home/state/claude-review-live.inbox'/*.msg and, in
+  numeric order, read and act on each, then mv each handled file to
+  '/tmp/fm-claude-review-live.iCiV5o/home/state/claude-review-live.inbox'/handled/.
+
+  Appending steered status line to status file
+  ⎿  $ /tmp/fm-claude-review-live.iCiV5o/home/state/claude-review-live.claude-review-ack.sh
+
+✢ Caramelizing… (14s · ↓ 872 tokens)
+  ⎿  Tip: Run claude --continue or claude --resume to resume a conversation
+                                                                                                                                                                                Update available! Run: mise upgrade claude
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · esc to interrupt · ← for agents · /diff to hide diff                                                                                                                                              /rc
