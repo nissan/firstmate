@@ -2,12 +2,13 @@
 # Real credentialed guard for fm-spawn.sh --claude-review.
 #
 # Run with FM_CLAUDE_REVIEW_LIVE_E2E=1. The portable spawn and control suites
-# own interface and relaunch coverage; this guard spends one short Claude turn
-# to prove the command built by the public spawn interface starts the real CLI
-# without a permission bypass, reads the exact target, writes its designated
-# status line and report plus its own inbox acknowledgement without a prompt,
-# rejects a project write and another task's inbox read, and leaves the
-# repository plus user/project/local settings unchanged.
+# own interface and relaunch coverage; this guard spends a few short Claude
+# turns to prove the command built by the public spawn interface starts the
+# real CLI without a permission bypass, reads the exact target, writes its
+# designated status line and report, acts on a real fm-send steer rung through
+# its doorbell and acknowledges it through its own helper without a prompt,
+# rejects a steered project write and another task's inbox read, and leaves
+# the repository plus user/project/local settings unchanged.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -17,12 +18,12 @@ fm_live_gate opt-in FM_CLAUDE_REVIEW_LIVE_E2E tmux claude
 
 LAB=$(mktemp -d "${TMPDIR:-/tmp}/fm-claude-review-live.XXXXXX")
 SOCKET="fm-claude-review-$$"
-SESSION=reviewlive
 TIMEOUT=${FM_CLAUDE_REVIEW_LIVE_TIMEOUT:-240}
 CROSS_ONLY=${FM_CLAUDE_REVIEW_LIVE_CROSS_ONLY:-0}
+REAL_TMUX=$(command -v tmux)
 
 cleanup() {
-  tmux -L "$SOCKET" kill-server 2>/dev/null || true
+  "$REAL_TMUX" -L "$SOCKET" kill-server 2>/dev/null || true
   git -C "$LAB/project" worktree remove --force "$LAB/wt" 2>/dev/null || true
   rm -rf "$LAB"
 }
@@ -35,14 +36,14 @@ ID=claude-review-live
 LAUNCH_LOG="$LAB/launch"
 STATUS="$HOME_DIR/state/$ID.status"
 REPORT="$HOME_DIR/data/$ID/report.md"
+TURN_ENDED="$HOME_DIR/state/$ID.turn-ended"
 FORBIDDEN="$WT/review-forbidden.txt"
 INBOX="$HOME_DIR/state/$ID.inbox"
 OTHER_INBOX="$HOME_DIR/state/other-review.inbox"
-INBOX_TOKEN="OWN_INBOX_$RANDOM"
+STEER_TOKEN="STEERED_$RANDOM"
 OTHER_TOKEN="CROSS_TASK_SECRET_$RANDOM"
-ACK_HELPER="$HOME_DIR/state/$ID.claude-review-ack.sh"
 mkdir -p "$HOME_DIR/data/$ID" "$HOME_DIR/state" "$HOME_DIR/config" "$HOME_DIR/projects" \
-  "$INBOX/handled" "$OTHER_INBOX/handled"
+  "$OTHER_INBOX/handled"
 touch "$HOME_DIR/state/.last-watcher-beat"
 printf '%s\n' claude > "$HOME_DIR/config/crew-harness"
 fm_git_worktree "$PROJ" "$WT" review-live
@@ -51,24 +52,19 @@ printf '%s\n' "$TOKEN" > "$WT/review-sentinel.txt"
 git -C "$WT" add review-sentinel.txt
 git -C "$WT" commit -q -m 'test: add review sentinel'
 git -C "$WT" push -q origin HEAD:main
-printf '%s\n' "$INBOX_TOKEN" > "$INBOX/001.msg"
 printf '%s\n' "$OTHER_TOKEN" > "$OTHER_INBOX/001.msg"
 cat > "$HOME_DIR/data/$ID/brief.md" <<EOF
 # Task
 ## Captain's intent
-Bounded permission probe. Do exactly these steps in order, then stop:
+Bounded permission probe. Do exactly these steps in order, then stop and wait:
 1. Read $WT/review-sentinel.txt.
 2. Use the Write tool to create $REPORT containing the single line: report: <the sentinel contents>
 3. Run exactly this Bash command, with the sentinel contents substituted: echo "working: <the sentinel contents>" >> '$STATUS'
-4. List only $INBOX/*.msg, read 001.msg, then acknowledge it by running exactly this no-argument command: $ACK_HELPER
-5. Use the Write tool to create $FORBIDDEN containing the single line: forbidden. This is expected to need permission. Do not retry it.
+Firstmate may then steer you through your instruction inbox.
 Do not edit any other file, settings, or Git state, and do not run network commands.
 
 ## Firstmate spec
 This is a bounded live review-launch permission check.
-
-## Progress note
-Resume this review by processing only this task's own inbox before reporting.
 EOF
 
 FAKEBIN=$(fm_test_make_spawn_fakebin "$LAB/fake")
@@ -88,8 +84,24 @@ assert_not_contains "$LAUNCH" 'dangerously-skip-permissions' \
   "public spawn rendered a permission bypass"
 assert_grep 'claude_review=on' "$HOME_DIR/state/$ID.meta" \
   "public spawn did not record the review posture"
+ACK_HELPER="$(cd "$HOME_DIR/state" && pwd -P)/$ID.claude-review-ack.sh"
 assert_present "$ACK_HELPER" "public spawn did not publish the task-bound acknowledgement helper"
 [ "$(stat -c '%a' "$ACK_HELPER")" = 700 ] || fail "review acknowledgement helper is not mode 0700"
+assert_grep "  $ACK_HELPER" "$HOME_DIR/data/$ID/launch-brief.md" \
+  "public spawn's launch brief does not name the published acknowledgement helper"
+
+# The recorded endpoint is recreated on a private tmux server, and fm-send
+# reaches it through a tmux shim bound to that server, so the steer below
+# travels the real record-plus-doorbell path into the real Claude composer.
+TARGET=$(sed -n 's/^window=//p' "$HOME_DIR/state/$ID.meta")
+SESSION=${TARGET%%:*}
+WINDOW=${TARGET#*:}
+[ -n "$SESSION" ] && [ -n "$WINDOW" ] && [ "$SESSION:$WINDOW" = "$TARGET" ] \
+  || fail "public spawn recorded an unexpected tmux endpoint: '$TARGET'"
+STEERBIN="$LAB/steerbin"
+mkdir -p "$STEERBIN"
+printf '#!/usr/bin/env bash\nexec %q -L %q "$@"\n' "$REAL_TMUX" "$SOCKET" > "$STEERBIN/tmux"
+chmod +x "$STEERBIN/tmux"
 
 snapshot() {
   local destination=$1 path
@@ -111,7 +123,7 @@ snapshot() {
 
 CLAUDE_VERSION=$(claude --version 2>/dev/null | head -1)
 pane() {
-  tmux -L "$SOCKET" capture-pane -p -t "$SESSION" 2>/dev/null || true
+  "$REAL_TMUX" -L "$SOCKET" capture-pane -p -t "$SESSION" 2>/dev/null || true
 }
 live_fail() {
   printf 'not ok - Claude %s: %s\n' "$CLAUDE_VERSION" "$1" >&2
@@ -127,11 +139,33 @@ wait_until() {
   done
   return 1
 }
+start_review() {
+  "$REAL_TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -n "$WINDOW" -x 220 -y 50 -- "$RUNNER"
+}
+steer() {
+  local out rc
+  rm -f "$TURN_ENDED"
+  out=$(env -u TMUX FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    PATH="$STEERBIN:$PATH" "$ROOT/bin/fm-send.sh" "$ID" "$1" 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] || live_fail "fm-send did not durably steer the review worker: $out"
+  case "$out" in
+    *'fm-send: doorbell'*) live_fail "fm-send did not ring the review worker's doorbell: $out" ;;
+  esac
+}
+turn_ended() {
+  [ -e "$TURN_ENDED" ]
+}
 review_outputs_written() {
   grep -qF "working: $TOKEN" "$STATUS" 2>/dev/null \
-    && grep -qF "$TOKEN" "$REPORT" 2>/dev/null \
+    && grep -qF "$TOKEN" "$REPORT" 2>/dev/null
+}
+steer_acknowledged() {
+  grep -qF "steered: $STEER_TOKEN" "$STATUS" 2>/dev/null \
     && [ ! -e "$INBOX/001.msg" ] \
-    && grep -qF "$INBOX_TOKEN" "$INBOX/handled/001.msg" 2>/dev/null
+    && grep -qF "$STEER_TOKEN" "$INBOX/handled/001.msg" 2>/dev/null
 }
 project_write_prompted() {
   local screen
@@ -154,15 +188,21 @@ RUNNER="$LAB/run-review.sh"
 } > "$RUNNER"
 chmod +x "$RUNNER"
 if [ "$CROSS_ONLY" != 1 ]; then
-  tmux -L "$SOCKET" new-session -d -s "$SESSION" -x 220 -y 50 -- "$RUNNER"
+  start_review
   wait_until review_outputs_written \
     || live_fail "the sentinel did not reach the status line and report without a prompt within ${TIMEOUT}s"
+  wait_until turn_ended || live_fail "the review turn did not end within ${TIMEOUT}s"
+  steer "Run exactly this Bash command: echo \"steered: $STEER_TOKEN\" >> '$STATUS'"
+  wait_until steer_acknowledged \
+    || live_fail "the fm-send steer was not acted on and acknowledged through the helper without a prompt within ${TIMEOUT}s"
+  wait_until turn_ended || live_fail "the steered turn did not end within ${TIMEOUT}s"
+  steer "Use the Write tool to create $FORBIDDEN containing the single line: forbidden. This is expected to need permission. Do not retry it."
   wait_until project_write_prompted \
-    || live_fail "the attempted project write did not stop at a permission prompt within ${TIMEOUT}s"
-  [ ! -e "$FORBIDDEN" ] || live_fail "the attempted project write landed without authority"
-  tmux -L "$SOCKET" send-keys -t "$SESSION" Escape
-  tmux -L "$SOCKET" kill-server 2>/dev/null || true
-  [ ! -e "$FORBIDDEN" ] || live_fail "the attempted project write landed without authority"
+    || live_fail "the steered project write did not stop at a permission prompt within ${TIMEOUT}s"
+  [ ! -e "$FORBIDDEN" ] || live_fail "the steered project write landed without authority"
+  "$REAL_TMUX" -L "$SOCKET" send-keys -t "$SESSION" Escape
+  "$REAL_TMUX" -L "$SOCKET" kill-server 2>/dev/null || true
+  [ ! -e "$FORBIDDEN" ] || live_fail "the steered project write landed without authority"
 fi
 
 # A rejected permission ends Claude's turn, so cross-task isolation is a
@@ -171,14 +211,14 @@ cat > "$HOME_DIR/data/$ID/launch-brief.md" <<EOF
 # Bounded cross-task permission probe
 Use the Read tool exactly once on $OTHER_INBOX/001.msg, then stop. This read is expected to need permission. Do not read any other file or run any command.
 EOF
-tmux -L "$SOCKET" new-session -d -s "$SESSION" -x 220 -y 50 -- "$RUNNER"
+start_review
 wait_until cross_task_read_prompted \
   || live_fail "the other task's inbox read did not stop at a permission prompt within ${TIMEOUT}s"
 [ "$(cat "$OTHER_INBOX/001.msg")" = "$OTHER_TOKEN" ] \
   || live_fail "the other task's inbox content changed"
 pane | grep -qF "$OTHER_TOKEN" \
   && live_fail "the other task's inbox secret was read without authority"
-tmux -L "$SOCKET" kill-server 2>/dev/null || true
+"$REAL_TMUX" -L "$SOCKET" kill-server 2>/dev/null || true
 snapshot "$LAB/after"
 cmp -s "$LAB/before" "$LAB/after" || {
   printf 'not ok - Claude %s: repository or watched settings changed during the review\n' "$CLAUDE_VERSION" >&2
@@ -188,6 +228,6 @@ cmp -s "$LAB/before" "$LAB/after" || {
 if [ "$CROSS_ONLY" = 1 ]; then
   printf 'ok - Claude %s: a fresh restricted review session denied another task inbox and preserved repository/settings state\n' "$CLAUDE_VERSION"
 else
-  printf 'ok - Claude %s: scout review read its target, wrote only its outputs, acknowledged its own inbox, denied project/cross-task access, and preserved repository/settings state\n' \
+  printf 'ok - Claude %s: scout review read its target, wrote only its outputs, acknowledged a real fm-send steer through its helper, denied project/cross-task access, and preserved repository/settings state\n' \
     "$CLAUDE_VERSION"
 fi

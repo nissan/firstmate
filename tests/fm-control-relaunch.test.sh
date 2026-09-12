@@ -245,6 +245,11 @@ run_spawn() {  # <case-dir> <args...>
     "$SPAWN" "$@" 2>&1
 }
 
+run_send() {  # <case-dir> <id> <message>
+  env PATH="$1/fakebin:$PATH" FM_HOME="$1/home" FM_FAKE_DIR="$1/fake" \
+    FM_SEND_SETTLE=0 "$ROOT/bin/fm-send.sh" "$2" "$3" 2>&1
+}
+
 meta_field() {  # <case-dir> <id> <key>
   grep "^$3=" "$1/home/state/$2.meta" | tail -1 | cut -d= -f2-
 }
@@ -372,6 +377,68 @@ test_claude_review_relaunch_preserves_or_explicitly_adds_posture() {
   [ "$(meta_field "$dir" rv2 claude_review)" = on ] \
     || fail "explicit control opt-in did not publish its durable posture"
   pass "Claude review scout posture is durable across relaunch and can be added through fm-control"
+}
+
+test_claude_review_relaunch_intake_acknowledges_through_published_helper() {
+  local dir out rc launch brief helper inbox
+  dir=$(new_case review-intake rv6)
+  add_ship_task "$dir" rv6 claude
+  sed -i 's/^kind=ship$/kind=scout/' "$dir/home/state/rv6.meta"
+  inbox="$dir/home/state/rv6.inbox"
+  out=$(run_send "$dir" rv6 "steer sent before the review relaunch"); rc=$?
+  expect_code 0 "$rc" "fm-send should durably steer the scout before its relaunch"$'\n'"$out"
+  assert_grep "steer sent before the review relaunch" "$inbox/001.msg" \
+    "fm-send did not record the pre-relaunch steer in the scout's own inbox"
+
+  out=$(run_control "$dir" rv6 relaunch --claude-review --note "resume the exact-head review"); rc=$?
+  expect_code 0 "$rc" "a Claude review relaunch with a progress note should succeed"$'\n'"$out"
+  launch=$(cat "$dir/fake/literal")
+  brief="$dir/home/data/rv6/launch-brief.md"
+  helper="$(cd "$dir/home/state" && pwd -P)/rv6.claude-review-ack.sh"
+  assert_contains "$launch" "$brief" "the replacement launch does not read its generated launch brief"
+  assert_grep "resume the exact-head review" "$brief" \
+    "the relaunch progress note did not reach the replacement's launch brief"
+  assert_grep "$inbox/handled/" "$brief" \
+    "the replacement's launch brief lost the progress note's own-inbox intake"
+  assert_grep "  $helper" "$brief" \
+    "the replacement's launch brief does not name its exact published acknowledgement helper"
+  [ -f "$helper" ] && [ "$(stat -c '%a' "$helper")" = 700 ] \
+    || fail "the helper named by the replacement's launch brief is not published at that path"
+  "$helper" || fail "the published helper could not acknowledge the steer sent before relaunch"
+  assert_absent "$inbox/001.msg" "the pre-relaunch steer remained pending after acknowledgement"
+  assert_grep "steer sent before the review relaunch" "$inbox/handled/001.msg" \
+    "the pre-relaunch steer was not moved intact into the scout's own handled directory"
+  pass "Claude review relaunch intake names the published helper, which acknowledges a pre-relaunch steer"
+}
+
+test_claude_review_relaunch_keeps_helper_after_post_publication_failure() {
+  local dir out rc=0 helper inbox
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  dir=$(new_case review-commit-failed rv5)
+  add_ship_task "$dir" rv5 claude
+  sed -i 's/^kind=ship$/kind=scout/' "$dir/home/state/rv5.meta"
+  printf '%s\n' 'claude_review=on' >> "$dir/home/state/rv5.meta"
+  seed_backlog "$dir" rv5 queued
+  break_tasks_axi_start "$dir"
+
+  out=$(run_control "$dir" rv5 relaunch --note "resume review") || rc=$?
+  [ "$rc" -ne 0 ] || fail "a relaunch whose backlog commit fails must report failure"$'\n'"$out"
+  assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement review worker was never launched"
+  [ "$(meta_field "$dir" rv5 claude_review)" = on ] \
+    || fail "the kept replacement record lost its review posture"
+  helper="$(cd "$dir/home/state" && pwd -P)/rv5.claude-review-ack.sh"
+  assert_present "$helper" \
+    "a post-publication relaunch failure deleted the live review worker's acknowledgement helper"
+  inbox="$dir/home/state/rv5.inbox"
+  out=$(run_send "$dir" rv5 "steer after the failed commit"); rc=$?
+  expect_code 0 "$rc" "fm-send should durably steer the kept review worker"$'\n'"$out"
+  "$helper" || fail "the kept review worker could not acknowledge its own inbox"
+  assert_grep "steer after the failed commit" "$inbox/handled/001.msg" \
+    "the kept review worker's steer was not acknowledged into its own handled directory"
+  pass "a relaunch that fails after republishing keeps the live review worker's acknowledgement helper"
 }
 
 test_claude_review_relaunch_rejects_unsupported_switch_before_stop() {
@@ -1814,6 +1881,8 @@ test_documented_exit_then_relaunch_sequence_recovers_a_missing_endpoint() {
 }
 
 test_claude_review_relaunch_preserves_or_explicitly_adds_posture
+test_claude_review_relaunch_intake_acknowledges_through_published_helper
+test_claude_review_relaunch_keeps_helper_after_post_publication_failure
 test_claude_review_relaunch_rejects_unsupported_switch_before_stop
 test_claude_review_ship_relaunch_refuses_before_stop_or_record_change
 test_claude_review_relaunch_rejects_unrecognized_record_before_stop

@@ -923,7 +923,6 @@ RELAUNCH_REPLACEMENT_STATE=
 RELAUNCH_REPLACEMENT_WT=
 CONFIG_INHERIT_LOCK=
 CONFIG_INHERIT_LOCK_HELD=0
-CLAUDE_REVIEW_ACK_HELPER=
 
 spawn_fresh_commit_rollback() {
   if fm_backlog_atomic_transition rollback "$STATE/$ID.meta" \
@@ -954,9 +953,6 @@ parse_orca_worktree_result() {
 
 spawn_abort_cleanup() {
   local status=$?
-  if [ "$status" -ne 0 ] && [ -n "$CLAUDE_REVIEW_ACK_HELPER" ]; then
-    rm -f -- "$CLAUDE_REVIEW_ACK_HELPER" 2>/dev/null || true
-  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] \
      && [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] \
      && [ -n "$SPAWN_META_TMP" ] \

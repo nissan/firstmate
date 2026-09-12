@@ -41,7 +41,7 @@ Fresh review launches use the same command-delivery path on tmux, Herdr, Zellij,
 The public interfaces refuse this flag for ships, secondmates, every other harness, and raw launch commands, and refuse switching a recorded Claude review to another harness rather than silently weakening its posture.
 Ordinary Claude workers keep the unattended permission-bypass launch unchanged.
 
-Run `FM_CLAUDE_REVIEW_LIVE_E2E=1 tests/fm-claude-review-launch-live-e2e.test.sh` after a Claude upgrade. It proves the real credentialed CLI still accepts the launch, reads the exact target, writes its durable outputs, acknowledges its own inbox through the helper, denies project and cross-task access, and leaves repository plus watched user/project/local settings unchanged.
+Run `FM_CLAUDE_REVIEW_LIVE_E2E=1 tests/fm-claude-review-launch-live-e2e.test.sh` after a Claude upgrade. It proves the real credentialed CLI still accepts the launch, reads the exact target, writes its durable outputs, acts on a real `fm-send` steer rung through its doorbell and acknowledges it through the helper, denies a steered project write and cross-task access, and leaves repository plus watched user/project/local settings unchanged.
 Set `FM_CLAUDE_REVIEW_LIVE_CROSS_ONLY=1` to refresh only the fresh-session cross-task denial arm.
 `../../../docs/verification/runtime-backends.md` records the current empirical result.
 

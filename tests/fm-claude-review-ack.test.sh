@@ -68,6 +68,24 @@ expect_code 1 "$rc" "helper must refuse cross-task metadata identity"
 assert_contains "$out" 'identity does not match' "cross-task identity refusal was unclear"
 mv "$TMP_ROOT/meta" "$HOME_DIR/state/$ID.meta"
 
+SEND_LOG="$TMP_ROOT/send"
+: > "$SEND_LOG"
+out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+  FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+  FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+  FM_SEND_SETTLE=0 FM_FAKE_LAUNCH_LOG="$SEND_LOG" FM_FAKE_DUPLICATE_WINDOW="fm-$ID" \
+  PATH="$FAKEBIN:$PATH" "$ROOT/bin/fm-send.sh" "$ID" "steered review instruction" 2>&1)
+expect_code 0 "$?" "fm-send did not durably steer the review task: $out"
+assert_grep 'steered review instruction' "$INBOX/003.msg" \
+  "fm-send did not record the steer in the review task's own inbox"
+assert_grep "list '$INBOX'/*.msg" "$SEND_LOG" "fm-send did not ring the review task's doorbell"
+assert_no_grep 'steered review instruction' "$SEND_LOG" "fm-send typed the steer payload into the review pane"
+"$HELPER" || fail "helper failed to acknowledge a steer delivered by fm-send"
+assert_absent "$INBOX/003.msg" "fm-send steer remained pending after acknowledgement"
+assert_grep 'steered review instruction' "$HANDLED/003.msg" \
+  "fm-send steer was not moved intact into its own handled directory"
+assert_present "$OTHER/001.msg" "acknowledging an fm-send steer touched another task's inbox"
+
 "$HELPER" || fail "empty own inbox should be an idempotent success"
 assert_present "$OTHER/001.msg" "empty own-inbox acknowledgement touched another task"
-pass "Claude review acknowledgement helper is task-bound, one-at-a-time, argument-free, and symlink-safe"
+pass "Claude review acknowledgement helper is task-bound, one-at-a-time, argument-free, symlink-safe, and acknowledges real fm-send steers"

@@ -308,14 +308,18 @@ The composer-classification record below observes the same gate from the other s
 
 Verified 2026-09-12 on Claude Code 2.1.266 with real credentials and tmux.
 The public `fm-spawn.sh --claude-review` interface generated and durably recorded a Claude scout launch using `--permission-mode default` plus exact output, own-inbox read, and no-argument acknowledgement-helper grants; the rendered launch contained no `--dangerously-skip-permissions` string.
-The first real worker read one tracked sentinel, wrote its report and status, and invoked the generated mode-0700 helper, which moved exactly its own oldest inbox message into `handled/` without a prompt.
-Its next step, a Write to a new file in the worktree, stopped at Claude's permission prompt, and that file never appeared.
+The first real worker read one tracked sentinel and wrote its report and status.
+A real `fm-send` steer then rang its doorbell in the live tmux pane; the worker acted on the durable record and acknowledged it through the generated mode-0700 helper, which moved exactly that record into `handled/` without a prompt.
+A second steer asked for a Write to a new file in the worktree; it stopped at Claude's permission prompt, and that file never appeared.
 Because rejecting a permission ends Claude's turn, a separate fresh-session arm attempted only another task's inbox read; it stopped at the permission prompt without exposing or changing the other task's message.
 Across both arms, Git HEAD, full untracked-aware status, and the exact launch's user/project/local `settings.json` and `settings.local.json` files remained byte-identical.
 The portable interface coverage is `tests/fm-spawn-dispatch-profile.test.sh`, `tests/fm-control-relaunch.test.sh`, and `tests/fm-claude-review-ack.test.sh`. Those suites also prove:
 - ordinary Claude launch behavior stays unchanged;
 - ships, unsupported harnesses, secondmates, and raw launch commands refuse;
 - the helper is task-bound, argument-free, mode-0700, symlink-safe, one-message-at-a-time, destination-exclusive, and removed by normal cleanup;
+- a real `fm-send` steer lands in the review task's own inbox and rings its doorbell without typing the payload, and the published helper acknowledges it;
+- a review relaunch's generated launch brief carries the progress note and the exact published helper path, and that helper acknowledges a steer sent before the relaunch;
+- a relaunch that fails after republishing its record keeps the live worker's helper;
 - a recorded posture value other than `on` refuses before stopping its worker;
 - same-harness relaunch preserves the durable posture, and an existing Claude task can opt in through control;
 - an unsupported switch refuses before stopping its worker.
