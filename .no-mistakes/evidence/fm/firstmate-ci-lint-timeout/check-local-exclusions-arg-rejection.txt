@@ -1,0 +1,12 @@
+$ bin/fm-lint.sh --check-local-exclusions bin/fm-lint.sh
+fm-lint.sh: --check-local-exclusions takes no paths, --fast, or --list-files.
+exit=2
+
+$ bin/fm-lint.sh --check-local-exclusions --fast
+fm-lint.sh: --check-local-exclusions takes no paths, --fast, or --list-files.
+exit=2
+
+$ bin/fm-lint.sh --check-local-exclusions --list-files
+fm-lint.sh: --check-local-exclusions takes no paths, --fast, or --list-files.
+exit=2
+

@@ -1,0 +1,3 @@
+Unloaded host, 12 CPUs, ShellCheck 0.11.0 (pinned)
+base 6b449e1 tests/fm-lint.test.sh wall=87.582s not_ok=0 ok=38
+HEAD ac9bcdb tests/fm-lint.test.sh wall=13.536s not_ok=0 ok=39

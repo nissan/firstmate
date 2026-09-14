@@ -1,4 +1,4 @@
-$ CI=true GITHUB_ACTIONS=true bin/fm-lint.sh --check-local-exclusions
 fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
 fm-lint.sh: local exclusion completeness over every canonical root; ShellCheck source following disabled
-exit=0 elapsed=60s roots=384
+exit=0
+wall=59.479s (CI=true GITHUB_ACTIONS=true, whole canonical root set)

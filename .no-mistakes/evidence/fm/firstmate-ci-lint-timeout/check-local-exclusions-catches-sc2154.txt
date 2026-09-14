@@ -1,0 +1,21 @@
+# Scratch copy of HEAD ac9bcdb plus canonical root bin/fm-sweep-demo.sh, which reads a lowercase var assigned by its sourced (non-root) bin/lib/fm-sweep-demo-owner.sh
+$ CI=true bin/fm-lint.sh --list-files | grep sweep-demo   # which files are canonical roots
+bin/fm-sweep-demo.sh
+
+$ CI=true bin/fm-lint.sh bin/fm-sweep-demo.sh   # CI source-following posture
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+exit=0
+
+$ CI=true GITHUB_ACTIONS=true bin/fm-lint.sh --check-local-exclusions   # Lint job completeness step, every canonical root
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: local exclusion completeness over every canonical root; ShellCheck source following disabled
+
+In bin/fm-sweep-demo.sh line 4:
+printf '%s\n' "$demo_owner_value"
+               ^---------------^ SC2154 (warning): demo_owner_value is referenced but not assigned.
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2154 -- demo_owner_value is referenced bu...
+fm-lint.sh: local changed-file mode would report the findings above; fix them or extend LOCAL_NOX_EXCLUDE beyond SC1091,SC2034,SC2153,SC2329.
+exit=1
