@@ -716,6 +716,122 @@ SH
   pass "fm-lint.sh changed mode excludes every cross-file code that explicit paths still report"
 }
 
+# A root reading a variable its sourced library assigns is clean with
+# --external-sources but reports SC2154, outside the local exclusion list,
+# without it. The completeness check must catch that on every root, not only
+# the ones a local branch changed.
+test_check_local_exclusions_catches_codes_outside_the_list() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): local exclusion completeness check"
+    return
+  fi
+  local tmp fakebin repo lint_copy diff_file out rc
+  tmp=$(fm_test_tmproot fm-lint-local-exclusions-check)
+  fakebin=$(fm_fakebin "$tmp")
+  fm_lint_stub_git "$fakebin"
+  repo="$tmp/repo"
+  mkdir -p "$repo/bin/backends" "$repo/bin/lib" "$repo/tests"
+  lint_copy="$repo/bin/fm-lint.sh"
+  cp "$LINT" "$lint_copy"
+  cat > "$repo/bin/fm-lint-workflows.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$lint_copy" "$repo/bin/fm-lint-workflows.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/bin/backends/noop.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/tests/noop.test.sh"
+  cat > "$repo/bin/lib/owner.sh" <<'SH'
+#!/usr/bin/env bash
+owner_value=ok
+SH
+  cat > "$repo/bin/reader.sh" <<'SH'
+#!/usr/bin/env bash
+# shellcheck source=bin/lib/owner.sh
+. "$(dirname "$0")/lib/owner.sh"
+printf '%s\n' "$owner_value"
+SH
+
+  rc=0
+  out=$(cd "$repo" && PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true "$lint_copy" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "CI lint rejected a root that is clean with source following"$'\n'"$out"
+
+  diff_file="$tmp/diff.nul"
+  fm_lint_write_diff_file "$diff_file" "tests/noop.test.sh"
+  rc=0
+  out=$(cd "$repo" && PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' \
+    FM_TEST_GIT_BRANCH=feature FM_TEST_GIT_DIFF_FILE="$diff_file" \
+    "$lint_copy" --check-local-exclusions 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "completeness check passed a root reporting a code outside the list"$'\n'"$out"
+  assert_contains "$out" "bin/reader.sh" "completeness check skipped a root the branch did not change"
+  assert_contains "$out" "SC2154" "completeness check did not report the unlisted code"
+  assert_not_contains "$out" "SC1091 (" "completeness check reported a listed code"
+  assert_contains "$out" "LOCAL_NOX_EXCLUDE" "completeness check did not name the exclusion list"
+
+  rm -f "$repo/bin/reader.sh"
+  rc=0
+  out=$(cd "$repo" && PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' \
+    "$lint_copy" --check-local-exclusions 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "completeness check failed roots that report only listed codes"$'\n'"$out"
+
+  rc=0
+  out=$(cd "$repo" && "$lint_copy" --check-local-exclusions bin/fm-lint.sh 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] || fail "completeness check accepted an explicit path (exit $rc)"$'\n'"$out"
+  pass "fm-lint.sh --check-local-exclusions fails on unlisted codes across every root"
+}
+
+# The completeness sweep lints every root, so it belongs in CI's bounded Lint
+# job, not a behavior lane. Parse every workflow as YAML and split each step's
+# run script into shell words to find where bin/fm-lint.sh actually runs.
+test_ci_runs_local_exclusion_check_once_in_the_lint_job() {
+  command -v ruby >/dev/null 2>&1 \
+    || fail "ruby is required to parse .github/workflows as YAML"
+  local report sweeps workflow job job_timeout step_timeout
+  report=$(find "$ROOT/.github/workflows" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 \
+    | LC_ALL=C sort -z | xargs -0 ruby -ryaml -rshellwords -e '
+operators = [">", ">>", "<", "|", "||", "&&", ";", ")", "2>&1"]
+ARGV.each do |path|
+  doc = YAML.load_file(path)
+  jobs = doc.is_a?(Hash) ? doc["jobs"] : nil
+  next unless jobs.is_a?(Hash)
+  jobs.each do |job_id, job|
+    next unless job.is_a?(Hash) && job["steps"].is_a?(Array)
+    job["steps"].each do |step|
+      next unless step.is_a?(Hash) && step["run"].is_a?(String)
+      step["run"].gsub("\\\n", " ").each_line do |line|
+        next if line =~ /\A\s*#/
+        words = begin
+          Shellwords.split(line)
+        rescue ArgumentError
+          next
+        end
+        words.each_with_index do |word, i|
+          next unless word == "bin/fm-lint.sh"
+          args = words[(i + 1)..].take_while { |w| !operators.include?(w) }
+          puts [File.basename(path), job_id, job["timeout-minutes"], step["timeout-minutes"],
+                args.include?("--check-local-exclusions") ? "sweep" : (args.empty? ? "default" : "other")].join("\t")
+        end
+      end
+    end
+  end
+end
+') || fail "could not parse bin/fm-lint.sh invocations from the workflows"
+  sweeps=$(printf '%s\n' "$report" | awk -F'\t' '$5 == "sweep"')
+  [ "$(printf '%s\n' "$sweeps" | grep -c .)" -eq 1 ] \
+    || fail "the completeness sweep must run exactly once across CI"$'\n'"$report"
+  IFS=$'\t' read -r workflow job job_timeout step_timeout _ <<<"$sweeps"
+  [ "$workflow" = ci.yml ] && [ "$job" = lint ] \
+    || fail "the completeness sweep runs in $workflow job $job, not ci.yml job lint"
+  case "$job_timeout:$step_timeout" in
+    *[!0-9:]*|:*|*:) fail "the completeness sweep needs both a step and a Lint job timeout, got job=$job_timeout step=$step_timeout" ;;
+  esac
+  [ "$step_timeout" -lt "$job_timeout" ] \
+    || fail "the completeness sweep step timeout must sit under the Lint job backstop"
+  printf '%s\n' "$report" | awk -F'\t' '$1 == "ci.yml" && $2 == "lint" && $5 == "default" { found = 1 } END { exit !found }' \
+    || fail "CI's Lint job no longer runs the default bin/fm-lint.sh lint"$'\n'"$report"
+  pass "CI runs the local exclusion completeness sweep exactly once, bounded, in the Lint job"
+}
+
 test_pins_an_explicit_version() {
   [ -n "$REQUIRED" ] || fail "fm-lint.sh --required-version printed nothing"
   # The captain-agreed pin: adopt ShellCheck 0.11.0's rule set consistently,
@@ -1350,3 +1466,5 @@ test_merge_base_less_keeps_external_sources
 test_explicit_path_keeps_external_sources
 test_fast_mode_on_a_local_branch_keeps_source_following
 test_changed_mode_hides_cross_file_codes_that_ci_still_sees
+test_check_local_exclusions_catches_codes_outside_the_list
+test_ci_runs_local_exclusion_check_once_in_the_lint_job

@@ -14,6 +14,11 @@
 # and SC2329, the codes that need library context. Those codes still run in
 # CI over the whole set. Explicit paths keep --external-sources with the
 # selected dataflow mode.
+# --check-local-exclusions applies that local changed-file posture to every
+# canonical root, whatever the branch or diff, and fails when any root reports
+# a code outside the exclusion list, so the list cannot silently fall short.
+# CI's Lint job runs it as its own step; it skips the backend-purity and
+# workflow checks that the default run already owns.
 # Tests stop source analysis at imported production modules because CI analyzes
 # every production shell separately as a canonical, source-aware root.
 # The default (no explicit-path) path also runs bin/fm-lint-workflows.sh so a
@@ -53,6 +58,7 @@
 #   fm-lint.sh                         lint the context-selected file set (see above)
 #   fm-lint.sh --fast [path]...       local lint with extended analysis disabled
 #   fm-lint.sh <path>...               lint explicit roots with the same config
+#   fm-lint.sh --check-local-exclusions  prove the local exclusion list complete
 #   fm-lint.sh --jobs <1|2> [path]...  override bounded worker count
 #   fm-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
 #   fm-lint.sh --required-version      print the ShellCheck pin
@@ -397,8 +403,13 @@ TELEMETRY=${FM_LINT_TELEMETRY:-}
 FAST=0
 ANALYSIS_MODE=full
 LIST_FILES=0
+CHECK_LOCAL_EXCLUSIONS=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --check-local-exclusions)
+      CHECK_LOCAL_EXCLUSIONS=1
+      shift
+      ;;
     --jobs)
       [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --jobs requires 1 or 2.\n' >&2; exit 2; }
       JOBS=$2
@@ -442,6 +453,12 @@ case "$JOBS" in
   1|2) ;;
   *) printf 'fm-lint.sh: jobs must be 1 or 2, got %s.\n' "$JOBS" >&2; exit 2 ;;
 esac
+
+if [ "$CHECK_LOCAL_EXCLUSIONS" -eq 1 ] \
+  && { [ "$#" -gt 0 ] || [ "$FAST" -eq 1 ] || [ "$LIST_FILES" -eq 1 ]; }; then
+  printf 'fm-lint.sh: --check-local-exclusions takes no paths, --fast, or --list-files.\n' >&2
+  exit 2
+fi
 
 if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; }; then
   printf 'fm-lint.sh: --fast is local-only; CI uses full ShellCheck analysis.\n' >&2
@@ -492,7 +509,8 @@ if [ "$#" -gt 0 ]; then
   ROOTS=("$@")
 else
   full_lint=1
-  if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ] \
+  if [ "$CHECK_LOCAL_EXCLUSIONS" -eq 0 ] \
+    && [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ] \
     && command -v git >/dev/null 2>&1 \
     && git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     && [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" != main ]; then
@@ -514,7 +532,7 @@ else
     done < <(git diff --name-only --diff-filter=ACMR -z "$merge_base" -- 2>/dev/null | LC_ALL=C sort -z)
   fi
 fi
-if [ "$CHANGED_MODE" -eq 1 ] && [ "$FAST" -eq 0 ]; then
+if [ "$CHECK_LOCAL_EXCLUSIONS" -eq 1 ] || { [ "$CHANGED_MODE" -eq 1 ] && [ "$FAST" -eq 0 ]; }; then
   FOLLOW_SOURCES=0
   EXCLUDE_CODES=$LOCAL_NOX_EXCLUDE
   ANALYSIS_MODE=local
@@ -550,6 +568,8 @@ if [ "$resolved" != "$REQUIRED_SHELLCHECK" ]; then
 fi
 if [ "$FAST" -eq 1 ]; then
   printf 'fm-lint.sh: fast local mode; ShellCheck extended analysis disabled\n' >&2
+elif [ "$CHECK_LOCAL_EXCLUSIONS" -eq 1 ]; then
+  printf 'fm-lint.sh: local exclusion completeness over every canonical root; ShellCheck source following disabled\n' >&2
 elif [ "$FOLLOW_SOURCES" -eq 0 ]; then
   printf 'fm-lint.sh: local changed-file mode; ShellCheck source following disabled\n' >&2
 else
@@ -870,6 +890,13 @@ EOF
     printf 'fm-lint.sh: could not write telemetry to %s.\n' "$TELEMETRY" >&2
     [ "$overall_rc" -ne 0 ] || overall_rc=2
   fi
+fi
+
+if [ "$CHECK_LOCAL_EXCLUSIONS" -eq 1 ]; then
+  [ "$overall_rc" -eq 0 ] \
+    || printf 'fm-lint.sh: local changed-file mode would report the findings above; fix them or extend LOCAL_NOX_EXCLUDE beyond %s.\n' \
+      "$LOCAL_NOX_EXCLUDE" >&2
+  exit "$overall_rc"
 fi
 
 purity_rc=0

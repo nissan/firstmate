@@ -13,6 +13,9 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    # Healthy runs finish around 20-25 min, nearly all of it the default full
+    # lint. This cap is a hang tripwire, not the expected end of the job.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
       - name: Install pinned ShellCheck
@@ -30,6 +33,12 @@ jobs:
       # and the pre-push gate on this script so a self-broken ci.yml still
       # fails locally before merge.
       - run: bin/fm-lint.sh
+      # Full-root sweep proving the local changed-file exclusion list is
+      # complete. It lints every root, so it lives here rather than in a
+      # behavior lane; healthy runs take a minute or two.
+      - name: Prove local lint exclusion list complete
+        timeout-minutes: 15
+        run: bin/fm-lint.sh --check-local-exclusions
 
   # Deterministic proof that portable parallel shards + portable serial + Herdr
   # equal the complete tests/*.test.sh inventory with no missing or duplicates,
