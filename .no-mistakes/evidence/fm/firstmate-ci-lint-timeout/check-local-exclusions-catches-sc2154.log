@@ -1,0 +1,24 @@
+# scratch copy of HEAD; committed bin/fm-demo-reader.sh reads a var assigned in its sourced lib (clean with --external-sources)
+$ cat bin/fm-demo-reader.sh
+#!/usr/bin/env bash
+# shellcheck source=bin/lib/fm-demo-owner.sh
+. "$(dirname "$0")/lib/fm-demo-owner.sh"
+printf '%s\n' "$fm_demo_owner_value"
+
+$ bin/fm-lint.sh bin/fm-demo-reader.sh   # explicit path, source-following (CI posture)
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+exit=0
+
+$ bin/fm-lint.sh --check-local-exclusions   # local, non-CI, branch diff touches only README.md
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: local exclusion completeness over every canonical root; ShellCheck source following disabled
+
+In bin/fm-demo-reader.sh line 4:
+printf '%s\n' "$fm_demo_owner_value"
+               ^------------------^ SC2154 (warning): fm_demo_owner_value is referenced but not assigned.
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2154 -- fm_demo_owner_value is referenced...
+fm-lint.sh: local changed-file mode would report the findings above; fix them or extend LOCAL_NOX_EXCLUDE beyond SC1091,SC2034,SC2153,SC2329.
+exit=1 elapsed=59s

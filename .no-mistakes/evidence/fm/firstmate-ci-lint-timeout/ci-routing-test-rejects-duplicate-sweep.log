@@ -1,0 +1,20 @@
+# head test + head ci.yml with the sweep step also added to job test-coverage:
+  test-coverage:
+    name: Test coverage guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prove complete regression partition
+        run: bin/fm-test-run.sh --check-coverage
+      - name: Duplicate completeness sweep
+        timeout-minutes: 15
+        run: bin/fm-lint.sh --check-local-exclusions
+
+$ bash tests/fm-lint.test.sh | tail
+ok - fm-lint.sh --check-local-exclusions fails on unlisted codes across every root
+not ok - the completeness sweep must run exactly once across CI
+ci.yml	lint	60		default
+ci.yml	lint	60	15	sweep
+ci.yml	test-coverage		15	sweep
+ci.yml	macos-stock-bash	10		other
+exit=1

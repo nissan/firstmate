@@ -1,0 +1,10 @@
+# head tests/fm-lint.test.sh + head bin/fm-lint.sh against BASE .github/workflows/ci.yml (no sweep step)
+ok - fm-lint.sh without a merge-base keeps source following without the local exclusion list
+ok - fm-lint.sh explicit paths keep source following
+ok - fm-lint.sh --fast on a local branch keeps source following
+ok - fm-lint.sh changed mode excludes every cross-file code that explicit paths still report
+ok - fm-lint.sh --check-local-exclusions fails on unlisted codes across every root
+not ok - the completeness sweep must run exactly once across CI
+ci.yml	lint			default
+ci.yml	macos-stock-bash	10		other
+exit=1
