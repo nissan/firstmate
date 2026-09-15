@@ -695,7 +695,6 @@ if [ -n "$TELEMETRY" ]; then
     printf 'analysis_mode\t%s\n' "$ANALYSIS_MODE"
     printf 'jobs\t%s\n' "$JOBS"
     printf 'shard_count\t%s\n' "$SHARD_COUNT"
-    printf 'max_concurrent_workers\t%s\n' "$JOBS"
     printf 'root_count\t%s\n' "$ROOT_COUNT"
     printf 'run_status\tstarted\n'
   } > "$telemetry_tmp"
@@ -864,7 +863,6 @@ EOF
     printf 'analysis_mode\t%s\n' "$ANALYSIS_MODE"
     printf 'jobs\t%s\n' "$JOBS"
     printf 'shard_count\t%s\n' "$SHARD_COUNT"
-    printf 'max_concurrent_workers\t%s\n' "$JOBS"
     printf 'root_count\t%s\n' "$ROOT_COUNT"
     printf 'direct_lines\t%s\n' "$direct_lines"
     printf 'direct_bytes\t%s\n' "$direct_bytes"

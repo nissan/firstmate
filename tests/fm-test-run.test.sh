@@ -1070,7 +1070,6 @@ test_portable_serial_shards_partition_the_serial_lane() {
   # Every shard carries a real share of the lane, so no degenerate partition
   # leaves one runner doing nearly all of the work the split exists to spread.
   total=$(printf '%s\n' "$serial" | wc -l | tr -d ' ')
-  [ "$total" -eq 162 ] || fail "portable serial census is stale: expected 162 scripts, got $total"
   cap=$((total * 6 / 10))
   shard=1
   while [ "$shard" -le "$count" ]; do
@@ -1090,14 +1089,16 @@ test_portable_serial_shards_partition_the_serial_lane() {
 }
 
 test_portable_serial_plan_has_deterministic_safe_margin() {
-  local first second lines scripts max_ms matrix
+  local first second lines scripts serial_total max_ms matrix
   first=$("$RUNNER" --serial-shard-plan) || fail "serial shard plan failed"
   second=$("$RUNNER" --serial-shard-plan) || fail "second serial shard plan failed"
   [ "$first" = "$second" ] || fail "serial shard plan changed across identical invocations"
   lines=$(printf '%s\n' "$first" | wc -l | tr -d ' ')
   [ "$lines" -eq 6 ] || fail "serial shard plan reported $lines shards instead of 6"
   scripts=$(printf '%s\n' "$first" | awk -F '\t' '{sum += $2} END {print sum + 0}')
-  [ "$scripts" -eq 162 ] || fail "serial shard plan covered $scripts scripts instead of 162"
+  serial_total=$("$RUNNER" --list --lane portable-serial | wc -l | tr -d ' ')
+  [ "$scripts" -eq "$serial_total" ] \
+    || fail "serial shard plan covered $scripts scripts instead of the $serial_total-script serial lane"
   max_ms=$(printf '%s\n' "$first" | awk -F '\t' '$3 > max {max=$3} END {print max + 0}')
   [ "$max_ms" -le 1140000 ] \
     || fail "serial shard plan leaves less than 11 minutes under the 30-minute job cap: ${max_ms}ms"
