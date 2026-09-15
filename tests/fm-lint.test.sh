@@ -278,7 +278,14 @@ if [ -n "\${FM_TEST_FLAG_LOG:-}" ]; then
 fi
 [ "\$#" -eq 0 ] || shift
 printf '%s\n' "\$@" >> "$log"
-exit 0
+if [ -n "\${FM_TEST_CONCURRENCY_DIR:-}" ]; then
+  mkdir -p "\$FM_TEST_CONCURRENCY_DIR/active.\$\$"
+  find "\$FM_TEST_CONCURRENCY_DIR" -maxdepth 1 -type d -name 'active.*' | wc -l \
+    >> "\$FM_TEST_CONCURRENCY_DIR/counts"
+  sleep 0.1
+  rmdir "\$FM_TEST_CONCURRENCY_DIR/active.\$\$"
+fi
+exit "\${FM_TEST_SHELLCHECK_EXIT:-0}"
 SH
   chmod +x "$fakebin/shellcheck"
 }
@@ -1197,6 +1204,8 @@ SH
   assert_grep $'format\tfm-lint-telemetry-v1' "$telemetry" "telemetry format marker is missing"
   assert_grep $'analysis_mode\tfull' "$telemetry" "telemetry did not record full analysis mode"
   assert_grep $'jobs\t2' "$telemetry" "telemetry did not record bounded jobs"
+  assert_grep $'shard_count\t4' "$telemetry" "telemetry did not record the smaller source-aware shards"
+  assert_grep $'max_concurrent_workers\t2' "$telemetry" "telemetry did not record the worker bound"
   assert_grep $'root_count\t1' "$telemetry" "telemetry did not record root count"
   assert_grep $'wall_seconds\t' "$telemetry" "telemetry did not record wall time"
   assert_grep $'user_seconds\t' "$telemetry" "telemetry did not record user CPU"
@@ -1213,6 +1222,68 @@ SH
   [ -z "$(find "$cleanup_tmp" -mindepth 1 -maxdepth 1 -name 'fm-lint.*' -print -quit)" ] \
     || fail "bounded lint left temporary worker state behind"
   pass "jobs=1 and jobs=2 preserve deterministic diagnostics, failures, cleanup bounds, and quiet telemetry"
+}
+
+test_four_shards_obey_the_two_worker_limit() {
+  local tmp fakebin log concurrency fixture out peak i
+  tmp=$(fm_test_tmproot fm-lint-shard-concurrency)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  concurrency="$tmp/concurrency"
+  mkdir -p "$concurrency"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+  fixture=()
+  i=1
+  while [ "$i" -le 8 ]; do
+    fixture+=("$tmp/fixture-$i.sh")
+    printf '#!/usr/bin/env bash\nprintf ok\n' >"$tmp/fixture-$i.sh"
+    i=$((i + 1))
+  done
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=2 FM_TEST_CONCURRENCY_DIR="$concurrency" \
+    "$LINT" "${fixture[@]}" 2>&1) \
+    || fail "four-shard concurrency fixture failed"$'\n'"$out"
+  [ "$(wc -l <"$concurrency/counts" | tr -d ' ')" -eq 4 ] \
+    || fail "full lint did not invoke all four source-aware shards"
+  peak=$(LC_ALL=C sort -nr "$concurrency/counts" | head -1)
+  [ "$peak" -eq 2 ] || fail "four-shard scheduler peak concurrency was $peak, expected 2"
+  pass "four source-aware shards run with at most two workers"
+}
+
+test_failure_still_publishes_finished_telemetry() {
+  local tmp fakebin log telemetry fixture out rc
+  tmp=$(fm_test_tmproot fm-lint-failure-telemetry)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  telemetry="$tmp/telemetry.tsv"
+  fixture="$tmp/failing.sh"
+  printf '#!/usr/bin/env bash\nprintf ok\n' >"$fixture"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+
+  rc=0
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=2 FM_TEST_SHELLCHECK_EXIT=7 \
+    "$LINT" --telemetry "$telemetry" "$fixture" 2>&1) || rc=$?
+  [ "$rc" -eq 7 ] || fail "failing ShellCheck fixture exited $rc instead of 7"$'\n'"$out"
+  assert_grep $'run_status\tfinished' "$telemetry" "failing lint did not finalize telemetry"
+  assert_grep $'result_exit\t7' "$telemetry" "failing lint telemetry lost the exit result"
+  pass "lint failure still publishes finished telemetry"
+}
+
+test_ci_always_uploads_authoritative_lint_telemetry() {
+  command -v ruby >/dev/null 2>&1 || fail "ruby is required to parse ci.yml as YAML"
+  ruby -ryaml -e '
+    doc = YAML.load_file(ARGV[0])
+    steps = doc.fetch("jobs").fetch("lint").fetch("steps")
+    run = steps.find { |s| s.is_a?(Hash) && s["name"] == "Run authoritative lint" }
+    upload = steps.find { |s| s.is_a?(Hash) && s["name"] == "Upload lint telemetry" }
+    raise "missing authoritative lint step" if run.nil?
+    raise "lint step bypasses owner telemetry interface" unless run.fetch("run").include?("bin/fm-lint.sh --telemetry")
+    raise "missing lint telemetry upload" if upload.nil?
+    raise "lint telemetry upload is not unconditional on failure" unless upload.fetch("if") == "always()"
+    raise "wrong lint telemetry artifact" unless upload.fetch("with").fetch("name") == "fm-lint-telemetry"
+  ' "$ROOT/.github/workflows/ci.yml" \
+    || fail "CI lint telemetry wiring is incomplete"
+  pass "CI always uploads telemetry from the authoritative lint owner"
 }
 
 test_worker_trees_stop_on_signal() {
@@ -1383,6 +1454,9 @@ test_rejects_direct_beads_cli_in_explicit_core_path
 test_ignores_ambient_shellcheck_opts
 test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
+test_four_shards_obey_the_two_worker_limit
+test_failure_still_publishes_finished_telemetry
+test_ci_always_uploads_authoritative_lint_telemetry
 test_worker_trees_stop_on_signal
 test_seeded_module_boundary_parity
 test_changed_mode_lints_only_the_changed_file
