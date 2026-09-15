@@ -1,0 +1,12 @@
+## 3. Runner kills lint mid-analysis (simulates CI shutdown signal / exit 143)
+ShellCheck is wrapped to stall 30s before analysis; SIGTERM is sent to fm-lint.sh after 3s.
+fm-lint.sh exit=143
+surviving ShellCheck processes from this run: 0
+--- telemetry file left for the always() upload step ---
+format	fm-lint-telemetry-v1
+git_head	<sha>
+analysis_mode	full
+jobs	2
+shard_count	4
+root_count	8
+run_status	started

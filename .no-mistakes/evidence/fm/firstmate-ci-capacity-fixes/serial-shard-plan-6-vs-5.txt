@@ -1,0 +1,24 @@
+Clean git-archive snapshot of HEAD 89d3a80 (no transient test fixtures).
+
+## Shipped configuration: PORTABLE_SERIAL_SHARDS=6
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=199 parallel=24 serial=162 serial_shards=6 serial_unhinted=0 herdr=13
+exit=0
+portable serial lane: 162 scripts
+$ bin/fm-test-run.sh --serial-shard-plan
+portable-serial-1of6	25	1108253	(~18.47 min)
+portable-serial-2of6	27	1108243	(~18.47 min)
+portable-serial-3of6	27	1108256	(~18.47 min)
+portable-serial-4of6	28	1108247	(~18.47 min)
+portable-serial-5of6	27	1108255	(~18.47 min)
+portable-serial-6of6	28	1108256	(~18.47 min)
+scripts=162  max_shard=1108256 ms (~18.47 min)  modeled margin under unchanged 30-min cap=~11.53 min  meets >=11 min safe margin: YES
+
+## Counterfactual: same refreshed hints, PORTABLE_SERIAL_SHARDS=5 (only change)
+$ bin/fm-test-run.sh --serial-shard-plan
+portable-serial-1of5	31	1329914	(~22.17 min)
+portable-serial-2of5	33	1329913	(~22.17 min)
+portable-serial-3of5	33	1329900	(~22.16 min)
+portable-serial-4of5	32	1329881	(~22.16 min)
+portable-serial-5of5	33	1329902	(~22.17 min)
+scripts=162  max_shard=1329914 ms (~22.17 min)  modeled margin under unchanged 30-min cap=~7.83 min  meets >=11 min safe margin: NO
