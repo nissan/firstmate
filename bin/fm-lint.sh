@@ -46,7 +46,8 @@
 # deterministic shard and root order after every worker finishes. FM_LINT_JOBS=1
 # runs the same shards serially with byte-identical diagnostics and exit selection.
 #
-# Optional quiet telemetry writes one bounded TSV snapshot of content and source
+# Optional quiet telemetry publishes a bounded run_status=started TSV before
+# analysis, then replaces it with the finished snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
 #
 # Usage:
