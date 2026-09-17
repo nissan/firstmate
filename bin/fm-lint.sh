@@ -48,6 +48,11 @@
 # local callers may use two. Each shard writes separate diagnostics, and the
 # parent replays them in deterministic shard and root order.
 #
+# The same default full run also verifies that the changed-file exclusion list
+# still covers every diagnostic caused only by dropping source context. This
+# low-memory sweep belongs here rather than in a behavior-test lane, so lint has
+# one authoritative surface and behavior tests never repeat a repository walk.
+#
 # Optional quiet telemetry publishes a bounded run_status=started TSV before
 # analysis, then replaces it with the finished snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
@@ -784,6 +789,67 @@ while [ "$worker" -lt "$SHARD_COUNT" ]; do
   fi
   worker=$((worker + 1))
 done
+
+# The local changed-file posture excludes only diagnostics that require source
+# context. Prove that list remains complete on every authoritative full run.
+# Each no-source process owns one root and at most four run concurrently; these
+# shallow graphs stay far below the private runner's memory envelope.
+fm_lint_run_local_exclusion_guard() {
+  [ "$EXPLICIT_PATHS" -eq 0 ] && [ "$FOLLOW_SOURCES" -eq 1 ] && [ "$FAST" -eq 0 ] || return 0
+  local guard_dir index path pid rc unexpected code
+  local -a guard_pids
+  guard_dir="$TMP_ROOT/local-exclusion-guard"
+  mkdir -p "$guard_dir"
+  guard_pids=()
+  index=0
+  for path in "${ROOTS[@]}"; do
+    (
+      rc=0
+      "$SHELLCHECK_BIN" --norc --format=gcc -- "$path" >"$guard_dir/$index.out" 2>&1 || rc=$?
+      printf '%s\n' "$rc" >"$guard_dir/$index.rc"
+    ) &
+    pid=$!
+    ACTIVE_PIDS+=("$pid")
+    guard_pids+=("$pid")
+    index=$((index + 1))
+    if [ "${#guard_pids[@]}" -eq 4 ]; then
+      fm_lint_wait_workers
+      guard_pids=()
+    fi
+  done
+  fm_lint_wait_workers
+
+  unexpected=
+  index=0
+  while [ "$index" -lt "$ROOT_COUNT" ]; do
+    rc=$(cat "$guard_dir/$index.rc" 2>/dev/null || printf '2')
+    case "$rc" in ''|*[!0-9]*) rc=2 ;; esac
+    if [ "$rc" -gt 1 ]; then
+      printf 'fm-lint.sh: local exclusion guard failed to analyze root %s (exit %s).\n' \
+        "${ROOTS[index]}" "$rc" >&2
+      cat "$guard_dir/$index.out" >&2
+      return "$rc"
+    fi
+    while IFS= read -r code; do
+      [ -n "$code" ] || continue
+      case "$code" in
+        SC1091|SC2034|SC2153|SC2329) ;;
+        *) unexpected="${unexpected}${unexpected:+ }$code" ;;
+      esac
+    done < <(sed -n 's/.*\[\(SC[0-9][0-9]*\)\].*/\1/p' "$guard_dir/$index.out" | LC_ALL=C sort -u)
+    index=$((index + 1))
+  done
+  [ -z "$unexpected" ] || {
+    printf 'fm-lint.sh: no-source analysis emitted codes outside the local exclusion list: %s\n' "$unexpected" >&2
+    return 1
+  }
+}
+
+exclusion_guard_rc=0
+fm_lint_run_local_exclusion_guard || exclusion_guard_rc=$?
+if [ "$overall_rc" -eq 0 ] && [ "$exclusion_guard_rc" -ne 0 ]; then
+  overall_rc=$exclusion_guard_rc
+fi
 
 if [ -n "$TELEMETRY" ]; then
   TELEMETRY_END_EPOCH=$(date +%s)

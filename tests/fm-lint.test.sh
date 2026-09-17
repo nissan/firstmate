@@ -278,6 +278,10 @@ if [ -n "\${FM_TEST_FLAG_LOG:-}" ]; then
 fi
 [ "\$#" -eq 0 ] || shift
 printf '%s\n' "\$@" >> "$log"
+if [ "\$follow" = no ] && [ -n "\${FM_TEST_NOX_DIAGNOSTIC:-}" ]; then
+  printf '%s:1:1: warning: fixture [%s]\n' "\${1:-fixture.sh}" "\$FM_TEST_NOX_DIAGNOSTIC"
+  exit 1
+fi
 if [ -n "\${FM_TEST_CONCURRENCY_DIR:-}" ]; then
   mkdir -p "\$FM_TEST_CONCURRENCY_DIR/active.\$\$"
   find "\$FM_TEST_CONCURRENCY_DIR" -maxdepth 1 -type d -name 'active.*' | wc -l \
@@ -607,8 +611,13 @@ test_main_branch_keeps_external_sources() {
     FM_TEST_GIT_BRANCH=main \
     FM_TEST_FLAG_LOG="$flag_log" "$LINT" 2>&1) \
     || fail "main-branch lint failed"$'\n'"$out"
-  fm_lint_assert_flag_log "$flag_log" yes none
-  pass "fm-lint.sh on main keeps source following without the local exclusion list"
+  grep -q '^external-sources=yes$' "$flag_log" \
+    || fail "main-branch authoritative lint did not run its source-aware pass"
+  grep -q '^external-sources=no$' "$flag_log" \
+    || fail "main-branch authoritative lint did not run its local-exclusion guard"
+  [ "$(grep -c '^exclude=none$' "$flag_log")" -eq "$(grep -c '^external-sources=' "$flag_log")" ] \
+    || fail "main-branch authoritative lint unexpectedly excluded a ShellCheck code"
+  pass "fm-lint.sh on main keeps source following and owns the no-source exclusion guard"
 }
 
 test_merge_base_less_keeps_external_sources() {
@@ -624,8 +633,13 @@ test_merge_base_less_keeps_external_sources() {
     FM_TEST_GIT_BRANCH=feature FM_TEST_GIT_MERGE_BASE_OK=0 \
     FM_TEST_FLAG_LOG="$flag_log" "$LINT" 2>&1) \
     || fail "merge-base-less lint failed"$'\n'"$out"
-  fm_lint_assert_flag_log "$flag_log" yes none
-  pass "fm-lint.sh without a merge-base keeps source following without the local exclusion list"
+  grep -q '^external-sources=yes$' "$flag_log" \
+    || fail "merge-base-less authoritative lint did not run its source-aware pass"
+  grep -q '^external-sources=no$' "$flag_log" \
+    || fail "merge-base-less authoritative lint did not run its local-exclusion guard"
+  [ "$(grep -c '^exclude=none$' "$flag_log")" -eq "$(grep -c '^external-sources=' "$flag_log")" ] \
+    || fail "merge-base-less authoritative lint unexpectedly excluded a ShellCheck code"
+  pass "fm-lint.sh without a merge-base keeps source following and owns the no-source exclusion guard"
 }
 
 test_explicit_path_keeps_external_sources() {
@@ -718,58 +732,26 @@ SH
   pass "fm-lint.sh changed mode excludes cross-file codes that explicit paths still report"
 }
 
-# One ShellCheck process per root. Passing the whole canonical set in a
-# single invocation still follows in-set sources and is not the no-x posture.
-fm_lint_nox_one_root() {
-  local index=$1 path=$2 outdir=$3
-  shellcheck --norc --format gcc -- "$path" > "$outdir/$index" || true
-}
-
-test_local_exclusion_list_covers_every_no_external_sources_code() {
-  if ! pinned_ready; then
-    pass "SKIP (ShellCheck $REQUIRED not resolved): local exclusion completeness"
-    return
-  fi
-  local tmp files_file out unexpected code path found i batch
-  local -a files
+test_authoritative_lint_owns_local_exclusion_completeness() {
+  local tmp fakebin log out rc code
   tmp=$(fm_test_tmproot fm-lint-nox-complete)
-  files_file="$tmp/files"
-  CI=true "$LINT" --list-files > "$files_file"
-  [ -s "$files_file" ] || fail "CI --list-files returned no canonical lint roots"
-  files=()
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    files+=("$path")
-  done < "$files_file"
-  [ "${#files[@]}" -gt 0 ] || fail "CI --list-files returned no readable lint roots"
-  mkdir -p "$tmp/gcc"
-  i=0
-  batch=0
-  for path in "${files[@]}"; do
-    i=$((i + 1))
-    fm_lint_nox_one_root "$i" "$path" "$tmp/gcc" &
-    batch=$((batch + 1))
-    if [ "$batch" -eq 4 ]; then
-      wait
-      batch=0
-    fi
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+
+  for code in SC1091 SC2034 SC2153 SC2329; do
+    out=$(PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true \
+      FM_TEST_NOX_DIAGNOSTIC="$code" "$LINT" 2>&1) \
+      || fail "authoritative lint rejected allowed no-source diagnostic $code"$'\n'"$out"
   done
-  wait
-  found=$(find "$tmp/gcc" -type f | wc -l | tr -d '[:space:]')
-  [ "$found" = "${#files[@]}" ] \
-    || fail "completeness sweep linted $found roots, expected ${#files[@]}"
-  out=$(cat "$tmp/gcc"/* 2>/dev/null || true)
-  unexpected=
-  while IFS= read -r code; do
-    [ -n "$code" ] || continue
-    case "$code" in
-      SC1091|SC2034|SC2153|SC2329) ;;
-      *) unexpected="${unexpected}${unexpected:+ }$code" ;;
-    esac
-  done < <(printf '%s\n' "$out" | sed -n 's/.*\[\(SC[0-9][0-9]*\)\].*/\1/p' | LC_ALL=C sort -u)
-  [ -z "$unexpected" ] \
-    || fail "no-external-sources pass emitted codes outside the local exclusion list: $unexpected"
-  pass "local exclusion list covers every no-external-sources ShellCheck code"
+
+  rc=0
+  out=$(PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true \
+    FM_TEST_NOX_DIAGNOSTIC=SC9999 "$LINT" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "authoritative lint accepted an uncovered no-source diagnostic"
+  assert_contains "$out" "outside the local exclusion list: SC9999" \
+    "authoritative lint did not attribute the uncovered no-source code"
+  pass "authoritative lint owns local exclusion completeness without a behavior-lane repository sweep"
 }
 
 test_pins_an_explicit_version() {
@@ -1505,4 +1487,4 @@ test_merge_base_less_keeps_external_sources
 test_explicit_path_keeps_external_sources
 test_fast_mode_on_a_local_branch_keeps_source_following
 test_changed_mode_hides_cross_file_codes_that_ci_still_sees
-test_local_exclusion_list_covers_every_no_external_sources_code
+test_authoritative_lint_owns_local_exclusion_completeness
