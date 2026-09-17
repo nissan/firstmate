@@ -1,0 +1,10 @@
+ok - Claude 2.1.266 (Claude Code): scout review read its target, wrote only its outputs, acknowledged a real fm-send steer through its helper, denied project/cross-task access, and preserved repository/settings state
+ok - --claude-review accepts a scout, grants only its outputs and own inbox, preserves Claude controls, and records the posture
+ok - --claude-review refuses a raw launch command before provisioning
+ok - --claude-review rejects ship, unsupported harness, and persistent secondmate combinations
+ok - Claude review scout posture is durable across relaunch and can be added through fm-control
+ok - Claude review relaunch intake names the published helper, which acknowledges a pre-relaunch steer
+ok - Claude review harness switches refuse before stopping the original worker
+ok - Claude review ship relaunch refuses before stopping or changing its task
+ok - a recorded claude_review value other than on refuses before stopping the worker
+ok - Claude review acknowledgement helper is task-bound, one-at-a-time, argument-free, symlink-safe, and acknowledges real fm-send steers
