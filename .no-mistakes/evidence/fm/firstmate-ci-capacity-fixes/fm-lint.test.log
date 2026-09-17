@@ -19,7 +19,8 @@ ok - fm-lint.sh enforces backend purity for explicit core paths
 ok - fm-lint.sh ignores ambient ShellCheck options
 ok - fm-lint.sh passes a clean fixture
 ok - jobs=1 and jobs=2 preserve deterministic diagnostics, failures, cleanup bounds, and quiet telemetry
-ok - four source-aware shards run with at most two workers
+ok - source-aware roots stay separate and four scheduling shards obey the two-worker limit
+ok - CI runs every complete source graph separately with one-worker memory bound
 ok - lint failure still publishes finished telemetry
 ok - CI always uploads telemetry from the authoritative lint owner
 ok - jobs=1 and jobs=2 stop complete worker trees with and without telemetry
@@ -39,4 +40,7 @@ ok - fm-lint.sh explicit paths keep source following
 ok - fm-lint.sh --fast on a local branch keeps source following
 ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
 ok - local exclusion list covers every no-external-sources ShellCheck code
-exit=0 wall=93s
+
+real	1m32.531s
+user	2m4.909s
+sys	0m11.700s

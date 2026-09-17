@@ -23,7 +23,7 @@ ok - fail-on-gate-skip converts herdr-not-found into a hard failure
 ok - exclude-family drops the named primary family after selection
 ok - portable shard union, disjointness, and coverage guard hold
 ok - portable serial shards are a deterministic disjoint cover of the serial lane
-ok - generated six-shard plan is deterministic, current, and retains safe 30-minute margin
+ok - generated seven-shard plan is deterministic, current, and retains safe 30-minute margin
 ok - coverage guard reports and bounds the unmeasured portable serial share
 ok - portable serial shard lanes refuse mismatched, out-of-range, and countless names
 ok - --jobs refuses non-proven / stateful selections
@@ -35,4 +35,7 @@ ok - --max-wall-ms fails an over-budget run and refuses a malformed budget
 ok - jobs scheduler runs proven scripts; failure propagates; non-proven refused
 ok - Herdr CI family-run step times out at 20 min under a 75 min job backstop
 ok - aggregate-json merges lane timing artifacts
-exit=0 wall=117s
+
+real	1m55.633s
+user	0m39.270s
+sys	0m29.105s
