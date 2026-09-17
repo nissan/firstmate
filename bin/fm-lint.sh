@@ -41,10 +41,12 @@
 # invocations in the core bin/ and bin/backends/ scripts so every configured
 # backlog backend follows the same tasks-axi lifecycle path.
 #
-# Canonical lint uses four stable source-aware shards with at most two workers.
-# Each shard writes separate diagnostics, and the parent replays those outputs in
-# deterministic shard and root order after every worker finishes. FM_LINT_JOBS=1
-# runs the same shards serially with byte-identical diagnostics and exit selection.
+# Canonical lint uses four stable scheduling shards with bounded workers.
+# Every source-aware canonical root is a separate ShellCheck process, so no
+# process constructs more than one root graph and concurrent graph memory is
+# capped by the worker limit. CI defaults to one worker for the private runner;
+# local callers may use two. Each shard writes separate diagnostics, and the
+# parent replays them in deterministic shard and root order.
 #
 # Optional quiet telemetry publishes a bounded run_status=started TSV before
 # analysis, then replaces it with the finished snapshot of content and source
@@ -104,23 +106,19 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
       shellcheck_args+=(--extended-analysis=false)
     fi
     : > "$output.out"
-    if [ "${FM_LINT_INTERNAL_FOLLOW_SOURCES:-1}" -eq 1 ]; then
-      "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "${roots[@]}" >> "$output.out" 2>&1 &
+    # One native invocation per root preserves ShellCheck's exact source graph,
+    # full dataflow, codes, and attribution while bounding each process to that
+    # one graph. Never batch roots back into one memory-amplifying process.
+    for path in "${roots[@]}"; do
+      invocation_rc=0
+      "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path" >> "$output.out" 2>&1 &
       FM_LINT_WORKER_SHELLCHECK_PID=$!
-      wait "$FM_LINT_WORKER_SHELLCHECK_PID" || rc=$?
+      wait "$FM_LINT_WORKER_SHELLCHECK_PID" || invocation_rc=$?
       FM_LINT_WORKER_SHELLCHECK_PID=
-    else
-      for path in "${roots[@]}"; do
-        invocation_rc=0
-        "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path" >> "$output.out" 2>&1 &
-        FM_LINT_WORKER_SHELLCHECK_PID=$!
-        wait "$FM_LINT_WORKER_SHELLCHECK_PID" || invocation_rc=$?
-        FM_LINT_WORKER_SHELLCHECK_PID=
-        if [ "$rc" -eq 0 ] && [ "$invocation_rc" -ne 0 ]; then
-          rc=$invocation_rc
-        fi
-      done
-    fi
+      if [ "$rc" -eq 0 ] && [ "$invocation_rc" -ne 0 ]; then
+        rc=$invocation_rc
+      fi
+    done
     trap - HUP INT TERM
   else
     : > "$output.out"
@@ -393,7 +391,13 @@ fm_lint_run_backend_purity() {
   }
 }
 
-JOBS=${FM_LINT_JOBS:-2}
+if [ -n "${FM_LINT_JOBS:-}" ]; then
+  JOBS=$FM_LINT_JOBS
+elif [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; then
+  JOBS=1
+else
+  JOBS=2
+fi
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 FAST=0
 ANALYSIS_MODE=full
@@ -602,9 +606,9 @@ TAB=$(printf '\t')
 WEIGHTS="$TMP_ROOT/weights"
 OUTPUT_DIR="$TMP_ROOT/output"
 mkdir -p "$OUTPUT_DIR"
-# Four smaller ShellCheck graphs keep each full-analysis process comfortably
-# below the private runner's memory envelope. JOBS controls only how many of
-# those source-aware shards run at once; it never changes their membership.
+# Four scheduling shards distribute roots deterministically. Each root remains
+# its own complete source-aware graph; JOBS controls only how many such graphs
+# can occupy memory at once and never changes coverage or membership.
 SHARD_COUNT=4
 worker=0
 while [ "$worker" -lt "$SHARD_COUNT" ]; do

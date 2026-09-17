@@ -1242,11 +1242,44 @@ test_four_shards_obey_the_two_worker_limit() {
   out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=2 FM_TEST_CONCURRENCY_DIR="$concurrency" \
     "$LINT" "${fixture[@]}" 2>&1) \
     || fail "four-shard concurrency fixture failed"$'\n'"$out"
-  [ "$(wc -l <"$concurrency/counts" | tr -d ' ')" -eq 4 ] \
-    || fail "full lint did not invoke all four source-aware shards"
+  [ "$(wc -l <"$concurrency/counts" | tr -d ' ')" -eq 8 ] \
+    || fail "full lint did not invoke each of the eight source-aware roots separately"
   peak=$(LC_ALL=C sort -nr "$concurrency/counts" | head -1)
   [ "$peak" -le 2 ] || fail "four-shard scheduler peak concurrency was $peak, above the two-worker limit"
-  pass "four source-aware shards run with at most two workers"
+  pass "source-aware roots stay separate and four scheduling shards obey the two-worker limit"
+}
+
+test_ci_defaults_to_one_source_graph_in_memory() {
+  local tmp fakebin log concurrency fixture flag_log mode_log out peak i
+  tmp=$(fm_test_tmproot fm-lint-ci-memory-bound)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  concurrency="$tmp/concurrency"
+  flag_log="$tmp/flags.log"
+  mode_log="$tmp/mode.log"
+  mkdir -p "$concurrency"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+  fixture=()
+  i=1
+  while [ "$i" -le 8 ]; do
+    fixture+=("$tmp/fixture-$i.sh")
+    printf '#!/usr/bin/env bash\nprintf ok\n' >"$tmp/fixture-$i.sh"
+    i=$((i + 1))
+  done
+
+  out=$(PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true \
+    FM_TEST_CONCURRENCY_DIR="$concurrency" FM_TEST_FLAG_LOG="$flag_log" \
+    FM_TEST_MODE_LOG="$mode_log" "$LINT" "${fixture[@]}" 2>&1) \
+    || fail "CI memory-bound lint fixture failed"$'\n'"$out"
+  [ "$(wc -l <"$concurrency/counts" | tr -d ' ')" -eq 8 ] \
+    || fail "CI did not invoke every source-aware root separately"
+  peak=$(LC_ALL=C sort -nr "$concurrency/counts" | head -1)
+  [ "$peak" -eq 1 ] || fail "CI allowed $peak source graphs in memory instead of one"
+  [ "$(grep -c '^external-sources=yes$' "$flag_log")" -eq 8 ] \
+    || fail "CI did not preserve source following on every root"
+  [ "$(grep -c '^on$' "$mode_log")" -eq 8 ] \
+    || fail "CI did not preserve full extended analysis on every root"
+  pass "CI runs every complete source graph separately with one-worker memory bound"
 }
 
 test_failure_still_publishes_finished_telemetry() {
@@ -1453,6 +1486,7 @@ test_ignores_ambient_shellcheck_opts
 test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
 test_four_shards_obey_the_two_worker_limit
+test_ci_defaults_to_one_source_graph_in_memory
 test_failure_still_publishes_finished_telemetry
 test_ci_always_uploads_authoritative_lint_telemetry
 test_worker_trees_stop_on_signal
