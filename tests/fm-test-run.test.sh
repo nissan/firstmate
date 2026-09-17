@@ -1046,7 +1046,7 @@ test_portable_serial_shards_partition_the_serial_lane() {
   local lanes count serial shard listed union dups shard_lane total cap
   lanes=$("$RUNNER" --list-lanes)
   count=$(printf '%s\n' "$lanes" | grep -c '^portable-serial-[0-9]*of[0-9]*$')
-  [ "$count" -ge 2 ] || fail "expected at least two portable serial shard lanes, got $count"
+  [ "$count" -eq 7 ] || fail "expected seven portable serial shard lanes with safe margin, got $count"
   printf '%s\n' "$lanes" | grep -q "^portable-serial-1of${count}\$" \
     || fail "shard lane names must carry the shard count ${count}: $lanes"
 
@@ -1086,6 +1086,33 @@ test_portable_serial_shards_partition_the_serial_lane() {
     "$("$RUNNER" --list --lane "portable-serial-1of${count}")" ] \
     || fail "portable serial shard membership must be deterministic"
   pass "portable serial shards are a deterministic disjoint cover of the serial lane"
+}
+
+test_portable_serial_plan_has_deterministic_safe_margin() {
+  local first second lines scripts serial_total max_ms matrix
+  first=$("$RUNNER" --serial-shard-plan) || fail "serial shard plan failed"
+  second=$("$RUNNER" --serial-shard-plan) || fail "second serial shard plan failed"
+  [ "$first" = "$second" ] || fail "serial shard plan changed across identical invocations"
+  lines=$(printf '%s\n' "$first" | wc -l | tr -d ' ')
+  [ "$lines" -eq 7 ] || fail "serial shard plan reported $lines shards instead of 7"
+  scripts=$(printf '%s\n' "$first" | awk -F '\t' '{sum += $2} END {print sum + 0}')
+  serial_total=$("$RUNNER" --list --lane portable-serial | wc -l | tr -d ' ')
+  [ "$scripts" -eq "$serial_total" ] \
+    || fail "serial shard plan covered $scripts scripts instead of the $serial_total-script serial lane"
+  max_ms=$(printf '%s\n' "$first" | awk -F '\t' '$3 > max {max=$3} END {print max + 0}')
+  [ "$max_ms" -le 1140000 ] \
+    || fail "serial shard plan leaves less than 11 modeled minutes under the 30-minute job cap: ${max_ms}ms"
+
+  command -v ruby >/dev/null 2>&1 || fail "ruby is required to parse ci.yml as YAML"
+  matrix=$(ruby -ryaml -e '
+    doc = YAML.load_file(ARGV[0])
+    job = doc.fetch("jobs").fetch("tests-portable-serial")
+    puts job.fetch("strategy").fetch("matrix").fetch("shard").join(",")
+    puts job.fetch("timeout-minutes")
+  ' "$ROOT/.github/workflows/ci.yml") || fail "could not parse portable serial CI matrix"
+  [ "$matrix" = $'1,2,3,4,5,6,7\n30' ] \
+    || fail "portable serial CI matrix/count or unchanged timeout diverged: $matrix"
+  pass "generated seven-shard plan is deterministic, current, and retains safe 30-minute margin"
 }
 
 test_portable_serial_hint_coverage_is_reported_and_bounded() {
@@ -1648,6 +1675,7 @@ test_fail_on_gate_skip_token
 test_exclude_family
 test_portable_shard_union_and_coverage_guard
 test_portable_serial_shards_partition_the_serial_lane
+test_portable_serial_plan_has_deterministic_safe_margin
 test_portable_serial_hint_coverage_is_reported_and_bounded
 test_portable_serial_shard_lane_refusals
 test_jobs_requires_proven_isolated

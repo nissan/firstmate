@@ -278,7 +278,18 @@ if [ -n "\${FM_TEST_FLAG_LOG:-}" ]; then
 fi
 [ "\$#" -eq 0 ] || shift
 printf '%s\n' "\$@" >> "$log"
-exit 0
+if [ "\$follow" = no ] && [ -n "\${FM_TEST_NOX_DIAGNOSTIC:-}" ]; then
+  printf '%s:1:1: warning: fixture [%s]\n' "\${1:-fixture.sh}" "\$FM_TEST_NOX_DIAGNOSTIC"
+  exit 1
+fi
+if [ -n "\${FM_TEST_CONCURRENCY_DIR:-}" ]; then
+  mkdir -p "\$FM_TEST_CONCURRENCY_DIR/active.\$\$"
+  find "\$FM_TEST_CONCURRENCY_DIR" -maxdepth 1 -type d -name 'active.*' | wc -l \
+    >> "\$FM_TEST_CONCURRENCY_DIR/counts"
+  sleep 0.1
+  rmdir "\$FM_TEST_CONCURRENCY_DIR/active.\$\$"
+fi
+exit "\${FM_TEST_SHELLCHECK_EXIT:-0}"
 SH
   chmod +x "$fakebin/shellcheck"
 }
@@ -600,8 +611,13 @@ test_main_branch_keeps_external_sources() {
     FM_TEST_GIT_BRANCH=main \
     FM_TEST_FLAG_LOG="$flag_log" "$LINT" 2>&1) \
     || fail "main-branch lint failed"$'\n'"$out"
-  fm_lint_assert_flag_log "$flag_log" yes none
-  pass "fm-lint.sh on main keeps source following without the local exclusion list"
+  grep -q '^external-sources=yes$' "$flag_log" \
+    || fail "main-branch authoritative lint did not run its source-aware pass"
+  grep -q '^external-sources=no$' "$flag_log" \
+    || fail "main-branch authoritative lint did not run its local-exclusion guard"
+  [ "$(grep -c '^exclude=none$' "$flag_log")" -eq "$(grep -c '^external-sources=' "$flag_log")" ] \
+    || fail "main-branch authoritative lint unexpectedly excluded a ShellCheck code"
+  pass "fm-lint.sh on main keeps source following and owns the no-source exclusion guard"
 }
 
 test_merge_base_less_keeps_external_sources() {
@@ -617,8 +633,13 @@ test_merge_base_less_keeps_external_sources() {
     FM_TEST_GIT_BRANCH=feature FM_TEST_GIT_MERGE_BASE_OK=0 \
     FM_TEST_FLAG_LOG="$flag_log" "$LINT" 2>&1) \
     || fail "merge-base-less lint failed"$'\n'"$out"
-  fm_lint_assert_flag_log "$flag_log" yes none
-  pass "fm-lint.sh without a merge-base keeps source following without the local exclusion list"
+  grep -q '^external-sources=yes$' "$flag_log" \
+    || fail "merge-base-less authoritative lint did not run its source-aware pass"
+  grep -q '^external-sources=no$' "$flag_log" \
+    || fail "merge-base-less authoritative lint did not run its local-exclusion guard"
+  [ "$(grep -c '^exclude=none$' "$flag_log")" -eq "$(grep -c '^external-sources=' "$flag_log")" ] \
+    || fail "merge-base-less authoritative lint unexpectedly excluded a ShellCheck code"
+  pass "fm-lint.sh without a merge-base keeps source following and owns the no-source exclusion guard"
 }
 
 test_explicit_path_keeps_external_sources() {
@@ -711,58 +732,26 @@ SH
   pass "fm-lint.sh changed mode excludes cross-file codes that explicit paths still report"
 }
 
-# One ShellCheck process per root. Passing the whole canonical set in a
-# single invocation still follows in-set sources and is not the no-x posture.
-fm_lint_nox_one_root() {
-  local index=$1 path=$2 outdir=$3
-  shellcheck --norc --format gcc -- "$path" > "$outdir/$index" || true
-}
-
-test_local_exclusion_list_covers_every_no_external_sources_code() {
-  if ! pinned_ready; then
-    pass "SKIP (ShellCheck $REQUIRED not resolved): local exclusion completeness"
-    return
-  fi
-  local tmp files_file out unexpected code path found i batch
-  local -a files
+test_authoritative_lint_owns_local_exclusion_completeness() {
+  local tmp fakebin log out rc code
   tmp=$(fm_test_tmproot fm-lint-nox-complete)
-  files_file="$tmp/files"
-  CI=true "$LINT" --list-files > "$files_file"
-  [ -s "$files_file" ] || fail "CI --list-files returned no canonical lint roots"
-  files=()
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    files+=("$path")
-  done < "$files_file"
-  [ "${#files[@]}" -gt 0 ] || fail "CI --list-files returned no readable lint roots"
-  mkdir -p "$tmp/gcc"
-  i=0
-  batch=0
-  for path in "${files[@]}"; do
-    i=$((i + 1))
-    fm_lint_nox_one_root "$i" "$path" "$tmp/gcc" &
-    batch=$((batch + 1))
-    if [ "$batch" -eq 4 ]; then
-      wait
-      batch=0
-    fi
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+
+  for code in SC1091 SC2034 SC2153 SC2329; do
+    out=$(PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true \
+      FM_TEST_NOX_DIAGNOSTIC="$code" "$LINT" 2>&1) \
+      || fail "authoritative lint rejected allowed no-source diagnostic $code"$'\n'"$out"
   done
-  wait
-  found=$(find "$tmp/gcc" -type f | wc -l | tr -d '[:space:]')
-  [ "$found" = "${#files[@]}" ] \
-    || fail "completeness sweep linted $found roots, expected ${#files[@]}"
-  out=$(cat "$tmp/gcc"/* 2>/dev/null || true)
-  unexpected=
-  while IFS= read -r code; do
-    [ -n "$code" ] || continue
-    case "$code" in
-      SC1091|SC2034|SC2153|SC2329) ;;
-      *) unexpected="${unexpected}${unexpected:+ }$code" ;;
-    esac
-  done < <(printf '%s\n' "$out" | sed -n 's/.*\[\(SC[0-9][0-9]*\)\].*/\1/p' | LC_ALL=C sort -u)
-  [ -z "$unexpected" ] \
-    || fail "no-external-sources pass emitted codes outside the local exclusion list: $unexpected"
-  pass "local exclusion list covers every no-external-sources ShellCheck code"
+
+  rc=0
+  out=$(PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true \
+    FM_TEST_NOX_DIAGNOSTIC=SC9999 "$LINT" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "authoritative lint accepted an uncovered no-source diagnostic"
+  assert_contains "$out" "outside the local exclusion list: SC9999" \
+    "authoritative lint did not attribute the uncovered no-source code"
+  pass "authoritative lint owns local exclusion completeness without a behavior-lane repository sweep"
 }
 
 test_pins_an_explicit_version() {
@@ -1197,6 +1186,7 @@ SH
   assert_grep $'format\tfm-lint-telemetry-v1' "$telemetry" "telemetry format marker is missing"
   assert_grep $'analysis_mode\tfull' "$telemetry" "telemetry did not record full analysis mode"
   assert_grep $'jobs\t2' "$telemetry" "telemetry did not record bounded jobs"
+  assert_grep $'shard_count\t4' "$telemetry" "telemetry did not record the smaller source-aware shards"
   assert_grep $'root_count\t1' "$telemetry" "telemetry did not record root count"
   assert_grep $'wall_seconds\t' "$telemetry" "telemetry did not record wall time"
   assert_grep $'user_seconds\t' "$telemetry" "telemetry did not record user CPU"
@@ -1215,9 +1205,154 @@ SH
   pass "jobs=1 and jobs=2 preserve deterministic diagnostics, failures, cleanup bounds, and quiet telemetry"
 }
 
+test_four_shards_obey_the_two_worker_limit() {
+  local tmp fakebin log concurrency fixture out peak i
+  tmp=$(fm_test_tmproot fm-lint-shard-concurrency)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  concurrency="$tmp/concurrency"
+  mkdir -p "$concurrency"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+  fixture=()
+  i=1
+  while [ "$i" -le 8 ]; do
+    fixture+=("$tmp/fixture-$i.sh")
+    printf '#!/usr/bin/env bash\nprintf ok\n' >"$tmp/fixture-$i.sh"
+    i=$((i + 1))
+  done
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=2 FM_TEST_CONCURRENCY_DIR="$concurrency" \
+    "$LINT" "${fixture[@]}" 2>&1) \
+    || fail "four-shard concurrency fixture failed"$'\n'"$out"
+  [ "$(wc -l <"$concurrency/counts" | tr -d ' ')" -eq 8 ] \
+    || fail "full lint did not invoke each of the eight source-aware roots separately"
+  peak=$(LC_ALL=C sort -nr "$concurrency/counts" | head -1)
+  [ "$peak" -le 2 ] || fail "four-shard scheduler peak concurrency was $peak, above the two-worker limit"
+  pass "source-aware roots stay separate and four scheduling shards obey the two-worker limit"
+}
+
+test_ci_defaults_to_one_source_graph_in_memory() {
+  local tmp fakebin log concurrency fixture flag_log mode_log out peak i
+  tmp=$(fm_test_tmproot fm-lint-ci-memory-bound)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  concurrency="$tmp/concurrency"
+  flag_log="$tmp/flags.log"
+  mode_log="$tmp/mode.log"
+  mkdir -p "$concurrency"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+  fixture=()
+  i=1
+  while [ "$i" -le 8 ]; do
+    fixture+=("$tmp/fixture-$i.sh")
+    printf '#!/usr/bin/env bash\nprintf ok\n' >"$tmp/fixture-$i.sh"
+    i=$((i + 1))
+  done
+
+  out=$(PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true \
+    FM_TEST_CONCURRENCY_DIR="$concurrency" FM_TEST_FLAG_LOG="$flag_log" \
+    FM_TEST_MODE_LOG="$mode_log" "$LINT" "${fixture[@]}" 2>&1) \
+    || fail "CI memory-bound lint fixture failed"$'\n'"$out"
+  [ "$(wc -l <"$concurrency/counts" | tr -d ' ')" -eq 8 ] \
+    || fail "CI did not invoke every source-aware root separately"
+  peak=$(LC_ALL=C sort -nr "$concurrency/counts" | head -1)
+  [ "$peak" -eq 1 ] || fail "CI allowed $peak source graphs in memory instead of one"
+  [ "$(grep -c '^external-sources=yes$' "$flag_log")" -eq 8 ] \
+    || fail "CI did not preserve source following on every root"
+  [ "$(grep -c '^on$' "$mode_log")" -eq 8 ] \
+    || fail "CI did not preserve full extended analysis on every root"
+  pass "CI runs every complete source graph separately with one-worker memory bound"
+}
+
+test_failure_still_publishes_finished_telemetry() {
+  local tmp fakebin log telemetry fixture out rc
+  tmp=$(fm_test_tmproot fm-lint-failure-telemetry)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  telemetry="$tmp/telemetry.tsv"
+  fixture="$tmp/failing.sh"
+  printf '#!/usr/bin/env bash\nprintf ok\n' >"$fixture"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+
+  rc=0
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=2 FM_TEST_SHELLCHECK_EXIT=7 \
+    "$LINT" --telemetry "$telemetry" "$fixture" 2>&1) || rc=$?
+  [ "$rc" -eq 7 ] || fail "failing ShellCheck fixture exited $rc instead of 7"$'\n'"$out"
+  assert_grep $'run_status\tfinished' "$telemetry" "failing lint did not finalize telemetry"
+  assert_grep $'result_exit\t7' "$telemetry" "failing lint telemetry lost the exit result"
+  pass "lint failure still publishes finished telemetry"
+}
+
+test_ci_always_uploads_authoritative_lint_telemetry() {
+  command -v ruby >/dev/null 2>&1 || fail "ruby is required to parse ci.yml as YAML"
+  ruby -ryaml -e '
+    doc = YAML.load_file(ARGV[0])
+    steps = doc.fetch("jobs").fetch("lint").fetch("steps")
+    run = steps.find { |s| s.is_a?(Hash) && s["name"] == "Run authoritative lint" }
+    upload = steps.find { |s| s.is_a?(Hash) && s["name"] == "Upload lint telemetry" }
+    raise "missing authoritative lint step" if run.nil?
+    raise "missing lint telemetry upload" if upload.nil?
+    raise "lint telemetry upload is not unconditional on failure" unless upload.fetch("if") == "always()"
+    raise "wrong lint telemetry artifact" unless upload.fetch("with").fetch("name") == "fm-lint-telemetry"
+  ' "$ROOT/.github/workflows/ci.yml" \
+    || fail "CI lint telemetry wiring is incomplete"
+  pass "CI always uploads telemetry from the authoritative lint owner"
+}
+
+fm_lint_assert_signal_stops_tree() {  # <tmp> <label> <env-assignment>... -- <lint-arg>...
+  local tmp=$1 label=$2 lint_tmp pid_file out_file parent_pid i parent_rc survivor pid
+  local -a envs
+  shift 2
+  envs=()
+  while [ "$1" != -- ]; do
+    envs+=("$1")
+    shift
+  done
+  shift
+  lint_tmp="$tmp/lint-$label"
+  pid_file="$tmp/shellcheck-$label.pid"
+  out_file="$tmp/output-$label"
+  mkdir -p "$lint_tmp"
+  env "${envs[@]}" TMPDIR="$lint_tmp" FM_TEST_SHELLCHECK_PID="$pid_file" \
+    "$LINT" "$@" > "$out_file" 2>&1 &
+  parent_pid=$!
+  i=0
+  while [ "$i" -lt 3000 ] && [ ! -s "$pid_file" ]; do
+    kill -0 "$parent_pid" 2>/dev/null || break
+    sleep 0.01
+    i=$((i + 1))
+  done
+  [ -s "$pid_file" ] || {
+    kill -TERM "$parent_pid" 2>/dev/null || true
+    wait "$parent_pid" 2>/dev/null || true
+    fail "$label did not start a blocking ShellCheck"$'\n'"$(cat "$out_file")"
+  }
+  kill -TERM "$parent_pid" 2>/dev/null \
+    || fail "$label parent could not be interrupted"
+  parent_rc=0
+  wait "$parent_pid" 2>/dev/null || parent_rc=$?
+  survivor=0
+  while IFS= read -r pid; do
+    i=0
+    while [ "$i" -lt 100 ] && kill -0 "$pid" 2>/dev/null; do
+      sleep 0.01
+      i=$((i + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      survivor=1
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done < "$pid_file"
+  [ "$parent_rc" -eq 143 ] \
+    || fail "$label signal exit was $parent_rc, expected 143"
+  [ "$survivor" -eq 0 ] \
+    || fail "$label left ShellCheck running"
+  [ -z "$(find "$lint_tmp" -mindepth 1 -maxdepth 1 -name 'fm-lint.*' -print -quit)" ] \
+    || fail "$label left temporary worker state"
+}
+
 test_worker_trees_stop_on_signal() {
-  local tmp fakebin fixture jobs telemetry lint_tmp pid_file out_file telemetry_file
-  local parent_pid shellcheck_pid i parent_rc survivor
+  local tmp fakebin fixture jobs telemetry telemetry_file
   tmp=$(fm_test_tmproot fm-lint-signal)
   mkdir -p "$tmp"
   fakebin=$(fm_fakebin "$tmp")
@@ -1232,7 +1367,14 @@ if [ "${1:-}" = "--version" ]; then
   printf 'ShellCheck - shell script analysis tool\nversion: 0.11.0\n'
   exit 0
 fi
-printf '%s\n' "$$" > "$FM_TEST_SHELLCHECK_PID"
+follow=no
+for arg in "$@"; do
+  [ "$arg" != --external-sources ] || follow=yes
+done
+if [ "${FM_TEST_BLOCK_ONLY_NOSOURCE:-}" = 1 ] && [ "$follow" = yes ]; then
+  exit 0
+fi
+printf '%s\n' "$$" >> "$FM_TEST_SHELLCHECK_PID"
 trap 'exit 143' HUP INT TERM
 while :; do
   sleep 1
@@ -1242,53 +1384,18 @@ SH
 
   for jobs in 1 2; do
     for telemetry in off on; do
-      lint_tmp="$tmp/lint-$jobs-$telemetry"
-      pid_file="$tmp/shellcheck-$jobs-$telemetry.pid"
-      out_file="$tmp/output-$jobs-$telemetry"
       telemetry_file=
-      mkdir -p "$lint_tmp"
       if [ "$telemetry" = on ]; then
         telemetry_file="$tmp/telemetry-$jobs.tsv"
       fi
-      PATH="$fakebin:$PATH" TMPDIR="$lint_tmp" FM_LINT_JOBS="$jobs" \
-        FM_LINT_TELEMETRY="$telemetry_file" FM_TEST_SHELLCHECK_PID="$pid_file" \
-        "$LINT" "$fixture" > "$out_file" 2>&1 &
-      parent_pid=$!
-      i=0
-      while [ "$i" -lt 500 ] && [ ! -s "$pid_file" ]; do
-        kill -0 "$parent_pid" 2>/dev/null || break
-        sleep 0.01
-        i=$((i + 1))
-      done
-      [ -s "$pid_file" ] || {
-        kill -TERM "$parent_pid" 2>/dev/null || true
-        wait "$parent_pid" 2>/dev/null || true
-        fail "jobs=$jobs telemetry=$telemetry did not start ShellCheck"
-      }
-      shellcheck_pid=$(cat "$pid_file")
-      kill -TERM "$parent_pid" 2>/dev/null \
-        || fail "jobs=$jobs telemetry=$telemetry parent could not be interrupted"
-      parent_rc=0
-      wait "$parent_pid" 2>/dev/null || parent_rc=$?
-      survivor=0
-      i=0
-      while [ "$i" -lt 100 ] && kill -0 "$shellcheck_pid" 2>/dev/null; do
-        sleep 0.01
-        i=$((i + 1))
-      done
-      if kill -0 "$shellcheck_pid" 2>/dev/null; then
-        survivor=1
-        kill -KILL "$shellcheck_pid" 2>/dev/null || true
-      fi
-      [ "$parent_rc" -eq 143 ] \
-        || fail "jobs=$jobs telemetry=$telemetry signal exit was $parent_rc, expected 143"
-      [ "$survivor" -eq 0 ] \
-        || fail "jobs=$jobs telemetry=$telemetry left ShellCheck running"
-      [ -z "$(find "$lint_tmp" -mindepth 1 -maxdepth 1 -name 'fm-lint.*' -print -quit)" ] \
-        || fail "jobs=$jobs telemetry=$telemetry left temporary worker state"
+      fm_lint_assert_signal_stops_tree "$tmp" "jobs-$jobs-$telemetry" \
+        PATH="$fakebin:$PATH" FM_LINT_JOBS="$jobs" FM_LINT_TELEMETRY="$telemetry_file" \
+        -- "$fixture"
     done
   done
-  pass "jobs=1 and jobs=2 stop complete worker trees with and without telemetry"
+  fm_lint_assert_signal_stops_tree "$tmp" "full-exclusion-guard" \
+    PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true FM_TEST_BLOCK_ONLY_NOSOURCE=1 --
+  pass "worker and exclusion-guard trees stop on signal with and without telemetry"
 }
 
 test_seeded_module_boundary_parity() {
@@ -1383,6 +1490,10 @@ test_rejects_direct_beads_cli_in_explicit_core_path
 test_ignores_ambient_shellcheck_opts
 test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
+test_four_shards_obey_the_two_worker_limit
+test_ci_defaults_to_one_source_graph_in_memory
+test_failure_still_publishes_finished_telemetry
+test_ci_always_uploads_authoritative_lint_telemetry
 test_worker_trees_stop_on_signal
 test_seeded_module_boundary_parity
 test_changed_mode_lints_only_the_changed_file
@@ -1399,4 +1510,4 @@ test_merge_base_less_keeps_external_sources
 test_explicit_path_keeps_external_sources
 test_fast_mode_on_a_local_branch_keeps_source_following
 test_changed_mode_hides_cross_file_codes_that_ci_still_sees
-test_local_exclusion_list_covers_every_no_external_sources_code
+test_authoritative_lint_owns_local_exclusion_completeness

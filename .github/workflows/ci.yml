@@ -29,7 +29,18 @@ jobs:
       # and GitHub workflow lint). Do not re-spell the checks here; keep CI
       # and the pre-push gate on this script so a self-broken ci.yml still
       # fails locally before merge.
-      - run: bin/fm-lint.sh
+      - name: Run authoritative lint
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/fm-lint"
+          bin/fm-lint.sh --telemetry "$RUNNER_TEMP/fm-lint/fm-lint-telemetry.tsv"
+      - name: Upload lint telemetry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fm-lint-telemetry
+          path: ${{ runner.temp }}/fm-lint/fm-lint-telemetry.tsv
+          if-no-files-found: warn
 
   # Deterministic proof that portable parallel shards + portable serial + Herdr
   # equal the complete tests/*.test.sh inventory with no missing or duplicates,
@@ -135,15 +146,15 @@ jobs:
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Current runners can take ~20 min for a balanced shard. This 30-minute cap
-    # preserves the timeout as a hang tripwire while allowing runner-speed and
-    # job-setup margin; it is not the expected healthy end of the lane.
+    # This 30-minute cap is a hang tripwire with runner-speed and job-setup
+    # margin, not the expected healthy end of the lane. The modeled per-shard
+    # duration lives in docs/fm-test-portable-shards.md.
     timeout-minutes: 30
     strategy:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@v6
         with:

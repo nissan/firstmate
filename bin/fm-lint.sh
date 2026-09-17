@@ -41,12 +41,20 @@
 # invocations in the core bin/ and bin/backends/ scripts so every configured
 # backlog backend follows the same tasks-axi lifecycle path.
 #
-# Canonical lint defaults to two bounded workers over two stable logical shards.
-# Each shard writes separate diagnostics, and the parent replays those outputs in
-# deterministic shard and root order after every worker finishes. FM_LINT_JOBS=1
-# runs the same shards serially with byte-identical diagnostics and exit selection.
+# Canonical lint uses four stable scheduling shards with bounded workers.
+# Every source-aware canonical root is a separate ShellCheck process, so no
+# process constructs more than one root graph and concurrent graph memory is
+# capped by the worker limit. CI defaults to one worker for the private runner;
+# local callers may use two. Each shard writes separate diagnostics, and the
+# parent replays them in deterministic shard and root order.
 #
-# Optional quiet telemetry writes one bounded TSV snapshot of content and source
+# The same default full run also verifies that the changed-file exclusion list
+# still covers every diagnostic caused only by dropping source context. This
+# low-memory sweep belongs here rather than in a behavior-test lane, so lint has
+# one authoritative surface and behavior tests never repeat a repository walk.
+#
+# Optional quiet telemetry publishes a bounded run_status=started TSV before
+# analysis, then replaces it with the finished snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
 #
 # Usage:
@@ -103,23 +111,19 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
       shellcheck_args+=(--extended-analysis=false)
     fi
     : > "$output.out"
-    if [ "${FM_LINT_INTERNAL_FOLLOW_SOURCES:-1}" -eq 1 ]; then
-      "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "${roots[@]}" >> "$output.out" 2>&1 &
+    # One native invocation per root preserves ShellCheck's exact source graph,
+    # full dataflow, codes, and attribution while bounding each process to that
+    # one graph. Never batch roots back into one memory-amplifying process.
+    for path in "${roots[@]}"; do
+      invocation_rc=0
+      "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path" >> "$output.out" 2>&1 &
       FM_LINT_WORKER_SHELLCHECK_PID=$!
-      wait "$FM_LINT_WORKER_SHELLCHECK_PID" || rc=$?
+      wait "$FM_LINT_WORKER_SHELLCHECK_PID" || invocation_rc=$?
       FM_LINT_WORKER_SHELLCHECK_PID=
-    else
-      for path in "${roots[@]}"; do
-        invocation_rc=0
-        "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path" >> "$output.out" 2>&1 &
-        FM_LINT_WORKER_SHELLCHECK_PID=$!
-        wait "$FM_LINT_WORKER_SHELLCHECK_PID" || invocation_rc=$?
-        FM_LINT_WORKER_SHELLCHECK_PID=
-        if [ "$rc" -eq 0 ] && [ "$invocation_rc" -ne 0 ]; then
-          rc=$invocation_rc
-        fi
-      done
-    fi
+      if [ "$rc" -eq 0 ] && [ "$invocation_rc" -ne 0 ]; then
+        rc=$invocation_rc
+      fi
+    done
     trap - HUP INT TERM
   else
     : > "$output.out"
@@ -392,7 +396,13 @@ fm_lint_run_backend_purity() {
   }
 }
 
-JOBS=${FM_LINT_JOBS:-2}
+if [ -n "${FM_LINT_JOBS:-}" ]; then
+  JOBS=$FM_LINT_JOBS
+elif [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; then
+  JOBS=1
+else
+  JOBS=2
+fi
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 FAST=0
 ANALYSIS_MODE=full
@@ -601,7 +611,10 @@ TAB=$(printf '\t')
 WEIGHTS="$TMP_ROOT/weights"
 OUTPUT_DIR="$TMP_ROOT/output"
 mkdir -p "$OUTPUT_DIR"
-SHARD_COUNT=2
+# Four scheduling shards distribute roots deterministically. Each root remains
+# its own complete source-aware graph; JOBS controls only how many such graphs
+# can occupy memory at once and never changes coverage or membership.
+SHARD_COUNT=4
 worker=0
 while [ "$worker" -lt "$SHARD_COUNT" ]; do
   : > "$TMP_ROOT/manifest.$worker"
@@ -627,16 +640,20 @@ for path in "${ROOTS[@]}"; do
   index=$((index + 1))
 done
 
-# Largest-first deterministic greedy assignment keeps the two bounded workers
+# Largest-first deterministic greedy assignment keeps the stable shards
 # balanced without affecting replay order. Direct bytes are a stable portable
-# proxy after the expensive dynamic adapter source fan-out is cut.
-WORKER_LOADS=(0 0)
+# proxy for the root graph size while ShellCheck still follows every source.
+WORKER_LOADS=(0 0 0 0)
 LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n "$WEIGHTS" > "$WEIGHTS.sorted"
 while IFS="$TAB" read -r weight index path; do
   worker=0
-  if [ "${WORKER_LOADS[1]}" -lt "${WORKER_LOADS[0]}" ]; then
-    worker=1
-  fi
+  candidate=1
+  while [ "$candidate" -lt "$SHARD_COUNT" ]; do
+    if [ "${WORKER_LOADS[candidate]}" -lt "${WORKER_LOADS[worker]}" ]; then
+      worker=$candidate
+    fi
+    candidate=$((candidate + 1))
+  done
   printf '%s\t%s\n' "$index" "$path" >> "$TMP_ROOT/manifest.$worker"
   WORKER_LOADS[worker]=$((WORKER_LOADS[worker] + weight))
 done < "$WEIGHTS.sorted"
@@ -678,6 +695,23 @@ if [ -n "$TELEMETRY" ]; then
   TELEMETRY_SHELLCHECK_START=$(fm_lint_shellcheck_count)
   TELEMETRY_LOAD_START=$(fm_lint_load_average)
   TELEMETRY_CPU_START=$(fm_lint_aggregate_cpu)
+  # Publish a bounded start snapshot before the expensive analysis. If the
+  # runner terminates ShellCheck, the always-uploaded artifact still explains
+  # the attempted shape instead of disappearing with the process.
+  telemetry_tmp="$TMP_ROOT/telemetry.started.tsv"
+  {
+    printf 'format\tfm-lint-telemetry-v1\n'
+    printf 'git_head\t%s\n' "$(git rev-parse HEAD 2>/dev/null || printf 'unavailable')"
+    printf 'analysis_mode\t%s\n' "$ANALYSIS_MODE"
+    printf 'jobs\t%s\n' "$JOBS"
+    printf 'shard_count\t%s\n' "$SHARD_COUNT"
+    printf 'root_count\t%s\n' "$ROOT_COUNT"
+    printf 'run_status\tstarted\n'
+  } > "$telemetry_tmp"
+  mv -f "$telemetry_tmp" "$TELEMETRY" || {
+    printf 'fm-lint.sh: could not write telemetry to %s.\n' "$TELEMETRY" >&2
+    exit 2
+  }
 fi
 
 fm_lint_run_worker() {  # <worker-index>
@@ -724,23 +758,19 @@ fm_lint_wait_workers() {
   done
 }
 
-if [ "$JOBS" -eq 1 ]; then
-  worker=0
-  while [ "$worker" -lt "$SHARD_COUNT" ]; do
-    fm_lint_start_worker "$worker"
+# Bash 3.2 has no portable wait-for-any primitive, so dispatch fixed-size
+# batches. This preserves the hard concurrency bound on every supported host.
+worker=0
+while [ "$worker" -lt "$SHARD_COUNT" ]; do
+  fm_lint_start_worker "$worker"
+  if [ "${#ACTIVE_PIDS[@]}" -eq "$JOBS" ]; then
     fm_lint_wait_workers
-    worker=$((worker + 1))
-  done
-else
-  worker=0
-  while [ "$worker" -lt "$SHARD_COUNT" ]; do
-    fm_lint_start_worker "$worker"
-    worker=$((worker + 1))
-  done
-  fm_lint_wait_workers
-fi
+  fi
+  worker=$((worker + 1))
+done
+fm_lint_wait_workers
 
-# Replay both stable shards in deterministic order and select the first nonzero
+# Replay all stable shards in deterministic order and select the first nonzero
 # shard status. ShellCheck processes every root in a shard after earlier findings.
 overall_rc=0
 worker=0
@@ -759,6 +789,66 @@ while [ "$worker" -lt "$SHARD_COUNT" ]; do
   fi
   worker=$((worker + 1))
 done
+
+# The local changed-file posture excludes only diagnostics that require source
+# context. Prove that list remains complete on every authoritative full run.
+# Each no-source process owns one root and at most four run concurrently; these
+# shallow graphs stay far below the private runner's memory envelope.
+fm_lint_run_local_exclusion_guard() {
+  [ "$EXPLICIT_PATHS" -eq 0 ] && [ "$FOLLOW_SOURCES" -eq 1 ] && [ "$FAST" -eq 0 ] || return 0
+  local guard_dir index path pid rc unexpected code
+  local -a guard_pids
+  guard_dir="$TMP_ROOT/local-exclusion-guard"
+  mkdir -p "$guard_dir"
+  guard_pids=()
+  index=0
+  for path in "${ROOTS[@]}"; do
+    # shellcheck disable=SC2016 # The child shell, not this one, expands $1-$3.
+    "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
+      "${BASH:-bash}" -c 'rc=0; "$1" --norc --format=gcc -- "$2" >"$3.out" 2>&1 || rc=$?; printf "%s\n" "$rc" >"$3.rc"' \
+      fm-lint-guard "$SHELLCHECK_BIN" "$path" "$guard_dir/$index" &
+    pid=$!
+    ACTIVE_PIDS+=("$pid")
+    guard_pids+=("$pid")
+    index=$((index + 1))
+    if [ "${#guard_pids[@]}" -eq 4 ]; then
+      fm_lint_wait_workers
+      guard_pids=()
+    fi
+  done
+  fm_lint_wait_workers
+
+  unexpected=
+  index=0
+  while [ "$index" -lt "$ROOT_COUNT" ]; do
+    rc=$(cat "$guard_dir/$index.rc" 2>/dev/null || printf '2')
+    case "$rc" in ''|*[!0-9]*) rc=2 ;; esac
+    if [ "$rc" -gt 1 ]; then
+      printf 'fm-lint.sh: local exclusion guard failed to analyze root %s (exit %s).\n' \
+        "${ROOTS[index]}" "$rc" >&2
+      cat "$guard_dir/$index.out" >&2
+      return "$rc"
+    fi
+    while IFS= read -r code; do
+      [ -n "$code" ] || continue
+      case ",$LOCAL_NOX_EXCLUDE," in
+        *",$code,"*) ;;
+        *) unexpected="${unexpected}${unexpected:+ }$code" ;;
+      esac
+    done < <(sed -n 's/.*\[\(SC[0-9][0-9]*\)\].*/\1/p' "$guard_dir/$index.out" | LC_ALL=C sort -u)
+    index=$((index + 1))
+  done
+  [ -z "$unexpected" ] || {
+    printf 'fm-lint.sh: no-source analysis emitted codes outside the local exclusion list: %s\n' "$unexpected" >&2
+    return 1
+  }
+}
+
+exclusion_guard_rc=0
+fm_lint_run_local_exclusion_guard || exclusion_guard_rc=$?
+if [ "$overall_rc" -eq 0 ] && [ "$exclusion_guard_rc" -ne 0 ]; then
+  overall_rc=$exclusion_guard_rc
+fi
 
 if [ -n "$TELEMETRY" ]; then
   TELEMETRY_END_EPOCH=$(date +%s)
@@ -842,6 +932,7 @@ EOF
     printf 'shellcheck_version\t%s\n' "$resolved"
     printf 'analysis_mode\t%s\n' "$ANALYSIS_MODE"
     printf 'jobs\t%s\n' "$JOBS"
+    printf 'shard_count\t%s\n' "$SHARD_COUNT"
     printf 'root_count\t%s\n' "$ROOT_COUNT"
     printf 'direct_lines\t%s\n' "$direct_lines"
     printf 'direct_bytes\t%s\n' "$direct_bytes"
@@ -849,8 +940,11 @@ EOF
     printf 'source_boundary_directives\t%s\n' "$source_boundaries"
     printf 'source_followed_directives\t%s\n' "$source_followed"
     printf 'source_target_count\t%s\n' "$source_targets"
-    printf 'shard_1_weight_bytes\t%s\n' "${WORKER_LOADS[0]}"
-    printf 'shard_2_weight_bytes\t%s\n' "${WORKER_LOADS[1]:-0}"
+    worker=0
+    while [ "$worker" -lt "$SHARD_COUNT" ]; do
+      printf 'shard_%s_weight_bytes\t%s\n' "$((worker + 1))" "${WORKER_LOADS[worker]}"
+      worker=$((worker + 1))
+    done
     printf 'wall_seconds\t%s\n' "$((TELEMETRY_END_EPOCH - TELEMETRY_START_EPOCH))"
     printf 'worker_wall_sum_seconds\t%s\n' "$timing_worker_wall"
     printf 'max_worker_wall_seconds\t%s\n' "$max_worker_wall"
@@ -864,6 +958,7 @@ EOF
     printf 'load_average_end\t%s\n' "$TELEMETRY_LOAD_END"
     printf 'aggregate_cpu_percent_start\t%s\n' "$TELEMETRY_CPU_START"
     printf 'aggregate_cpu_percent_end\t%s\n' "$TELEMETRY_CPU_END"
+    printf 'run_status\tfinished\n'
     printf 'result_exit\t%s\n' "$overall_rc"
   } > "$telemetry_tmp"
   if ! mv -f "$telemetry_tmp" "$TELEMETRY"; then
