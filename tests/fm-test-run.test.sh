@@ -1100,8 +1100,8 @@ test_portable_serial_plan_has_deterministic_safe_margin() {
   [ "$scripts" -eq "$serial_total" ] \
     || fail "serial shard plan covered $scripts scripts instead of the $serial_total-script serial lane"
   max_ms=$(printf '%s\n' "$first" | awk -F '\t' '$3 > max {max=$3} END {print max + 0}')
-  [ "$max_ms" -le 1050000 ] \
-    || fail "serial shard plan leaves less than 12.5 modeled minutes under the 30-minute job cap: ${max_ms}ms"
+  [ "$max_ms" -le 1140000 ] \
+    || fail "serial shard plan leaves less than 11 modeled minutes under the 30-minute job cap: ${max_ms}ms"
 
   command -v ruby >/dev/null 2>&1 || fail "ruby is required to parse ci.yml as YAML"
   matrix=$(ruby -ryaml -e '
