@@ -803,11 +803,10 @@ fm_lint_run_local_exclusion_guard() {
   guard_pids=()
   index=0
   for path in "${ROOTS[@]}"; do
-    (
-      rc=0
-      "$SHELLCHECK_BIN" --norc --format=gcc -- "$path" >"$guard_dir/$index.out" 2>&1 || rc=$?
-      printf '%s\n' "$rc" >"$guard_dir/$index.rc"
-    ) &
+    # shellcheck disable=SC2016 # The child shell, not this one, expands $1-$3.
+    "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
+      "${BASH:-bash}" -c 'rc=0; "$1" --norc --format=gcc -- "$2" >"$3.out" 2>&1 || rc=$?; printf "%s\n" "$rc" >"$3.rc"' \
+      fm-lint-guard "$SHELLCHECK_BIN" "$path" "$guard_dir/$index" &
     pid=$!
     ACTIVE_PIDS+=("$pid")
     guard_pids+=("$pid")
@@ -832,8 +831,8 @@ fm_lint_run_local_exclusion_guard() {
     fi
     while IFS= read -r code; do
       [ -n "$code" ] || continue
-      case "$code" in
-        SC1091|SC2034|SC2153|SC2329) ;;
+      case ",$LOCAL_NOX_EXCLUDE," in
+        *",$code,"*) ;;
         *) unexpected="${unexpected}${unexpected:+ }$code" ;;
       esac
     done < <(sed -n 's/.*\[\(SC[0-9][0-9]*\)\].*/\1/p' "$guard_dir/$index.out" | LC_ALL=C sort -u)
