@@ -1,0 +1,24 @@
+## 1. CI-mode full lint, real ShellCheck 0.11.0 for no-source guard (source-aware pass stubbed to exit 0 for host memory)
+$ CI=true GITHUB_ACTIONS=true bin/fm-lint.sh --telemetry /tmp/fm-guard-demo/t.tsv
+roots: 384
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+fm-lint-workflows.sh: actionlint 1.7.12 (pinned 1.7.12)
+fm-lint-workflows.sh: 3 workflow files valid
+exit=0 wall=80s
+telemetry run_status: run_status	finished 
+
+## 2. Regression: copy of HEAD with SC2034 dropped from LOCAL_NOX_EXCLUDE (guard must fail full lint)
+ bin/fm-lint.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+$ CI=true GITHUB_ACTIONS=true bin/fm-lint.sh
+fm-lint.sh: no-source analysis emitted codes outside the local exclusion list: SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034 SC2034
+fm-lint-workflows.sh: actionlint 1.7.12 (pinned 1.7.12)
+fm-lint-workflows.sh: 3 workflow files valid
+exit=1
+no-source guard ShellCheck invocations: 384
+
+## 3. Behavior lane impact
+$ bin/fm-test-run.sh --list --lane portable-parallel-1 | grep -c fm-lint.test   -> 1 (fm-lint.test.sh lives in portable parallel 1)
+$ time bash tests/fm-lint.test.sh   -> 42/42 ok, rc=0, real 0m37s (no repository-wide ShellCheck sweep left in the behavior lane)
+$ bin/fm-test-run.sh --check-coverage -> FM_TEST_COVERAGE ok total=199 parallel=24 serial=162 serial_shards=7 serial_unhinted=0 herdr=13
