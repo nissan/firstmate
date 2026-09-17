@@ -464,6 +464,40 @@ fm_git_worktree() {
   git -C "$repo" worktree add --quiet -b "$branch" "$worktree"
 }
 
+# fm_test_claude_review_permissions <state-dir> <data-dir> <id>
+# The exact Claude launch fragment fm-spawn.sh --claude-review renders: default
+# permissions plus output and own-inbox grants for only this scout, by given and
+# resolved path.
+fm_test_claude_review_permissions() {
+  local state=$1 data=$2 id=$3 state_real data_real rules status report inbox
+  local -a statuses reports inboxes
+  state_real=$(cd "$state" && pwd -P) || return 1
+  data_real=$(cd "$data" && pwd -P) || return 1
+  statuses=("$state/$id.status")
+  reports=("$data/$id/report.md")
+  inboxes=("$state/$id.inbox")
+  [ "$state_real" = "$state" ] || {
+    statuses+=("$state_real/$id.status")
+    inboxes+=("$state_real/$id.inbox")
+  }
+  [ "$data_real" = "$data" ] || reports+=("$data_real/$id/report.md")
+  rules=
+  for status in "${statuses[@]}"; do
+    rules+=" 'Edit(/$status)' 'Write(/$status)'"
+  done
+  for report in "${reports[@]}"; do
+    rules+=" 'Edit(/$report)' 'Write(/$report)'"
+  done
+  for status in "${statuses[@]}"; do
+    rules+=" 'Bash(echo * >> '\''$status'\'')'"
+  done
+  for inbox in "${inboxes[@]}"; do
+    rules+=" 'Read(/$inbox/**)' 'Glob(/$inbox/*.msg)'"
+  done
+  rules+=" 'Bash($state_real/$id.claude-review-ack.sh)'"
+  printf 'claude --permission-mode default --allowedTools%s --settings' "$rules"
+}
+
 # --- state/<id>.meta writers ------------------------------------------------
 
 # fm_write_meta <file> <key=val> ...: write the given key=val lines to a meta

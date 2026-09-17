@@ -29,6 +29,22 @@ Never send Enter to that one either: it was observed rendering in the same shape
 Firstmate cannot move a selection with Enter, Escape, and C-c alone, so it cannot accept this dialog at all, and an operator accepts it once per machine instead.
 Inspect the pane to identify which dialog is on screen, and report it rather than answering it.
 
+## Permission-respecting review launch
+
+`fm-spawn.sh --claude-review` is the explicit task-scoped posture for an independent Claude scout that must not bypass permissions.
+It launches Claude with `--permission-mode default` (Manual) instead of `--dangerously-skip-permissions`, plus exact `--allowedTools` rules for only this scout's status and report writes, own-inbox reads, and one generated no-argument acknowledgement helper.
+The mode-0700 helper is byte-bound to the exact task and inbox, moves only the oldest safe pending message into that inbox's handled directory, and refuses arguments, symlinks, cross-task identity, ambiguous paths, and duplicate destinations.
+Every project edit, push, unrelated task path, broader state or data path, and other mutating command still stops at Claude's own permission prompt.
+The launch otherwise keeps the ordinary workspace-trust registration, feedback and attribution settings, busy hooks, model, effort, environment, and backend path.
+The task record carries `claude_review=on`, and `fm-control.sh relaunch` preserves it for a Claude scout or can opt an existing Claude scout in with the same flag.
+Fresh review launches use the same command-delivery path on tmux, Herdr, Zellij, Orca, and cmux; relaunch remains limited to tmux and Herdr by the control plane's existing recovery-grade state requirement.
+The public interfaces refuse this flag for ships, secondmates, every other harness, and raw launch commands, and refuse switching a recorded Claude review to another harness rather than silently weakening its posture.
+Ordinary Claude workers keep the unattended permission-bypass launch unchanged.
+
+Run `FM_CLAUDE_REVIEW_LIVE_E2E=1 tests/fm-claude-review-launch-live-e2e.test.sh` after a Claude upgrade. It proves the real credentialed CLI still accepts the launch, reads the exact target, writes its durable outputs, acts on a real `fm-send` steer rung through its doorbell and acknowledges it through the helper, denies a steered project write and cross-task access, and leaves repository plus watched user/project/local settings unchanged.
+Set `FM_CLAUDE_REVIEW_LIVE_CROSS_ONLY=1` to refresh only the fresh-session cross-task denial arm.
+`../../../docs/verification/runtime-backends.md` records the current empirical result.
+
 ## Composer ghost
 
 Completed turns can render dim predicted text inside an empty composer, indistinguishable in plain `tmux capture-pane`.

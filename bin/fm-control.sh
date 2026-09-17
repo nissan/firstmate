@@ -5,7 +5,7 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--claude-review]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -38,8 +38,13 @@
 #              on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
 #              of this verb. An explicit `default` model or effort clears that
-#              axis for the replacement. With no explicit axis, a secondmate
-#              re-resolves its durable config/secondmate-harness pin (harness
+#              axis for the replacement. --claude-review opts a Claude scout
+#              replacement into the permission-respecting review posture.
+#              Ships and secondmates are refused before their current worker is
+#              stopped. A Claude review task keeps that posture on an ordinary same-
+#              harness relaunch; switching it to another harness is refused
+#              before the old agent is stopped. With no explicit axis, a
+#              secondmate re-resolves its durable config/secondmate-harness pin (harness
 #              plus its optional model and effort tokens) exactly as any other
 #              respawn does, while a ship or scout keeps the exact adapter
 #              already recorded for it.
@@ -206,6 +211,7 @@ NEW_EFFORT=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+CLAUDE_REVIEW_SET=0
 NOTE=
 NOTE_SET=0
 control_want_value=
@@ -235,6 +241,7 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --claude-review) CLAUDE_REVIEW_SET=1 ;;
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
@@ -252,8 +259,8 @@ if [ -n "$control_want_value" ]; then
 fi
 
 if [ "$VERB" != relaunch ]; then
-  [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+  [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$CLAUDE_REVIEW_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
+    || die "--harness, --model, --effort, --claude-review, and --note apply to 'relaunch' only"
 fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
@@ -712,6 +719,21 @@ resolve_relaunch_profile() {
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   fi
+  PRIOR_CLAUDE_REVIEW=$(fm_meta_get "$META" claude_review)
+  case "$PRIOR_CLAUDE_REVIEW" in
+    ''|on) ;;
+    *) die "task $ID records invalid claude_review='$PRIOR_CLAUDE_REVIEW'; refusing an ambiguous relaunch" ;;
+  esac
+  if [ "$CLAUDE_REVIEW_SET" = 1 ]; then
+    [ "$KIND" = scout ] \
+      || die "--claude-review is scout-only and cannot relaunch a ship or persistent secondmate"
+    [ "$TARGET_HARNESS" = claude ] \
+      || die "--claude-review applies only to the claude harness, not '$TARGET_HARNESS'"
+  elif [ "$PRIOR_CLAUDE_REVIEW" = on ] && [ "$KIND" != scout ]; then
+    die "task $ID records claude_review=on for a non-scout task; refusing the unsupported relaunch before stopping it"
+  elif [ "$PRIOR_CLAUDE_REVIEW" = on ] && [ "$TARGET_HARNESS" != claude ]; then
+    die "task $ID is a permission-respecting Claude review; refusing to switch it to '$TARGET_HARNESS' and silently weaken its launch posture"
+  fi
 }
 
 # safe_checkpoint: prove, before anything is stopped, that the work a relaunch
@@ -863,6 +885,7 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  [ "$CLAUDE_REVIEW_SET" = 0 ] || spawn_args+=(--claude-review)
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1

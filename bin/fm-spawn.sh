@@ -2,7 +2,7 @@
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
 # Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--claude-review]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -26,7 +26,7 @@
 #   Ship/scout launches always supply fm-dod-lib.sh's current worker role scope
 #   using the same private launch-brief overlay. This never rewrites a project's
 #   instruction files or a secondmate's charter.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--claude-review]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree instead of acquiring one, and into its recorded
 #   endpoint when that endpoint still exists. It is
@@ -37,9 +37,9 @@
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
-#   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. It refuses unless the recorded endpoint is positively
-#   agent-free on a backend with a recovery-grade agent-state classifier (tmux
+#   model, effort, and a --claude-review opt-in may change, which is what makes
+#   a harness switch one ordinary relaunch. It refuses unless the recorded
+#   endpoint is positively agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
 #   the new incarnation. Both `dead` (the endpoint exists and holds no agent)
 #   and `missing` (the endpoint is structurally gone, as after a session-provider
@@ -59,6 +59,20 @@
 #   from that harness's launch rather than guessed. Ultra is the explicit
 #   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
+#   --claude-review is an opt-in task launch posture for an independent Claude
+#   reviewer. It replaces Claude's ordinary permission bypass with
+#   `--permission-mode default` plus exact `--allowedTools` rules naming only
+#   this scout's status, report, and own inbox intake/acknowledgement paths.
+#   Those durable outputs proceed while every project edit, unrelated task
+#   path, other mutating command, or push still waits on Claude's own permission
+#   prompt. It preserves the launch's trust registration, feedback controls,
+#   hooks, model, effort, environment, and backend behavior. It is accepted
+#   only for a canonical Claude scout launch (never a ship, secondmate, or raw
+#   launch command), recorded as claude_review=on, and preserved by a same-
+#   harness relaunch. A relaunch may opt an existing Claude scout in explicitly;
+#   switching a recorded review task
+#   to another harness is refused before launch rather than silently weakening
+#   its permissions. Ordinary Claude launches remain unchanged.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -468,6 +482,8 @@ BACKEND_ARG=
 MODE=
 YOLO=
 TRACEPARENT_ARG=
+CLAUDE_REVIEW_REQUESTED=0
+CLAUDE_REVIEW_ACTIVE=0
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -501,6 +517,7 @@ for a in "$@"; do
     --scout) KIND=scout; KIND_SET=1 ;;
     --secondmate) KIND=secondmate; KIND_SET=1 ;;
     --relaunch) RELAUNCH=1 ;;
+    --claude-review) CLAUDE_REVIEW_REQUESTED=1 ;;
     --harness) want_value=harness ;;
     --harness=*) HARNESS_ARG=${a#--harness=}; HARNESS_SET=1 ;;
     --model) want_value=model ;;
@@ -554,6 +571,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
 else
+  [ "$CLAUDE_REVIEW_REQUESTED" -eq 0 ] || [ "$KIND" = scout ] || {
+    echo "error: --claude-review is scout-only and cannot launch a ship or persistent secondmate" >&2
+    exit 1
+  }
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
   # here rather than resolved from the project registry. Scouts deliver a report
@@ -1134,6 +1155,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
+  [ "$CLAUDE_REVIEW_REQUESTED" -eq 0 ] || shared_args+=(--claude-review)
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
   # spanning several modes is two invocations rather than a silent mixed dispatch.
@@ -1510,7 +1532,7 @@ launch_template() {
     # sources are not guaranteed to load that scope, so a worker would
     # otherwise run with attribution back on; carrying it per launch keeps the
     # policy in force regardless of which settings scopes end up loaded.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}}'\'' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude __CLAUDEPERMISSIONS__--settings '\''{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}}'\'' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -1697,6 +1719,37 @@ case "$ARG3" in
     LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2; exit 1; }
     ;;
 esac
+
+# The review posture is task-scoped and Claude-specific. Resolve it only after
+# the effective harness is known, but before any harness setup or endpoint
+# mutation. A same-harness relaunch inherits the durable bit; an explicit flag
+# can opt an existing ordinary Claude task in.
+if [ "$RELAUNCH" -eq 1 ]; then
+  recorded_claude_review=$(fm_meta_get "$RELAUNCH_META" claude_review)
+  case "$recorded_claude_review" in
+    '') ;;
+    on) CLAUDE_REVIEW_ACTIVE=1 ;;
+    *)
+      echo "error: task $ID records invalid claude_review='$recorded_claude_review'; refusing an ambiguous relaunch" >&2
+      exit 1
+      ;;
+  esac
+fi
+[ "$CLAUDE_REVIEW_REQUESTED" -eq 0 ] || CLAUDE_REVIEW_ACTIVE=1
+if [ "$CLAUDE_REVIEW_ACTIVE" -eq 1 ]; then
+  [ "$HARNESS" = claude ] || {
+    echo "error: --claude-review and recorded claude_review=on apply only to the claude harness, not '$HARNESS'" >&2
+    exit 1
+  }
+  [ "$KIND" = scout ] || {
+    echo "error: --claude-review is scout-only and cannot launch a ship or persistent secondmate" >&2
+    exit 1
+  }
+  [ "$RAW_LAUNCH" = 0 ] || {
+    echo "error: --claude-review requires the canonical --harness claude launch so its permission posture cannot be omitted" >&2
+    exit 1
+  }
+fi
 
 # muse and gemini are verified as CREWMATE/SCOUT adapters only. A secondmate is
 # a firstmate instance, so it needs a primary supervision protocol.
@@ -2292,12 +2345,24 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   SOURCE_BRIEF=$BRIEF
   BRIEF="$DATA/$ID/launch-brief.md"
   BRIEF_TMP="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"
+  CLAUDE_REVIEW_BRIEF_ACK_HELPER=
+  if [ "$CLAUDE_REVIEW_ACTIVE" = 1 ]; then
+    review_state_real=$(cd "$STATE" && pwd -P) || exit 1
+    CLAUDE_REVIEW_BRIEF_ACK_HELPER="$review_state_real/$ID.claude-review-ack.sh"
+  fi
   {
     cat "$SOURCE_BRIEF" &&
       printf '\n' &&
       fm_brief_worker_role &&
       if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
         fm_brief_intent_overlay "$CAPTAIN_INTENT"
+      fi &&
+      if [ "$CLAUDE_REVIEW_ACTIVE" = 1 ]; then
+        printf '%s\n' '' '## Claude review inbox acknowledgement' '' \
+          "For this permission-restricted review, do not run the scaffold's mv command directly." \
+          "After reading this task's own pending inbox message, acknowledge exactly one oldest message by running this no-argument helper:" \
+          "  $CLAUDE_REVIEW_BRIEF_ACK_HELPER" \
+          'Run it once per handled message; it cannot accept arguments or access another task.'
       fi
   } > "$BRIEF_TMP" || { rm -f -- "$BRIEF_TMP"; echo "error: could not render current launch contract for $SOURCE_BRIEF" >&2; exit 1; }
   if ! mv "$BRIEF_TMP" "$BRIEF"; then
@@ -3720,7 +3785,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort claude_review busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -3738,6 +3803,7 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  [ "$CLAUDE_REVIEW_ACTIVE" -ne 1 ] || echo "claude_review=on"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
@@ -3876,6 +3942,91 @@ sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
+if [ "$CLAUDE_REVIEW_ACTIVE" -eq 1 ]; then
+  DATA_REAL=$(cd "$DATA" && pwd -P) || exit 1
+  CLAUDE_REVIEW_ACK_HELPER="$STATE_REAL/$ID.claude-review-ack.sh"
+  claude_review_ack_tmp="$STATE_REAL/.$ID.claude-review-ack.${BASHPID:-$$}"
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'set -eu'
+    printf 'EXPECTED_HELPER=%s\n' "$(shell_quote "$CLAUDE_REVIEW_ACK_HELPER")"
+    printf 'STATE=%s\n' "$(shell_quote "$STATE_REAL")"
+    printf 'ID=%s\n' "$(shell_quote "$ID")"
+    cat <<'CLAUDE_REVIEW_ACK'
+[ "$#" -eq 0 ] || { echo "error: review acknowledgement helper accepts no arguments" >&2; exit 2; }
+[ "$0" = "$EXPECTED_HELPER" ] || { echo "error: review acknowledgement helper must be invoked by its exact absolute path" >&2; exit 1; }
+[ ! -L "$EXPECTED_HELPER" ] && [ -f "$EXPECTED_HELPER" ] || { echo "error: review acknowledgement helper identity is unsafe" >&2; exit 1; }
+state_real=$(cd -P -- "$STATE" 2>/dev/null && pwd -P) || { echo "error: review state path is unreadable" >&2; exit 1; }
+[ "$state_real" = "$STATE" ] || { echo "error: review state path is ambiguous" >&2; exit 1; }
+META="$STATE/$ID.meta"
+[ -f "$META" ] && [ ! -L "$META" ] || { echo "error: review task record is missing or unsafe" >&2; exit 1; }
+[ "$(sed -n 's/^endpoint_task_id=//p' "$META")" = "$ID" ] \
+  && [ "$(sed -n 's/^kind=//p' "$META")" = scout ] \
+  && [ "$(sed -n 's/^harness=//p' "$META")" = claude ] \
+  && [ "$(sed -n 's/^claude_review=//p' "$META")" = on ] \
+  || { echo "error: review task identity does not match this helper" >&2; exit 1; }
+INBOX="$STATE/$ID.inbox"
+HANDLED="$INBOX/handled"
+[ -e "$INBOX" ] || exit 0
+[ -d "$INBOX" ] && [ ! -L "$INBOX" ] || { echo "error: review inbox is unsafe" >&2; exit 1; }
+[ -d "$HANDLED" ] && [ ! -L "$HANDLED" ] || { echo "error: review handled inbox is unsafe" >&2; exit 1; }
+LOCK="$STATE/.$ID.claude-review-ack.lock"
+mkdir "$LOCK" 2>/dev/null || { echo "error: review acknowledgement is already running" >&2; exit 1; }
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT HUP INT TERM
+oldest=
+for candidate in "$INBOX"/*.msg; do
+  [ -e "$candidate" ] || continue
+  [ -f "$candidate" ] && [ ! -L "$candidate" ] \
+    || { echo "error: review inbox message is unsafe" >&2; exit 1; }
+  name=${candidate##*/}
+  printf '%s\n' "$name" | grep -Eq '^[0-9]+[.]msg$' \
+    || { echo "error: review inbox message name is ambiguous" >&2; exit 1; }
+  if [ -z "$oldest" ] || [ "$candidate" \< "$oldest" ]; then oldest=$candidate; fi
+done
+[ -n "$oldest" ] || exit 0
+destination="$HANDLED/${oldest##*/}"
+[ ! -e "$destination" ] && [ ! -L "$destination" ] \
+  || { echo "error: review inbox acknowledgement already exists" >&2; exit 1; }
+mv -- "$oldest" "$destination"
+CLAUDE_REVIEW_ACK
+  } > "$claude_review_ack_tmp" || { rm -f -- "$claude_review_ack_tmp"; exit 1; }
+  chmod 0700 "$claude_review_ack_tmp" || { rm -f -- "$claude_review_ack_tmp"; exit 1; }
+  mv -f -- "$claude_review_ack_tmp" "$CLAUDE_REVIEW_ACK_HELPER" || { rm -f -- "$claude_review_ack_tmp"; exit 1; }
+  [ ! -L "$CLAUDE_REVIEW_ACK_HELPER" ] || { echo "error: Claude review acknowledgement helper publication produced a symlink" >&2; exit 1; }
+
+  claude_review_statuses=("$STATE/$ID.status")
+  claude_review_reports=("$DATA/$ID/report.md")
+  claude_review_inboxes=("$STATE/$ID.inbox")
+  [ "$STATE_REAL" = "$STATE" ] || {
+    claude_review_statuses+=("$STATE_REAL/$ID.status")
+    claude_review_inboxes+=("$STATE_REAL/$ID.inbox")
+  }
+  [ "$DATA_REAL" = "$DATA" ] || claude_review_reports+=("$DATA_REAL/$ID/report.md")
+  CLAUDEPERMISSIONS='--permission-mode default --allowedTools '
+  for claude_review_output in "${claude_review_statuses[@]}" "${claude_review_reports[@]}"; do
+    claude_review_escaped=$(printf '%s' "$claude_review_output" | sed 's/[][*?\\]/\\&/g')
+    for claude_review_tool in Edit Write; do
+      claude_review_rule="$claude_review_tool(/$claude_review_escaped)"
+      CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
+    done
+  done
+  for claude_review_status in "${claude_review_statuses[@]}"; do
+    claude_review_rule="Bash(echo * >> '$claude_review_status')"
+    CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
+  done
+  for claude_review_inbox in "${claude_review_inboxes[@]}"; do
+    claude_review_escaped=$(printf '%s' "$claude_review_inbox" | sed 's/[][*?\\]/\\&/g')
+    for claude_review_rule in \
+      "Read(/$claude_review_escaped/**)" \
+      "Glob(/$claude_review_escaped/*.msg)"; do
+      CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
+    done
+  done
+  claude_review_rule="Bash($CLAUDE_REVIEW_ACK_HELPER)"
+  CLAUDEPERMISSIONS+="$(shell_quote "$claude_review_rule") "
+else
+  CLAUDEPERMISSIONS='--dangerously-skip-permissions '
+fi
+LAUNCH=${LAUNCH//__CLAUDEPERMISSIONS__/$CLAUDEPERMISSIONS}
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 if [ "$HARNESS" = rovo ]; then

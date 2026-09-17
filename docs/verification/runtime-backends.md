@@ -304,6 +304,33 @@ This change does not address that warning and does not claim to.
 That automated spawn case runs against a fake claude, so it asserts the store entry and the launch command and nothing more; the live arms above are what establish that the entry actually suppresses the dialog.
 The composer-classification record below observes the same gate from the other side, where an untrusted worktree left Claude, Grok, and Muse unverified because the guard reads a first-launch trust dialog as an unreadable composer.
 
+## Claude permission-respecting review launch
+
+Verified 2026-09-12 on Claude Code 2.1.266 with real credentials and tmux.
+The public `fm-spawn.sh --claude-review` interface generated and durably recorded a Claude scout launch using `--permission-mode default` plus exact output, own-inbox read, and no-argument acknowledgement-helper grants; the rendered launch contained no `--dangerously-skip-permissions` string.
+The first real worker read one tracked sentinel and wrote its report and status.
+A real `fm-send` steer then rang its doorbell in the live tmux pane; the worker acted on the durable record and acknowledged it through the generated mode-0700 helper, which moved exactly that record into `handled/` without a prompt.
+A second steer asked for a Write to a new file in the worktree; it stopped at Claude's permission prompt, and that file never appeared.
+Because rejecting a permission ends Claude's turn, a separate fresh-session arm attempted only another task's inbox read; it stopped at the permission prompt without exposing or changing the other task's message.
+Across both arms, Git HEAD, full untracked-aware status, and the exact launch's user/project/local `settings.json` and `settings.local.json` files remained byte-identical.
+The portable interface coverage is `tests/fm-spawn-dispatch-profile.test.sh`, `tests/fm-control-relaunch.test.sh`, and `tests/fm-claude-review-ack.test.sh`. Those suites also prove:
+- ordinary Claude launch behavior stays unchanged;
+- ships, unsupported harnesses, secondmates, and raw launch commands refuse;
+- the helper is task-bound, argument-free, mode-0700, symlink-safe, one-message-at-a-time, destination-exclusive, and removed by normal cleanup;
+- a real `fm-send` steer lands in the review task's own inbox and rings its doorbell without typing the payload, and the published helper acknowledges it;
+- a review relaunch's generated launch brief carries the progress note and the exact published helper path, and that helper acknowledges a steer sent before the relaunch;
+- a relaunch that fails after republishing its record keeps the live worker's helper;
+- a recorded posture value other than `on` refuses before stopping its worker;
+- same-harness relaunch preserves the durable posture, and an existing Claude scout can opt in through control;
+- an unsupported switch refuses before stopping its worker.
+
+Refresh the credentialed proof after a Claude upgrade:
+
+```console
+$ FM_CLAUDE_REVIEW_LIVE_E2E=1 FM_CLAUDE_REVIEW_LIVE_CROSS_ONLY=1 bash tests/fm-claude-review-launch-live-e2e.test.sh
+ok - Claude 2.1.266 (Claude Code): a fresh restricted review session denied another task inbox and preserved repository/settings state
+```
+
 ## Composer classification matrix
 
 The shared composer classifier (`bin/fm-composer-lib.sh`, `fm_composer_classify_screen`) owns every composer shape fleet-wide; each backend contributes only a capture and a capability descriptor.
