@@ -21,6 +21,14 @@ REAL_HERDR=$(command -v herdr)
 REAL_TREEHOUSE=$(command -v treehouse)
 HERDR_ORIGINAL_PATH=$PATH
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-herdr-presentation.XXXXXX")
+# The pre-spawn runway gate (bin/fm-runway-lib.sh) consults the remaining
+# provider allowance on every fresh spawn, so pin the evidence it reads: this
+# suite drives the real bin/fm-spawn.sh and sources no shared test library, and
+# unpinned it would take its verdict from the developer's live quota and pay a
+# vendor read per spawn. tests/runway-evidence-helpers.sh owns the fixture.
+# shellcheck source=tests/runway-evidence-helpers.sh
+. "$ROOT/tests/runway-evidence-helpers.sh"
+fm_test_pin_runway_evidence "$TMP_ROOT"
 FAKEBIN="$TMP_ROOT/fakebin"
 HERDR_CALL_LOG="$TMP_ROOT/herdr-calls.log"
 TREEHOUSE_CALL_LOG="$TMP_ROOT/treehouse-calls.log"

@@ -130,6 +130,17 @@ test_only_the_applicable_scope_decides() {
     || fail "the same provider's healthy default model must be permitted: $record"
   [ -z "$(warning_of "$record")" ] \
     || fail "ample runway must be silent, not warned about: $record"
+
+  # A bridging runtime spends another vendor's allowance, and WHICH vendor comes
+  # from the model, so the same exhausted claude scope must refuse it - reached
+  # through the routing prefix quota-axi's own scopes never carry.
+  record=$(run_check omp claude-bridge/fable FM_RUNWAY_SNAPSHOT="$snap")
+  [ "$(rc_of "$record")" = "$REFUSE_RC" ] \
+    || fail "a bridged model must be judged against the vendor it spends: $record"
+  case "$(evidence_of "$record")" in
+    *model:fable*) ;;
+    *) fail "the bridged refusal must name the vendor's own model scope: $record" ;;
+  esac
   pass "fm-runway: only the scopes applicable to the harness and model decide"
 }
 
@@ -230,6 +241,15 @@ test_no_missing_or_broken_signal_can_refuse() {
   record=$(run_check "" default FM_RUNWAY_SNAPSHOT="$snap")
   [ "$(rc_of "$record")" != "$REFUSE_RC" ] \
     || fail "an unidentifiable worker runtime must not refuse: $record"
+
+  # The map is keyed on the model too, so a bridging runtime routed at a vendor
+  # it has no mapping for is one more unreadable signal: absent evidence, never
+  # bad news.
+  record=$(run_check omp ollama/qwen3:8b FM_RUNWAY_SNAPSHOT="$snap")
+  [ "$(rc_of "$record")" != "$REFUSE_RC" ] \
+    || fail "an unmapped bridged model must not refuse: $record"
+  [ -n "$(warning_of "$record")" ] \
+    || fail "an unmapped bridged model must explain itself: $record"
   pass "fm-runway: no missing or broken quota signal can refuse a spawn"
 }
 
@@ -423,6 +443,60 @@ EOF
   pass "fm-spawn: an unavailable allowance signal warns and never blocks a spawn"
 }
 
+# tests/runway-evidence-helpers.sh is the fixture the real-spawn end-to-end suites
+# depend on - tests/fm-backend-autodetect-smoke.test.sh and the real-herdr e2e
+# family drive the real bin/fm-spawn.sh, source no shared test library, and are
+# excluded from the portable CI lanes, so nothing CI runs would notice them
+# going back to reading the machine's live quota. Their contract is therefore
+# proved here: pinned, a real spawn is silent AND never reaches the vendor tool.
+# The unpinned control in the same case proves the tool IS reached otherwise, so
+# this cannot pass vacuously.
+test_the_shared_evidence_fixture_keeps_a_real_spawn_off_the_vendor() {
+  local rec home wt fakebin proj out status marker evidence pinned
+  rec=$(make_spawn_home fixture)
+  IFS='|' read -r home wt fakebin proj <<EOF
+$rec
+EOF
+  mkdir -p "$home/user-home"
+
+  marker="$TMP_ROOT/fixture-quota-axi-calls"
+  cat > "$fakebin/quota-axi" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$marker"
+exit 1
+STUB
+  chmod +x "$fakebin/quota-axi"
+
+  fm_test_spawn_brief "$home" fixture-live
+  out=$(run_gated_spawn "$home" "$wt" "$fakebin" "$proj" fixture-live \
+    FM_RUNWAY_SNAPSHOT=''); status=$?
+  expect_code 0 "$status" "an unpinned spawn must still succeed: $out"
+  [ -s "$marker" ] \
+    || fail "unpinned, the gate must reach the vendor tool, or this case proves nothing"
+
+  rm -f "$marker"
+  evidence="$TMP_ROOT/fixture-evidence"
+  mkdir -p "$evidence"
+  ( . "$ROOT/tests/runway-evidence-helpers.sh"
+    fm_test_pin_runway_evidence "$evidence" >/dev/null ) \
+    || fail "the shared evidence fixture could not be applied"
+  # Read it back the way a pinned suite would, rather than trusting the path.
+  pinned=$( . "$ROOT/tests/runway-evidence-helpers.sh"
+    fm_test_pin_runway_evidence "$evidence" >/dev/null
+    printf '%s\n' "$FM_RUNWAY_SNAPSHOT" )
+  [ -s "$pinned" ] || fail "the shared evidence fixture wrote no snapshot"
+
+  fm_test_spawn_brief "$home" fixture-pinned
+  out=$(run_gated_spawn "$home" "$wt" "$fakebin" "$proj" fixture-pinned \
+    FM_RUNWAY_SNAPSHOT="$pinned"); status=$?
+  expect_code 0 "$status" "a spawn on the pinned evidence must succeed: $out"
+  assert_contains "$out" "spawned fixture-pinned" "the pinned spawn did not report success"
+  assert_not_contains "$out" "allowance" "the pinned evidence must spawn silently, not narrate"
+  [ ! -s "$marker" ] \
+    || fail "the pinned evidence must keep a spawn off the vendor tool, called: $(cat "$marker")"
+  pass "fm-runway: the shared evidence fixture spawns silently and never reads the vendor"
+}
+
 test_only_the_applicable_scope_decides
 test_every_spelling_of_a_gone_allowance_refuses
 test_a_projection_warns_instead_of_refusing
@@ -431,3 +505,4 @@ test_reading_the_tool_refuses_only_on_real_evidence
 test_spawn_is_silent_with_runway_and_refused_without_it
 test_documented_override_spawns_past_the_refusal_loudly
 test_an_unavailable_signal_warns_and_never_blocks_a_spawn
+test_the_shared_evidence_fixture_keeps_a_real_spawn_off_the_vendor
