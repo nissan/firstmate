@@ -178,13 +178,73 @@ test_the_remote_side_becomes_the_test_base() {
   local dir out rc head remote
   dir=$(make_checkout basepass 0 0) || fail "could not build the base fixture"
   head=$(head_of "$dir")
-  remote=3333333333333333333333333333333333333333
+  # A real commit, because a base this clone cannot resolve is deliberately
+  # not passed on; test_an_unfetched_remote_side_is_not_passed_on owns that.
+  git -C "$dir" commit -q --allow-empty -m later
+  remote=$head
+  head=$(head_of "$dir")
   out=$(run_gate "$dir" \
     "FM_PUSH_REFS=refs/heads/main $head refs/heads/main $remote") && rc=0 || rc=$?
   [ "$rc" -eq 0 ] || fail "pushing the checked-out commit was refused (rc=$rc): $out"
   assert_contains "$out" "stub-tests ran --changed --base $remote" \
     "the checker did not bound the tests by the commit the remote already has"
   pass "the commit the remote already has becomes the test base"
+}
+
+# A push can carry several refs. Tying ONE of them to the working tree says
+# nothing about the others, and letting it stand for all of them is the same
+# false green the ref list was read to prevent.
+test_a_push_carrying_another_branch_is_refused() {
+  local dir out rc head other
+  dir=$(make_checkout multiref 0 0) || fail "could not build the multi-ref fixture"
+  head=$(head_of "$dir")
+  git -C "$dir" checkout -q -b sideline
+  printf 'never examined\n' > "$dir/unreviewed.txt"
+  git -C "$dir" add -A >/dev/null 2>&1
+  git -C "$dir" commit -q -m sideline
+  other=$(head_of "$dir")
+  git -C "$dir" checkout -q -
+  [ "$(head_of "$dir")" = "$head" ] || fail "the fixture did not return to the first commit"
+  [ "$other" != "$head" ] || fail "the fixture's two commits are the same, so this proves nothing"
+  out=$(run_gate "$dir" \
+    "FM_PUSH_REFS=refs/heads/main $head refs/heads/main $ZERO
+refs/heads/sideline $other refs/heads/sideline $ZERO") && rc=0 || rc=$?
+  [ "$rc" -eq 1 ] || fail "a push carrying an unexamined branch was permitted (rc=$rc): $out"
+  assert_contains "$out" "do not have checked out" \
+    "the refusal did not say which commit it could not speak for"
+  pass "a push carrying a branch other than the checkout is refused, not passed"
+}
+
+# An annotated tag's ref line carries the TAG OBJECT's sha, never the commit's,
+# so an unpeeled comparison refuses every annotated tag with a message that is
+# simply untrue.
+test_an_annotated_tag_on_the_checkout_is_permitted() {
+  local dir out rc tag
+  dir=$(make_checkout tagpush 0 0) || fail "could not build the tag fixture"
+  git -C "$dir" tag -a v1.0 -m release
+  tag=$(git -C "$dir" rev-parse v1.0)
+  [ "$tag" != "$(head_of "$dir")" ] \
+    || fail "the fixture's tag is not annotated, so this proves nothing"
+  out=$(run_gate "$dir" "FM_PUSH_REFS=refs/tags/v1.0 $tag refs/tags/v1.0 $ZERO") && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] || fail "an annotated tag on the checked-out commit was refused (rc=$rc): $out"
+  pass "an annotated tag naming the checked-out commit is permitted"
+}
+
+# A force-push to a ref this clone never fetched names a remote commit that is
+# not here. Handing it to the suite runner makes it refuse with a message about
+# a flag nobody passed, so widen to its own default instead.
+test_an_unfetched_remote_side_is_not_passed_on() {
+  local dir out rc head
+  dir=$(make_checkout baseunknown 0 0) || fail "could not build the unknown-base fixture"
+  head=$(head_of "$dir")
+  out=$(run_gate "$dir" \
+    "FM_PUSH_REFS=refs/heads/main $head refs/heads/main 3333333333333333333333333333333333333333") \
+    && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] || fail "a remote side we do not have refused the push (rc=$rc): $out"
+  assert_contains "$out" "stub-tests ran --changed" "the tests did not run at all"
+  assert_not_contains "$out" "--base" \
+    "the checker passed on a base commit this clone cannot resolve"
+  pass "a remote commit this clone does not have is not passed on as a base"
 }
 
 test_a_new_branch_keeps_the_default_base() {
@@ -220,6 +280,27 @@ test_the_hook_reads_the_ref_list_and_keeps_it_from_the_checks() {
   assert_not_contains "$out" "stdin:[refs/" \
     "a command the checker ran read the push's ref list off its own stdin"
   pass ".githooks/pre-push reads the ref list, passes it on, and keeps it off the checks"
+}
+
+# The hook is the only thing that puts the ref list where the checker reads it.
+# Drive the refusal through the hook, not through the checker's environment, or
+# nothing notices when the hand-off stops happening and every push of a commit
+# other than HEAD goes back to being waved through.
+test_the_hook_hands_the_ref_list_over_well_enough_to_refuse() {
+  local dir out rc other
+  dir=$(make_checkout hookscope 0 0) || fail "could not build the hook-scope fixture"
+  git -C "$dir" checkout -q -b sideline
+  git -C "$dir" commit -q --allow-empty -m sideline
+  other=$(head_of "$dir")
+  git -C "$dir" checkout -q -
+  [ "$other" != "$(head_of "$dir")" ] \
+    || fail "the fixture's two commits are the same, so this proves nothing"
+  out=$( cd "$dir" && printf 'refs/heads/sideline %s refs/heads/sideline %s\n' "$other" "$ZERO" \
+    | bash .githooks/pre-push origin git@example.invalid:x.git 2>&1 ) && rc=0 || rc=$?
+  [ "$rc" -eq 1 ] || fail "the hook permitted a push of a commit that is not checked out (rc=$rc): $out"
+  assert_contains "$out" "do not have checked out" \
+    "the hook did not deliver the ref list, so the checker had no scope to refuse"
+  pass ".githooks/pre-push delivers the ref list well enough for the checker to refuse on it"
 }
 
 test_the_hook_refuses_exactly_as_the_checker_does() {
@@ -273,10 +354,64 @@ test_wiring_survives_a_worktree_without_the_hooks_directory() {
   git -C "$dir" worktree add -q --detach "$linked" HEAD 2>/dev/null \
     || fail "could not add a linked worktree"
   # The linked worktree has no .githooks of its own; the shared value must
-  # still resolve, or that worktree's hooks are silently switched off.
-  [ -d "$(wired_effective "$linked")" ] \
-    || fail "the shared hooks path does not resolve in a linked worktree: '$(wired_effective "$linked")'"
+  # still resolve, or that worktree's hooks are silently switched off. Resolve
+  # it FROM that worktree: a relative value tested from anywhere else is tested
+  # against the wrong directory, and this suite's runner works from the repo
+  # root, where a bare '.githooks' exists and the check would pass vacuously.
+  ( cd "$linked" && [ -d "$(git config --get core.hooksPath)" ] ) \
+    || fail "the shared hooks path does not resolve inside a linked worktree: '$(wired_effective "$linked")'"
   pass "the wired path still resolves from a worktree that has no .githooks of its own"
+}
+
+# core.hooksPath is one shared value for the whole repository, so a run from a
+# disposable worktree that named ITSELF would point the clone at a directory
+# that vanishes with that worktree - after which git runs no hooks at all and
+# says nothing. This repository's own validation pipeline runs from exactly
+# such a worktree.
+test_wiring_from_a_linked_worktree_names_the_main_one() {
+  local dir linked
+  dir=$(wire_fixture wire-from-linked) || fail "could not build the main fixture"
+  git -C "$dir" config --local user.email fixture@example.invalid
+  git -C "$dir" config --local user.name fixture
+  git -C "$dir" commit -q --allow-empty -m base
+  linked="$TMP_ROOT/wire-from-linked-worktree"
+  git -C "$dir" worktree add -q --detach "$linked" HEAD 2>/dev/null \
+    || fail "could not add a linked worktree"
+  bash "$WIRE" "$linked" >/dev/null 2>&1 || fail "wiring from a linked worktree failed"
+  [ "$(wired_local "$dir")" = "$dir/.githooks" ] \
+    || fail "wiring from a linked worktree named '$(wired_local "$dir")', not the main worktree's .githooks"
+  pass "wiring run from a linked worktree points the repository at the main worktree"
+}
+
+# A session start is the only thing that arms an ordinary clone, so the wiring
+# has to survive being called from bin/fm-bootstrap.sh and not just by hand.
+# tests/lib.sh sets FM_GITHOOKS_WIRE_SKIP=1 for every suite, because this is the
+# one bootstrap sweep that writes to the CODE root: without it a test run would
+# rewrite whatever checkout it was started from, and the fact the first wiring
+# prints would land in output other suites assert is empty. Strip it here, the
+# way tests/fm-gate-refuse.test.sh strips its own bypass, so both halves are
+# proved: bootstrap really wires, and the escape hatch really stops it.
+test_a_session_start_arms_the_clone_unless_the_suite_stops_it() {
+  local dir out
+  dir=$(wire_fixture wire-bootstrap) || fail "could not build the bootstrap fixture"
+  mkdir -p "$dir/bin" "$dir/home"
+  cp "$WIRE" "$dir/bin/fm-githooks-wire.sh"
+  chmod +x "$dir/bin/fm-githooks-wire.sh"
+
+  out=$(FM_GITHOOKS_WIRE_SKIP=1 FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$dir" \
+    "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+  [ -z "$(wired_local "$dir")" ] \
+    || fail "a session start wired the checkout although the suite asked it not to: '$(wired_local "$dir")'"
+  assert_not_contains "$out" "pointed this checkout" \
+    "a skipped wiring still printed a startup fact, which other suites assert is absent"
+
+  out=$(env -u FM_GITHOOKS_WIRE_SKIP FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$dir" \
+    "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+  [ "$(wired_local "$dir")" = "$dir/.githooks" ] \
+    || fail "a session start did not arm the clone: '$(wired_local "$dir")'"
+  assert_contains "$out" "pointed this checkout" \
+    "arming the clone was not reported as a startup fact"
+  pass "a session start arms the clone, and the suite's own opt-out stops it"
 }
 
 test_wiring_never_overwrites_a_local_choice() {
@@ -358,15 +493,19 @@ test_wiring_skips_a_checkout_with_no_hooks_directory() {
   pass "wiring skips a checkout with no .githooks and disables nothing"
 }
 
+# A bare repository has no working tree, and resolving one through the common
+# git dir would land on its PARENT directory, whose .githooks belongs to
+# something else entirely.
 test_wiring_skips_a_bare_repository() {
-  local dir
-  dir="$TMP_ROOT/wire-bare.git"
+  local dir out
+  mkdir -p "$TMP_ROOT/bare-parent/.githooks"
+  dir="$TMP_ROOT/bare-parent/wire-bare.git"
   git init -q --bare "$dir" 2>/dev/null || fail "could not build the bare fixture"
-  mkdir -p "$dir/.githooks"
-  bash "$WIRE" "$dir" >/dev/null 2>&1 || fail "wiring a bare repository should not fail"
+  out=$(bash "$WIRE" "$dir" 2>/dev/null) || fail "wiring a bare repository should not fail"
+  [ "$out" = skipped ] || fail "a bare repository was not reported as skipped: '$out'"
   [ -z "$(wired_local "$dir")" ] \
     || fail "wiring set core.hooksPath on a bare repository: '$(wired_local "$dir")'"
-  pass "wiring skips a bare repository, which has no working tree to hook"
+  pass "wiring skips a bare repository instead of reaching outside it for a hooks directory"
 }
 
 test_clean_tree_permits_the_push
@@ -378,11 +517,17 @@ test_the_no_mistakes_pipeline_is_left_alone
 test_a_push_that_is_not_the_checkout_is_refused
 test_a_deletion_carries_nothing_to_check
 test_the_remote_side_becomes_the_test_base
+test_an_unfetched_remote_side_is_not_passed_on
+test_a_push_carrying_another_branch_is_refused
+test_an_annotated_tag_on_the_checkout_is_permitted
 test_a_new_branch_keeps_the_default_base
 test_the_hook_reads_the_ref_list_and_keeps_it_from_the_checks
+test_the_hook_hands_the_ref_list_over_well_enough_to_refuse
 test_the_hook_refuses_exactly_as_the_checker_does
 test_wiring_writes_an_absolute_path
 test_wiring_survives_a_worktree_without_the_hooks_directory
+test_wiring_from_a_linked_worktree_names_the_main_one
+test_a_session_start_arms_the_clone_unless_the_suite_stops_it
 test_wiring_never_overwrites_a_local_choice
 test_clearing_the_setting_is_not_an_opt_out
 test_wiring_names_its_outcome_for_a_caller

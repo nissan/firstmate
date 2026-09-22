@@ -20,11 +20,15 @@
 # hooks and is respected from then on, while `git config --unset` leaves the
 # value empty and the next session wires it again.
 #
-# It writes an ABSOLUTE path. core.hooksPath is stored in the shared config, so
-# every linked worktree of the clone reads the same value; a relative .githooks
-# resolves against each worktree in turn and names nothing in a worktree whose
-# checkout predates the directory, which would silently disable that worktree's
-# hooks rather than add one.
+# It writes an ABSOLUTE path, and always the MAIN worktree's. core.hooksPath is
+# stored in the shared config, so every linked worktree of the clone reads the
+# same value. A relative .githooks resolves against each worktree in turn and
+# names nothing in a worktree whose checkout predates the directory. A linked
+# worktree's absolute path is worse still: it points the whole repository at a
+# directory that disappears when that worktree is torn down, and git runs no
+# hooks at all, silently, from then on. A run from inside a disposable worktree
+# - which is how this repository's own validation pipeline runs - therefore
+# wires the clone those worktrees belong to, not itself.
 #
 # Output: one line on stdout naming the outcome, for a caller that classifies
 # it - `wired`, `kept` (someone else's hooksPath left in force), `skipped` (no
@@ -57,9 +61,15 @@ git -C "$target" rev-parse --git-dir >/dev/null 2>&1 \
 [ "$(git -C "$target" rev-parse --is-bare-repository 2>/dev/null)" = false ] \
   || done_with skipped "$target is a bare repository."
 
+# The main worktree owns the directory the shared config may name: resolve it
+# through the common git dir rather than through this checkout's own toplevel,
+# which in a linked worktree is the disposable one.
+common=$(cd "$target" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) \
+  || common=
+[ -n "$common" ] || done_with skipped "$target has no resolvable git directory."
+top=$(dirname "$common")
+
 # Only wire what is actually there.
-top=$(git -C "$target" rev-parse --show-toplevel 2>/dev/null) \
-  || done_with skipped "$target has no working tree."
 hooks="$top/.githooks"
 [ -d "$hooks" ] || done_with skipped "$top has no .githooks/ to point at."
 

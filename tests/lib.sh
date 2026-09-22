@@ -47,6 +47,14 @@ umask 022
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
+# Keep bin/fm-bootstrap.sh from pointing the checkout this suite runs in at its
+# tracked .githooks/. A test run must not change the developer's git config, and
+# the BOOTSTRAP_INFO fact the first wiring prints would otherwise make every
+# "expected silence" assertion in tests/fm-bootstrap.test.sh depend on whether
+# the clone happened to be wired already. tests/fm-local-push-check.test.sh
+# strips this to verify that real wiring still happens.
+export FM_GITHOOKS_WIRE_SKIP=1
+
 # Clear the task-worker marker bin/fm-spawn.sh exports into ship and scout
 # panes. This suite builds git-init fixture repositories whose primary checkout
 # it runs a copied bin/fm-test-run.sh in, and that runner refuses the primary

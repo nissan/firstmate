@@ -1379,7 +1379,12 @@ githooks_wire_setup() {
   # section's own vocabulary: a write is a completed fact, a refused write is a
   # completed fact with the check left off, and leaving somebody else's
   # hooksPath alone is a routine confirmation that stays silent.
+  # TEST-HARNESS ESCAPE HATCH (FM_GITHOOKS_WIRE_SKIP=1): this is the one sweep
+  # that writes to the CODE root rather than the home, so firstmate's own suite
+  # would otherwise rewrite the checkout it is running in and print a first-run
+  # fact into output other cases assert is empty. tests/lib.sh sets it.
   local outcome
+  [ "${FM_GITHOOKS_WIRE_SKIP:-}" = 1 ] && return 0
   outcome=$("$FM_ROOT/bin/fm-githooks-wire.sh" "$FM_ROOT" 2>/dev/null) || return 0
   case "$outcome" in
     wired)

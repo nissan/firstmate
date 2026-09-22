@@ -73,7 +73,7 @@ cd "$ROOT"
 # Sets BASE to the remote-side commit when git named one; see the header.
 BASE=
 resolve_push_scope() {
-  local head local_sha remote_sha updates=0 matched=0
+  local head local_sha remote_sha commit updates=0 foreign=0 bases=0
   [ "${FM_PUSH_REFS+x}" = x ] || return 0
 
   head=$(git rev-parse HEAD 2>/dev/null) || head=
@@ -85,13 +85,31 @@ resolve_push_scope() {
       *) continue ;;
     esac
     updates=$((updates + 1))
-    [ -n "$head" ] && [ "$local_sha" = "$head" ] || continue
-    matched=1
+    # An annotated tag's line carries the tag OBJECT's sha, never the commit
+    # it names, so peel before comparing or every annotated tag reads foreign.
+    commit=$(git rev-parse --verify -q "${local_sha}^{commit}" 2>/dev/null) || commit=
+    if [ -z "$head" ] || [ -z "$commit" ] || [ "$commit" != "$head" ]; then
+      foreign=$((foreign + 1))
+      continue
+    fi
     # An all-zero remote sha means the remote has no such ref yet, so there is
     # no commit to measure against and the suite runner keeps its own default.
     case "${remote_sha:-}" in
-      *[!0]*) BASE=$remote_sha ;;
+      *[!0]*) ;;
+      *) continue ;;
     esac
+    # The object has to be here to diff against it. A force-push to a ref this
+    # clone never fetched names one that is not, and a narrower base nobody can
+    # resolve is worse than the runner's own default.
+    git cat-file -e "${remote_sha}^{commit}" 2>/dev/null || continue
+    bases=$((bases + 1))
+    if [ "$bases" -eq 1 ]; then
+      BASE=$remote_sha
+    elif [ "$BASE" != "$remote_sha" ]; then
+      # Several refs carry HEAD from different remote positions. Narrowing to
+      # one of them would leave the others' commits untested, so widen instead.
+      BASE=
+    fi
   done <<PUSH_REFS
 ${FM_PUSH_REFS}
 PUSH_REFS
@@ -100,10 +118,13 @@ PUSH_REFS
     say 'the push sends no commits; nothing to check.'
     exit 0
   fi
-  if [ "$matched" -eq 0 ]; then
-    say 'this push does not include the commit you have checked out.'
+  # Every content-bearing ref has to be the commit in hand. One that is not
+  # carries work these checks never read, and passing the push on the strength
+  # of the rest is the false green this whole script exists to refuse.
+  if [ "$foreign" -ne 0 ]; then
+    say 'this push sends a commit you do not have checked out.'
     say 'these checks read the working tree, so they cannot speak for it.'
-    say 'check out what you are pushing, or re-push with SKIP_GATE=1.'
+    say 'push the refs that match your checkout, or re-push with SKIP_GATE=1.'
     exit 1
   fi
 }
