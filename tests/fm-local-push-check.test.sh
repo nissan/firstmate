@@ -106,6 +106,19 @@ test_a_failing_test_run_refuses_the_push() {
   pass "a failing test run refuses the push"
 }
 
+# A check whose tool is not there has examined nothing, so reporting a pass
+# would be the exact false green this script exists to refuse.
+test_a_missing_check_tool_refuses_the_push() {
+  local dir out rc
+  dir=$(make_checkout notool 0 0) || fail "could not build the missing-tool fixture"
+  rm -f "$dir/bin/fm-lint.sh"
+  out=$(run_gate "$dir") && rc=0 || rc=$?
+  [ "$rc" -eq 1 ] || fail "a missing check tool was reported as a pass (rc=$rc): $out"
+  assert_contains "$out" "stub-tests ran" \
+    "the checker stopped at the missing tool instead of running the rest"
+  pass "a check whose tool is missing refuses the push rather than passing"
+}
+
 # A checker that stopped at the first failure would hand back one problem per
 # push, so a two-fault branch would cost two full CI runs to discover locally.
 test_every_check_runs_even_after_an_earlier_failure() {
@@ -189,6 +202,26 @@ test_the_remote_side_becomes_the_test_base() {
   assert_contains "$out" "stub-tests ran --changed --base $remote" \
     "the checker did not bound the tests by the commit the remote already has"
   pass "the commit the remote already has becomes the test base"
+}
+
+# Several refs can carry the checked-out commit from different remote positions.
+# Narrowing to one of them would leave the commits the others are sending out of
+# the tested set, so the base widens to the suite runner's own default instead.
+test_several_remote_sides_widen_the_base() {
+  local dir out rc head first second
+  dir=$(make_checkout basewiden 0 0) || fail "could not build the widening fixture"
+  first=$(head_of "$dir")
+  git -C "$dir" commit -q --allow-empty -m middle
+  second=$(head_of "$dir")
+  git -C "$dir" commit -q --allow-empty -m later
+  head=$(head_of "$dir")
+  out=$(run_gate "$dir" "FM_PUSH_REFS=refs/heads/one $head refs/heads/one $first
+refs/heads/two $head refs/heads/two $second") && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] || fail "two refs carrying the checkout were refused (rc=$rc): $out"
+  assert_contains "$out" "stub-tests ran --changed" "the checker did not run the tests"
+  assert_not_contains "$out" "--base" \
+    "the checker narrowed to one ref's remote side, leaving the other's commits untested"
+  pass "refs from different remote sides widen the base instead of narrowing to one"
 }
 
 # A push can carry several refs. Tying ONE of them to the working tree says
@@ -301,6 +334,28 @@ test_the_hook_hands_the_ref_list_over_well_enough_to_refuse() {
   assert_contains "$out" "do not have checked out" \
     "the hook did not deliver the ref list, so the checker had no scope to refuse"
   pass ".githooks/pre-push delivers the ref list well enough for the checker to refuse on it"
+}
+
+# core.hooksPath is one shared value for the whole repository, so this hook also
+# runs for worktrees and checkouts cut before the checker existed. Refusing there
+# would lock them out of pushing entirely, because both documented overrides are
+# read inside the file that is missing, leaving --no-verify as the only way out.
+# This repository's own validation worktrees are cut from main, so that is the
+# ordinary case the moment this lands, not an exotic one.
+test_a_worktree_without_the_checker_is_not_locked_out() {
+  local dir out rc head
+  dir=$(make_checkout nochecker 0 0) || fail "could not build the checkerless fixture"
+  head=$(head_of "$dir")
+  rm -f "$dir/bin/fm-local-push-check.sh"
+  out=$( cd "$dir" && printf 'refs/heads/main %s refs/heads/main %s\n' "$head" "$ZERO" \
+    | bash .githooks/pre-push origin git@example.invalid:x.git 2>&1 ) && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] \
+    || fail "a worktree with no checker was refused its push (rc=$rc): $out"
+  assert_contains "$out" "fm-local-push-check.sh" \
+    "standing aside did not name the concrete thing that is not there"
+  assert_not_contains "$out" "stub-lint ran" \
+    "the hook ran the checks although the checker it hands them to is absent"
+  pass "a worktree cut before the checker existed can still push, and is told why"
 }
 
 test_the_hook_refuses_exactly_as_the_checker_does() {
@@ -508,12 +563,14 @@ test_wiring_skips_a_bare_repository() {
 test_clean_tree_permits_the_push
 test_a_failing_lint_refuses_the_push
 test_a_failing_test_run_refuses_the_push
+test_a_missing_check_tool_refuses_the_push
 test_every_check_runs_even_after_an_earlier_failure
 test_skip_gate_is_the_one_way_past
 test_the_no_mistakes_pipeline_is_left_alone
 test_a_push_that_is_not_the_checkout_is_refused
 test_a_deletion_carries_nothing_to_check
 test_the_remote_side_becomes_the_test_base
+test_several_remote_sides_widen_the_base
 test_an_unfetched_remote_side_is_not_passed_on
 test_a_push_carrying_another_branch_is_refused
 test_an_annotated_tag_on_the_checkout_is_permitted
@@ -521,6 +578,7 @@ test_a_new_branch_keeps_the_default_base
 test_the_hook_reads_the_ref_list_and_keeps_it_from_the_checks
 test_the_hook_hands_the_ref_list_over_well_enough_to_refuse
 test_the_hook_refuses_exactly_as_the_checker_does
+test_a_worktree_without_the_checker_is_not_locked_out
 test_wiring_writes_an_absolute_path
 test_wiring_survives_a_worktree_without_the_hooks_directory
 test_wiring_from_a_linked_worktree_names_the_main_one

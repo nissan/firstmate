@@ -27,13 +27,19 @@
 # owning its own definition. Both run even when the first fails, so one push
 # reports every fault rather than one per attempt.
 #
-# These read the WORKING TREE, which is only the same thing as the push when
-# the push carries the checked-out commit. With FM_PUSH_REFS set this script
-# proves that rather than assuming it: a push that updates no ref it can tie to
-# HEAD is refused, naming the override, instead of being waved through on the
-# strength of an unrelated clean tree. Deletions carry no content and are let
-# through untouched. The remote-side commit, when git named one, is passed as
-# --base so the test selection covers exactly what is being sent.
+# These read the WORKING TREE, so what a pass here covers is bounded twice over.
+# With FM_PUSH_REFS set this script requires EVERY content-bearing ref to be the
+# checked-out commit and refuses the whole push otherwise, naming the override,
+# rather than passing it on the strength of the one ref that matched; that is
+# why `git push --all`, a `--tags` push carrying a tag on an older commit, and
+# push.default=matching are all refused here. Deletions carry no content and are
+# let through untouched. The remote-side commit, when git named one, is passed
+# as --base so the test selection covers exactly what is being sent, and several
+# refs naming different remote-side commits widen back to the runner's own base
+# rather than narrowing to one of them.
+# What it does NOT establish is that the tree matches that commit. Uncommitted
+# edits are what the checks actually read, so a pass describes the tree in hand,
+# not the commits the push carries.
 #
 # Known limits, so a refusal here is recognisable rather than mysterious:
 #   - bin/fm-test-run.sh --changed counts untracked, non-ignored files as

@@ -7,10 +7,29 @@
 # checker learns it and what leaves nothing on stdin for the commands the
 # checker runs to consume.
 #
+# The checker has to come from the PUSHING worktree, because the working tree it
+# reads is that one; resolving it beside this hook would check the main worktree
+# while the push comes from somewhere else. But core.hooksPath is repository-wide
+# (see bin/fm-githooks-wire.sh), so this hook also runs for worktrees and
+# checkouts whose tree predates the checker and therefore does not contain it.
+# Standing aside there is deliberate: refusing would lock such a worktree out of
+# pushing altogether, because SKIP_GATE and NO_MISTAKES_GATE are both read inside
+# the file that is missing, leaving --no-verify as the only way out. A worktree
+# with no checker is not a check that failed; it is a worktree this change has
+# not reached.
+#
 # This file has no .sh suffix, so bin/fm-lint.sh's file set does not cover it
 # and CI never shellchecks it. Run shellcheck over it by hand when you change it.
 set -eu
 root=$(git rev-parse --show-toplevel)
 FM_PUSH_REFS=$(cat)
 export FM_PUSH_REFS
-exec "$root"/bin/fm-local-push-check.sh
+check="$root/bin/fm-local-push-check.sh"
+if [ ! -f "$check" ]; then
+  printf 'pre-push: no %s here, so the local push check is not running.\n' "$check" >&2
+  exit 0
+fi
+# Run it through bash rather than exec'ing it directly, so a checkout that lost
+# the executable bit is still checked instead of refusing the push over a file
+# mode. The shebang names bash, so this is the same interpreter either way.
+exec bash "$check"
