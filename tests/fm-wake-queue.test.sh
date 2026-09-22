@@ -1789,6 +1789,58 @@ SH
   pass "bounded acquire hands ownership to the waiting caller after contention"
 }
 
+# The other half of the bounded contract: when a live holder is STILL working at
+# the deadline, the waiter must refuse with 124 and name that holder, rather than
+# wedging or reporting a false acquisition. Callers that degrade instead of
+# blocking depend on this - among them the Herdr presentation-ordering lock's
+# abort cleanup, which runs from an EXIT trap and must not stall the exit behind
+# another home's recovery.
+test_bounded_lock_refuses_at_deadline_naming_live_holder() {
+  local dir state lock holder_pid out rc held i
+  dir=$(make_case bounded-lock-refusal)
+  state="$dir/state"
+  lock="$state/.fixture.lock"
+
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait "$2" || exit 10
+    printf "ready\n" > "$3"
+    while [ ! -e "$4" ]; do sleep 0.05; done
+    fm_lock_release "$2"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$lock" "$dir/holder.ready" "$dir/release-holder" &
+  holder_pid=$!
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -s "$dir/holder.ready" ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -s "$dir/holder.ready" ] \
+    || { kill "$holder_pid" 2>/dev/null || true; fail "refusal fixture holder never acquired its lock"; }
+
+  # The holder is still working when this deadline expires.
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait_bounded "$2" 1
+    rc=$?
+    printf "rc=%s held=%s\n" "$rc" "${FM_LOCK_HELD_PID:-}"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$lock") \
+    || { kill "$holder_pid" 2>/dev/null || true; fail "bounded refusal probe could not run"; }
+
+  rc=${out#rc=}; rc=${rc%% *}
+  held=${out##*held=}
+  [ "$rc" = 124 ] \
+    || { kill "$holder_pid" 2>/dev/null || true; fail "a live holder at the deadline did not refuse with 124: $out"; }
+  [ "$held" = "$holder_pid" ] \
+    || { kill "$holder_pid" 2>/dev/null || true; fail "the refusal did not name the live holder ($holder_pid): $out"; }
+  [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$holder_pid" ] \
+    || { kill "$holder_pid" 2>/dev/null || true; fail "the refused waiter disturbed the holder's lock record"; }
+
+  : > "$dir/release-holder"
+  wait "$holder_pid" || fail "refusal fixture holder did not release cleanly"
+  [ ! -e "$lock" ] && [ ! -L "$lock" ] || fail "lock remained after the holder released"
+  pass "bounded acquire refuses at its deadline and names the still-live holder"
+}
+
 # A live-but-stuck presentation lock must not strand the executable drain. The
 # presentation remains retriable on the next pass, while the separate queue
 # mutation lock keeps its blocking all-or-nothing acknowledgement contract.
@@ -2012,6 +2064,7 @@ test_historical_annotation_skips_announced_status() {
 test_self_held_lock_reclaims_instead_of_deadlocking
 test_subshell_lock_ownership_without_bashpid
 test_bounded_lock_handoff_after_contention
+test_bounded_lock_refuses_at_deadline_naming_live_holder
 test_live_presentation_holder_is_deadlined_without_weakening_ack
 test_malformed_presentation_lock_reports_acquire_failure
 test_secondmate_foreign_queue_stall_tracks_progress_and_alerts_once
