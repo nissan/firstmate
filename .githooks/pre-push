@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# git pre-push hook: hand straight to the gate, which owns every check.
-# git pipes the ref list on stdin; the gate reads none of it, so drop it here
-# rather than leaving the gate's own commands to inherit an open pipe.
+# git pre-push hook: hand the push to bin/fm-local-push-check.sh, which owns
+# every check.
+#
+# git pipes one line per ref being pushed on stdin, and that list is the only
+# thing that says what the push contains. Reading it here to EOF is both how the
+# checker learns it and what leaves nothing on stdin for the commands the
+# checker runs to consume.
 set -eu
-exec "$(git rev-parse --show-toplevel)"/bin/fm-pre-push-gate.sh </dev/null
+root=$(git rev-parse --show-toplevel)
+FM_PUSH_REFS=$(cat)
+export FM_PUSH_REFS
+exec "$root"/bin/fm-local-push-check.sh

@@ -53,7 +53,7 @@ Coordinate any workflow rollback with its required-check names so a retired chec
 
 - This repo is a template for running a firstmate orchestrator agent.
   [`AGENTS.md`](AGENTS.md) owns the supervisor contract, role boundary, and bundled firstmate skill triggers; `CLAUDE.md` is a real `@AGENTS.md` pointer to it, and `.claude/skills` is a symlink to `.agents/skills`.
-- Only shared material is tracked: `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `.githooks/`, `bin/`, `.agents/skills/`, and `skills/`.
+- Only shared material is tracked; [`AGENTS.md`](AGENTS.md) section 1 owns that list.
   `.agents/skills/` holds agent-loaded skills that assume a live firstmate home and carry `metadata.internal: true` so installers such as [skills.sh](https://skills.sh) hide them from discovery; `skills/` holds standalone, installer-facing public skills with no firstmate dependency (see the README's "Two-tier skill layout").
   `.claude/mods/` holds Claude Code mods, plugins whose behavior lives in one function-hooks module; each is reached through an `.agents/skills/<mod>` symlink because Claude Code adopts project plugins only from `.claude/skills`, carries no `SKILL.md` so every other harness's skill loader ignores that entry, and imports only files physically inside its own folder because Claude Code refuses anything else.
   A module may load through `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` or Claude Code's `tengu_plugin_hooks_modules` rollout flag, but the Calm mod activates only when `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is exactly `1` and is otherwise a complete no-op; Firstmate never sets that variable in any settings file, and [`docs/calm.md`](docs/calm.md) owns the contract.
@@ -82,7 +82,7 @@ Coordinate any workflow rollback with its required-check names so a retired chec
 
 ## Development
 
-Tracked changes to firstmate itself - `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `bin/`, `.agents/skills/`, and `skills/` - ship through the `no-mistakes` pipeline on a feature branch and require an explicit merge approval.
+Tracked changes to firstmate itself - the shared material [`AGENTS.md`](AGENTS.md) section 1 lists - ship through the `no-mistakes` pipeline on a feature branch and require an explicit merge approval.
 Before making any such change, load the agent-only `firstmate-coding-guidelines` skill (`.agents/skills/firstmate-coding-guidelines/SKILL.md`).
 It has the knowledge-placement rules that keep `AGENTS.md` from regrowing after each diet pass.
 There is no reliable way for `bin/fm-brief.sh`'s scaffold to detect that a task's repo is firstmate itself, so firstmate adds this skill's load line to firstmate-repo briefs by hand.
@@ -95,15 +95,17 @@ The `firstmate-coding-guidelines` skill owns the rule that local no-mistakes Tes
 Verify the same way the gate does: reach for `bin/fm-test-run.sh` with the subjects you care about rather than chaining `bash tests/a.test.sh && bash tests/b.test.sh`, because a list of script paths gets the same bounded concurrency as `--changed`.
 The pipeline publishes that evidence itself, so never hand-commit `.no-mistakes/` paths onto a feature branch; CI rejects them as tracked personal fleet paths.
 
-A local pre-push gate runs the cheap subset of CI for you.
-`bin/fm-pre-push-gate.sh` syntax-checks the changed shell files, runs `bin/fm-lint.sh`, and runs `bin/fm-test-run.sh --changed`; `.githooks/pre-push` is a shim that calls it and nothing else.
-It is not the no-mistakes pre-push gate that tracked firstmate changes ship through, and never claims to be: it is the subset that runs anywhere, including a fresh clone with no firstmate home.
-Point git at it once per clone with `git config core.hooksPath .githooks`, or let a Claude Code session do it for you - `.claude/settings.json` sets that value at session start only when it is empty, so a clone already pointing somewhere else is left alone, and `git config --unset core.hooksPath` opts back out.
-`SKIP_GATE=1 git push` bypasses it.
+A local push check runs the cheap subset of CI before a push leaves the machine.
+`bin/fm-local-push-check.sh` runs `bin/fm-lint.sh` and `bin/fm-test-run.sh --changed`; `.githooks/pre-push` is a shim that reads git's ref list and calls it.
+Its header owns the rest: what it stands down for, what it refuses, and every variable it reads.
+This is not the no-mistakes pre-push gate that tracked firstmate changes ship through, and never claims to be: it is the subset that runs anywhere, including a fresh clone with no firstmate home, and it stands aside inside that pipeline, which owns lint and tests for the pushes it drives.
+`bin/fm-githooks-wire.sh` arms it, and every firstmate session start runs that script for its own checkout; run it by hand in any other clone, or set `core.hooksPath` yourself.
+That script's header owns when it declines to write and how to opt back out.
+`SKIP_GATE=1 git push` bypasses one push.
 Every check runs even after an earlier one fails, so one push reports every fault rather than one per attempt.
-This exists because a firstmate CI run is 17 jobs and GitHub bills every job rounded up to the whole minute: a run costs about 221 billed minutes, while the same checks cost nothing locally.
-How long they take is whatever `--changed` selects, so an ordinary script-plus-test change is quick and a change to a file most suites reference is not; `SKIP_GATE=1` is there for when that is the wrong trade.
-CI stays the authority; the gate only stops it being used as the search.
+It exists because CI fans out across every lane on each run and GitHub bills every job rounded up to the whole minute, so a push that only needed a one-line lint fix costs the same as a full green run.
+How long the checks take is whatever `--changed` selects, so an ordinary script-plus-test change is quick and a change to a file most suites reference is not; `SKIP_GATE=1` is there for when that is the wrong trade.
+CI stays the authority; the local check only stops it being used as the search.
 
 Check and test the toolbelt before pushing:
 

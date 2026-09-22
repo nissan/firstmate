@@ -1369,6 +1369,14 @@ backlog_record_reconcile() {
   done
 }
 
+githooks_wire_setup() {
+  # The tracked push check in .githooks/ only fires when core.hooksPath names
+  # it, and that is per-clone local config no clone inherits. bin/fm-githooks-wire.sh
+  # owns the decision, including leaving an existing hooksPath of any scope
+  # alone; this is only where every harness's session start reaches it.
+  "$FM_ROOT/bin/fm-githooks-wire.sh" "$FM_ROOT" || true
+}
+
 startup_memory_budget_setup() {
   # Primary bootstrap owns default publication. A secondmate is deliberately
   # passive here because its setting must converge from the primary through the
@@ -1446,6 +1454,7 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase; then
     fi
   fi
   startup_memory_budget_setup
+  githooks_wire_setup
   if backlog_record_reconcile; then
     :
   else

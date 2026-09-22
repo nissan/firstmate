@@ -62,7 +62,7 @@ AGENTS.md            this file (CLAUDE.md is a real @AGENTS.md pointer to it)
 CONTRIBUTING.md      contributor workflow and repo conventions
 README.md            public overview and development notes
 .github/workflows/   shared CI and PR enforcement, committed
-.githooks/           local pre-push gate hook, committed; opt in with git config core.hooksPath .githooks (CONTRIBUTING.md "Development")
+.githooks/           local push-check hook, committed; armed per clone by bin/fm-githooks-wire.sh (CONTRIBUTING.md "Development")
 .tasks.toml          tracked tasks-axi markdown backend config for the default backlog backend (section 10)
 .agents/skills/      firstmate-loaded internal skills, committed; each carries metadata.internal=true for installers
 .claude/skills       symlink to .agents/skills for claude compatibility
