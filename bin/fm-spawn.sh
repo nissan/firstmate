@@ -1118,6 +1118,16 @@ HERDR_PROJECTION_ABORT_TASK_PANE=
 HERDR_PROJECTION_ABORT_SEEDED_PANE=
 HERDR_PRESENTATION_ORDER_LOCK=
 HERDR_PRESENTATION_ORDER_LOCK_HELD=0
+# How long a waiter may queue behind the presentation-ordering lock. The holder
+# runs a whole recovery under it, so this covers work, not a guessed constant;
+# see spawn_herdr_presentation_order_lock_acquire below.
+HERDR_PRESENTATION_ORDER_LOCK_TIMEOUT=${FM_HERDR_PRESENTATION_LOCK_TIMEOUT:-120}
+case "$HERDR_PRESENTATION_ORDER_LOCK_TIMEOUT" in
+  '' | *[!0-9]* | 0) HERDR_PRESENTATION_ORDER_LOCK_TIMEOUT=120 ;;
+esac
+# Abort cleanup runs from the EXIT trap, where degrading beats stalling the exit
+# behind another home's recovery, so it queues only briefly.
+HERDR_PRESENTATION_ORDER_ABORT_TIMEOUT=5
 SPAWN_TASK_LOCK=
 SPAWN_TASK_LOCK_HELD=0
 SPAWN_CONTROL_LOCK=
@@ -1196,7 +1206,8 @@ spawn_abort_cleanup() {
   fi
   if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] &&
     [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
-    if ! spawn_herdr_presentation_order_lock_acquire "${HERDR_PROJECTION_ABORT_SESSION:-}"; then
+    if ! spawn_herdr_presentation_order_lock_acquire \
+      "${HERDR_PROJECTION_ABORT_SESSION:-}" "$HERDR_PRESENTATION_ORDER_ABORT_TIMEOUT"; then
       echo "warning: herdr presentation focus lock unavailable; retaining the projection journal and refusing concurrent abort cleanup" >&2
       HERDR_PROJECTION_ABORT_CLEANUP=0
     fi
@@ -1305,21 +1316,25 @@ trap spawn_abort_cleanup EXIT
 # One bounded lock per live Herdr session/socket, shared across all homes.
 # <session> is required so secondmate and primary spawns serialize against the
 # same session without writing any other home's state directory.
+#
+# The holder performs its ENTIRE recovery under this lock - pane reclaim,
+# worktree creation, agent launch - and nothing bounds that work to a fixed
+# duration. A waiter's budget therefore cannot be a guessed constant: it has to
+# outlast the work it is queued behind. A hand-rolled 50 x 0.1s spin did not,
+# and on a loaded host the second of two concurrent recoveries refused a resume
+# that was merely queued rather than blocked. fm_lock_acquire_wait_bounded owns
+# exactly this shape - wait and reclaim as usual, then refuse rather than wedge,
+# naming the live holder in FM_LOCK_HELD_PID - so the wait is delegated to it at
+# a deadline that covers a real recovery.
+#
+# $2 overrides that deadline in whole seconds.
 spawn_herdr_presentation_order_lock_acquire() {
-  local session=${1:-} attempt lock_path
+  local session=${1:-} seconds=${2:-$HERDR_PRESENTATION_ORDER_LOCK_TIMEOUT} lock_path
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
   lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") || return 1
   HERDR_PRESENTATION_ORDER_LOCK="$lock_path"
-  attempt=0
-  while [ "$attempt" -lt 50 ]; do
-    if fm_lock_try_acquire "$HERDR_PRESENTATION_ORDER_LOCK"; then
-      HERDR_PRESENTATION_ORDER_LOCK_HELD=1
-      return 0
-    fi
-    sleep 0.1
-    attempt=$((attempt + 1))
-  done
-  return 1
+  fm_lock_acquire_wait_bounded "$HERDR_PRESENTATION_ORDER_LOCK" "$seconds" || return 1
+  HERDR_PRESENTATION_ORDER_LOCK_HELD=1
 }
 
 clear_relaunch_harness_wiring() {
