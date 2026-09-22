@@ -208,9 +208,10 @@ test_canonical_partitions_preserve_full_lint() {
       || fail "partition $part weakened source-aware analysis"
     grep -q '^external-sources=no$' "$flags" \
       || fail "partition $part did not run its local-exclusion guard"
-    [ "$(LC_ALL=C sort -u "$flags" | grep -c '^exclude=')" -eq 1 ] \
-      && grep -q '^exclude=none$' "$flags" \
-      || fail "partition $part unexpectedly excluded a ShellCheck code"
+    if [ "$(LC_ALL=C sort -u "$flags" | grep -c '^exclude=')" -ne 1 ] \
+      || ! grep -q '^exclude=none$' "$flags"; then
+      fail "partition $part unexpectedly excluded a ShellCheck code"
+    fi
     [ "$(LC_ALL=C sort -u "$mode")" = on ] || fail "partition $part disabled full analysis"
   done
   [ "$(LC_ALL=C sort "$tmp/union")" = "$all" ] || fail "lint partitions lose or duplicate canonical roots"
