@@ -20,8 +20,8 @@
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
-#                 "BOOTSTRAP_INFO: pointed this checkout at its tracked .githooks/ push check",
-#                 "BOOTSTRAP_INFO: could not point this checkout at .githooks/; the local push check stays off",
+#                 "BOOTSTRAP_INFO: pointed this clone at its tracked .githooks/ push check",
+#                 "BOOTSTRAP_INFO: could not point this clone at .githooks/; the local push check stays off",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "SECONDMATE_HANDOFF: secondmate <id>: pending delivery: <n> item(s)",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
@@ -114,7 +114,7 @@
 #          the fleet lock, so a second concurrent session never race-mutates
 #          secondmate homes, pending handoff outboxes and receiver wakes,
 #          X-mode artifacts, project clones, or repair instructions.
-#          Unset/0 (the default) runs all six sweeps - this flag is purely
+#          Unset/0 (the default) runs all seven sweeps - this flag is purely
 #          additive.
 #          Set FM_BOOTSTRAP_NETWORK to split this run by whether a step talks to
 #          the network, so a session start can print its digest from local reads
@@ -1379,19 +1379,20 @@ githooks_wire_setup() {
   # section's own vocabulary: a write is a completed fact, a refused write is a
   # completed fact with the check left off, and leaving somebody else's
   # hooksPath alone is a routine confirmation that stays silent.
-  # TEST-HARNESS ESCAPE HATCH (FM_GITHOOKS_WIRE_SKIP=1): this is the one sweep
-  # that writes to the CODE root rather than the home, so firstmate's own suite
-  # would otherwise rewrite the checkout it is running in and print a first-run
-  # fact into output other cases assert is empty. tests/lib.sh sets it.
+  # TEST-HARNESS ESCAPE HATCH (FM_GITHOOKS_WIRE_SKIP=1), owned here: this is the
+  # one sweep that writes to the CODE root rather than the home, so firstmate's
+  # own suite would otherwise rewrite the checkout it is running in and print a
+  # first-run fact into output other cases assert is empty. tests/lib.sh sets
+  # it, and tests/fm-local-push-check.test.sh strips it to prove both halves.
   local outcome
   [ "${FM_GITHOOKS_WIRE_SKIP:-}" = 1 ] && return 0
   outcome=$("$FM_ROOT/bin/fm-githooks-wire.sh" "$FM_ROOT" 2>/dev/null) || return 0
   case "$outcome" in
     wired)
-      printf 'BOOTSTRAP_INFO: pointed this checkout at its tracked .githooks/ push check\n'
+      printf 'BOOTSTRAP_INFO: pointed this clone at its tracked .githooks/ push check\n'
       ;;
     failed)
-      printf 'BOOTSTRAP_INFO: could not point this checkout at .githooks/; the local push check stays off\n'
+      printf 'BOOTSTRAP_INFO: could not point this clone at .githooks/; the local push check stays off\n'
       ;;
   esac
 }

@@ -363,11 +363,9 @@ test_wiring_survives_a_worktree_without_the_hooks_directory() {
   pass "the wired path still resolves from a worktree that has no .githooks of its own"
 }
 
-# core.hooksPath is one shared value for the whole repository, so a run from a
-# disposable worktree that named ITSELF would point the clone at a directory
-# that vanishes with that worktree - after which git runs no hooks at all and
-# says nothing. This repository's own validation pipeline runs from exactly
-# such a worktree.
+# A run from a disposable worktree that named ITSELF would leave the whole clone
+# pointing at a directory that vanishes with it; the wiring script's header owns
+# why. This repository's own validation pipeline runs from such a worktree.
 test_wiring_from_a_linked_worktree_names_the_main_one() {
   local dir linked
   dir=$(wire_fixture wire-from-linked) || fail "could not build the main fixture"
@@ -385,12 +383,10 @@ test_wiring_from_a_linked_worktree_names_the_main_one() {
 
 # A session start is the only thing that arms an ordinary clone, so the wiring
 # has to survive being called from bin/fm-bootstrap.sh and not just by hand.
-# tests/lib.sh sets FM_GITHOOKS_WIRE_SKIP=1 for every suite, because this is the
-# one bootstrap sweep that writes to the CODE root: without it a test run would
-# rewrite whatever checkout it was started from, and the fact the first wiring
-# prints would land in output other suites assert is empty. Strip it here, the
-# way tests/fm-gate-refuse.test.sh strips its own bypass, so both halves are
-# proved: bootstrap really wires, and the escape hatch really stops it.
+# tests/lib.sh opts every suite out through FM_GITHOOKS_WIRE_SKIP=1, for the
+# reason bin/fm-bootstrap.sh's githooks_wire_setup owns. Strip it here, the way
+# tests/fm-gate-refuse.test.sh strips its own bypass, so both halves are proved:
+# bootstrap really wires, and the escape hatch really stops it.
 test_a_session_start_arms_the_clone_unless_the_suite_stops_it() {
   local dir out
   dir=$(wire_fixture wire-bootstrap) || fail "could not build the bootstrap fixture"
@@ -402,14 +398,14 @@ test_a_session_start_arms_the_clone_unless_the_suite_stops_it() {
     "$ROOT/bin/fm-bootstrap.sh" 2>&1)
   [ -z "$(wired_local "$dir")" ] \
     || fail "a session start wired the checkout although the suite asked it not to: '$(wired_local "$dir")'"
-  assert_not_contains "$out" "pointed this checkout" \
+  assert_not_contains "$out" "pointed this clone" \
     "a skipped wiring still printed a startup fact, which other suites assert is absent"
 
   out=$(env -u FM_GITHOOKS_WIRE_SKIP FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$dir" \
     "$ROOT/bin/fm-bootstrap.sh" 2>&1)
   [ "$(wired_local "$dir")" = "$dir/.githooks" ] \
     || fail "a session start did not arm the clone: '$(wired_local "$dir")'"
-  assert_contains "$out" "pointed this checkout" \
+  assert_contains "$out" "pointed this clone" \
     "arming the clone was not reported as a startup fact"
   pass "a session start arms the clone, and the suite's own opt-out stops it"
 }
@@ -467,8 +463,9 @@ test_wiring_never_shadows_a_global_choice() {
   home="$TMP_ROOT/wire-global-home"
   theirs="$home/.theirhooks"
   mkdir -p "$theirs"
-  # tests/lib.sh points GIT_CONFIG_GLOBAL at /dev/null to isolate fixtures from
-  # the host, so a global value has to be introduced through that same variable
+  # tests/git-config-helpers.sh, which bin/fm-test-run.sh sources around every
+  # script, points GIT_CONFIG_GLOBAL at /dev/null to isolate fixtures from the
+  # host, so a global value has to be introduced through that same variable
   # rather than through HOME.
   GIT_CONFIG_GLOBAL="$home/gitconfig" git config --global core.hooksPath "$theirs"
   GIT_CONFIG_GLOBAL="$home/gitconfig" bash "$WIRE" "$dir" >/dev/null 2>&1 \
