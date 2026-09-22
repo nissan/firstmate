@@ -131,8 +131,61 @@ test_the_hook_refuses_exactly_as_the_gate_does() {
   pass ".githooks/pre-push hands its ref list nowhere and refuses as the gate does"
 }
 
+# The gate only fires when core.hooksPath names .githooks, and that is per-clone
+# local config no clone inherits. bin/fm-githooks-wire.sh is what a session start
+# runs to set it, so its restraint matters more than its action: it must never
+# overwrite a choice someone already made, and never point at a directory that
+# is not there.
+wire_fixture() {  # <name> [hooksPath]
+  local dir=$1
+  dir="$TMP_ROOT/$dir"
+  mkdir -p "$dir/.githooks"
+  git init -q "$dir" 2>/dev/null || return 1
+  [ "$#" -lt 2 ] || git -C "$dir" config --local core.hooksPath "$2"
+  printf '%s\n' "$dir"
+}
+
+wired_to() { git -C "$1" config --local --get core.hooksPath 2>/dev/null || true; }
+
+test_wiring_sets_an_empty_hooks_path() {
+  local dir
+  dir=$(wire_fixture wire-empty) || fail "could not build the unwired fixture"
+  bash "$ROOT/bin/fm-githooks-wire.sh" "$dir" >/dev/null 2>&1 \
+    || fail "wiring an unwired checkout failed"
+  [ "$(wired_to "$dir")" = .githooks ] \
+    || fail "an empty core.hooksPath was not wired: '$(wired_to "$dir")'"
+  pass "wiring points an unwired checkout at .githooks"
+}
+
+test_wiring_never_overwrites_an_existing_choice() {
+  local dir
+  dir=$(wire_fixture wire-existing .myhooks) || fail "could not build the wired fixture"
+  bash "$ROOT/bin/fm-githooks-wire.sh" "$dir" >/dev/null 2>&1 \
+    || fail "wiring an already-wired checkout failed"
+  [ "$(wired_to "$dir")" = .myhooks ] \
+    || fail "wiring overwrote an existing core.hooksPath: '$(wired_to "$dir")'"
+  pass "wiring leaves an existing core.hooksPath alone, so unsetting it is a durable opt-out"
+}
+
+# A hooksPath naming nothing disables the repository's hooks rather than adding
+# one, so an absent .githooks/ must leave the checkout untouched.
+test_wiring_skips_a_checkout_with_no_hooks_directory() {
+  local dir
+  dir="$TMP_ROOT/wire-nohooks"
+  mkdir -p "$dir"
+  git init -q "$dir" 2>/dev/null || fail "could not build the hookless fixture"
+  bash "$ROOT/bin/fm-githooks-wire.sh" "$dir" >/dev/null 2>&1 \
+    || fail "wiring a hookless checkout should not fail a session open"
+  [ -z "$(wired_to "$dir")" ] \
+    || fail "wiring set core.hooksPath with no .githooks present: '$(wired_to "$dir")'"
+  pass "wiring skips a checkout with no .githooks and disables nothing"
+}
+
 test_clean_tree_permits_the_push
 test_a_failing_lint_refuses_the_push
+test_wiring_sets_an_empty_hooks_path
+test_wiring_never_overwrites_an_existing_choice
+test_wiring_skips_a_checkout_with_no_hooks_directory
 test_a_failing_test_run_refuses_the_push
 test_every_check_runs_even_after_an_earlier_failure
 test_skip_gate_is_the_one_way_past

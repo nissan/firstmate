@@ -10,7 +10,7 @@
           },
           {
             "type": "command",
-            "command": "[ -n \"$(git -C \"$CLAUDE_PROJECT_DIR\" config --local --get core.hooksPath 2>/dev/null)\" ] || git -C \"$CLAUDE_PROJECT_DIR\" config --local core.hooksPath .githooks 2>/dev/null || true",
+            "command": "[ -z \"${GROK_AGENT:-}${GROK_HOOK_EVENT:-}\" ] || exit 0; exec \"$CLAUDE_PROJECT_DIR\"/bin/fm-githooks-wire.sh",
             "timeout": 10
           }
         ]
