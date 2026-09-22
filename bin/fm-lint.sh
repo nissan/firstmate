@@ -96,14 +96,16 @@ LOCAL_NOX_EXCLUDE=SC1091,SC2034,SC2153,SC2329
 # `The runner has received a shutdown signal` and exit 143 after minutes of
 # silence, which reads exactly like an infrastructure fault. Bound each
 # invocation's address space so such a root fails as itself, in seconds, and is
-# then re-linted without source following instead of taking the job down.
-# Calibrated 2026-09-22 against this repository with ShellCheck 0.11.0: the
-# heaviest root that still completes wants just under 4 GB and the roots that
-# cannot complete want more than 6 GB, so the bound separates them and still
-# leaves a 7 GB runner 3 GB for everything else. An over-tight bound costs
-# cross-file analysis on a named root; an over-loose one costs the whole job,
-# so prefer the tighter value. FM_LINT_ADDRESS_SPACE_KB overrides it, and 0
-# disables bounding entirely.
+# then re-linted at a reduced setting instead of taking the job down.
+# Measured 2026-09-22 against this repository with ShellCheck 0.11.0: no bound
+# admits every root, because bin/fm-watch.sh and bin/fm-backlog-handoff.sh
+# still exhaust 7 GiB while following sources, which is the whole runner. So
+# this value is not chosen to separate roots that complete from roots that do
+# not; it is chosen to leave a 7 GB runner about 3 GB for everything else, and
+# the fallback ladder below is what keeps a root that cannot complete covered.
+# An over-tight bound costs analysis on a named root; an over-loose one costs
+# the whole job, so prefer the tighter value. FM_LINT_ADDRESS_SPACE_KB
+# overrides it, and 0 disables bounding entirely.
 FM_LINT_ADDRESS_SPACE_KB_DEFAULT=4194304
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SELF="$SELF_DIR/fm-lint.sh"
@@ -145,7 +147,7 @@ fm_lint_invoke_shellcheck() {  # <output-file> <shellcheck-arg>...
 fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
   local manifest=$1 output_dir=$2 shard_index=$3 tab index path output invocation_rc rc=0
   local root_out
-  local -a roots shellcheck_args fallback_args
+  local -a roots shellcheck_args fallback_args fallback_fast_args
   roots=()
   tab=$(printf '\t')
   while IFS="$tab" read -r index path || [ -n "${index:-}${path:-}" ]; do
@@ -167,18 +169,25 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
     if [ "${FM_LINT_INTERNAL_FAST:-0}" -eq 1 ]; then
       shellcheck_args+=(--extended-analysis=false)
     fi
-    # Only a source-following pass can exhaust the bound, so only it has a
-    # fallback. The fallback keeps every check the bounded pass would have run
-    # except the ones that need source context, which is the list local
+    # Only a source-following pass can exhaust the bound, so only it has
+    # fallbacks. They drop capability in the order that costs least. The first
+    # drops source following, which costs exactly the cross-file codes local
     # changed-file mode already excludes and the full run's exclusion guard
-    # already proves complete.
+    # already proves complete. The second drops extended analysis as well,
+    # because that is what actually consumes the memory: the one root here that
+    # needs this rung wants more than 5 GiB with extended analysis on and under
+    # 2 GiB with it off, on the same single file.
     fallback_args=()
+    fallback_fast_args=()
     if [ "${FM_LINT_INTERNAL_FOLLOW_SOURCES:-1}" -eq 1 ] \
       && [ "${FM_LINT_INTERNAL_ADDRESS_SPACE_KB:-0}" -gt 0 ]; then
       fallback_args=(--norc
         --exclude="${FM_LINT_INTERNAL_EXCLUDE:+$FM_LINT_INTERNAL_EXCLUDE,}$LOCAL_NOX_EXCLUDE")
       if [ "${FM_LINT_INTERNAL_FAST:-0}" -eq 1 ]; then
+        # Extended analysis is already off, so the first rung is the last one.
         fallback_args+=(--extended-analysis=false)
+      else
+        fallback_fast_args=("${fallback_args[@]}" --extended-analysis=false)
       fi
     fi
     : > "$output.out"
@@ -201,8 +210,17 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
         : > "$root_out"
         fm_lint_invoke_shellcheck "$root_out" "${fallback_args[@]}" -- "$path" \
           || invocation_rc=$?
+        if fm_lint_allocation_failure "$root_out" \
+          && [ "${#fallback_fast_args[@]}" -gt 0 ]; then
+          printf 'fm-lint.sh: %s exceeded the bound without source following too; re-linting it with extended analysis off as well, so this root also loses ShellCheck'"'"'s deeper dataflow checks.\n' \
+            "$path" >> "$output.out"
+          invocation_rc=0
+          : > "$root_out"
+          fm_lint_invoke_shellcheck "$root_out" "${fallback_fast_args[@]}" -- "$path" \
+            || invocation_rc=$?
+        fi
         if fm_lint_allocation_failure "$root_out"; then
-          printf 'fm-lint.sh: %s exhausted the bound even without source following; that is a real analysis failure, not a bound to widen.\n' \
+          printf 'fm-lint.sh: %s exhausted the bound at every reduced setting; that is a real analysis failure, not a bound to widen.\n' \
             "$path" >> "$output.out"
         fi
       fi

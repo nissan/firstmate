@@ -351,7 +351,9 @@ SH
 # allocation failure a root exceeding the address-space bound produces, so the
 # owner's degrade-and-retry decision is exercised without asking CI to actually
 # allocate several gigabytes. FM_TEST_OOM_ROOT names the root that fails;
-# FM_TEST_OOM_ALWAYS=1 makes it fail without source following too.
+# FM_TEST_OOM_ALWAYS=1 makes it fail at every rung, and
+# FM_TEST_OOM_UNLESS_FAST=1 makes it fail until extended analysis is off, which
+# is the real shape of the one root that needs that last rung.
 fm_lint_stub_shellcheck_bound() {
   local fakebin=$1 log=$2
   : > "$log"
@@ -363,9 +365,11 @@ if [ "\${1:-}" = --version ]; then
 fi
 follow=no
 exclude=none
+ext=on
 while [ "\$#" -gt 0 ] && [ "\$1" != -- ]; do
   case "\$1" in
     --external-sources) follow=yes ;;
+    --extended-analysis=false) ext=off ;;
     --exclude=*) exclude=\${1#--exclude=} ;;
   esac
   shift
@@ -374,11 +378,13 @@ done
 target=\${1:-}
 printf '%s\n' "\$target" >> "$log"
 if [ -n "\${FM_TEST_FLAG_LOG:-}" ]; then
-  printf '%s external-sources=%s exclude=%s\n' "\$target" "\$follow" "\$exclude" \
-    >> "\$FM_TEST_FLAG_LOG"
+  printf '%s external-sources=%s extended-analysis=%s exclude=%s\n' \
+    "\$target" "\$follow" "\$ext" "\$exclude" >> "\$FM_TEST_FLAG_LOG"
 fi
 if [ "\$target" = "\${FM_TEST_OOM_ROOT:-}" ] \
-  && { [ "\$follow" = yes ] || [ "\${FM_TEST_OOM_ALWAYS:-0}" = 1 ]; }; then
+  && { [ "\$follow" = yes ] \
+    || [ "\${FM_TEST_OOM_ALWAYS:-0}" = 1 ] \
+    || { [ "\${FM_TEST_OOM_UNLESS_FAST:-0}" = 1 ] && [ "\$ext" = on ]; }; }; then
   printf 'shellcheck: out of memory\n' >&2
   exit 1
 fi
@@ -1586,14 +1592,44 @@ test_memory_bound_degrades_the_exhausting_root_and_keeps_the_run_green() {
     "a root that stayed within the bound was degraded too"
   [ "$(grep -c '^bin/fm-send\.sh ' "$flag_log")" -eq 2 ] \
     || fail "the exhausting root was not re-linted exactly once"$'\n'"$(cat "$flag_log")"
-  grep -qx 'bin/fm-send\.sh external-sources=no exclude=SC1091,SC2034,SC2153,SC2329' "$flag_log" \
-    || fail "the retry kept source following or dropped the cross-file exclusions"$'\n'"$(cat "$flag_log")"
+  grep -qx 'bin/fm-send\.sh external-sources=no extended-analysis=on exclude=SC1091,SC2034,SC2153,SC2329' "$flag_log" \
+    || fail "the retry kept source following, dropped the cross-file exclusions, or gave up extended analysis early"$'\n'"$(cat "$flag_log")"
   [ "$(grep -c '^bin/fm-lint\.sh ' "$flag_log")" -eq 1 ] \
     || fail "a root within the bound was linted more than once"$'\n'"$(cat "$flag_log")"
   pass "fm-lint.sh re-lints a memory-exhausting root without source following and stays green"
 }
 
-test_memory_bound_reports_a_root_that_exhausts_it_without_sources_too() {
+test_memory_bound_drops_extended_analysis_before_giving_up() {
+  local tmp fakebin log flag_log out
+  tmp=$(fm_test_tmproot fm-lint-bound-noext)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  flag_log="$tmp/flags.log"
+  : > "$flag_log"
+  fm_lint_stub_shellcheck_bound "$fakebin" "$log"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=1 \
+    FM_TEST_FLAG_LOG="$flag_log" FM_TEST_OOM_ROOT=bin/fm-send.sh \
+    FM_TEST_OOM_UNLESS_FAST=1 \
+    "$LINT" bin/fm-send.sh bin/fm-lint.sh 2>&1) \
+    || fail "a root that only fits with extended analysis off failed the whole run"$'\n'"$out"
+
+  assert_contains "$out" "bin/fm-send.sh exceeded the bound without source following too" \
+    "the second degradation did not name the root"
+  assert_contains "$out" "deeper dataflow checks" \
+    "the notice did not say what dropping extended analysis costs"
+  assert_not_contains "$out" "exhausted the bound at every reduced setting" \
+    "a root the last rung analyzed was still reported as a failure"
+  [ "$(grep -c '^bin/fm-send\.sh ' "$flag_log")" -eq 3 ] \
+    || fail "the root did not walk exactly three rungs"$'\n'"$(cat "$flag_log")"
+  grep -qx 'bin/fm-send\.sh external-sources=no extended-analysis=off exclude=SC1091,SC2034,SC2153,SC2329' "$flag_log" \
+    || fail "the last rung did not drop extended analysis while keeping the exclusions"$'\n'"$(cat "$flag_log")"
+  [ "$(grep -c '^bin/fm-lint\.sh ' "$flag_log")" -eq 1 ] \
+    || fail "a root within the bound walked the ladder too"$'\n'"$(cat "$flag_log")"
+  pass "fm-lint.sh drops extended analysis for a root that needs it and stays green"
+}
+
+test_memory_bound_reports_a_root_that_exhausts_every_rung() {
   local tmp fakebin log flag_log out
   tmp=$(fm_test_tmproot fm-lint-bound-hard)
   fakebin=$(fm_fakebin "$tmp")
@@ -1607,9 +1643,11 @@ test_memory_bound_reports_a_root_that_exhausts_it_without_sources_too() {
     "$LINT" bin/fm-send.sh 2>&1) \
     && fail "a root that cannot be analyzed at all was reported as clean"$'\n'"$out"
 
-  assert_contains "$out" "exhausted the bound even without source following" \
+  assert_contains "$out" "exhausted the bound at every reduced setting" \
     "a root that cannot be analyzed at all was not distinguished from a degraded one"
-  pass "fm-lint.sh keeps a root that exhausts the bound without sources as a real failure"
+  [ "$(grep -c '^bin/fm-send\.sh ' "$flag_log")" -eq 3 ] \
+    || fail "a root was given up on before the ladder was spent"$'\n'"$(cat "$flag_log")"
+  pass "fm-lint.sh keeps a root that exhausts every rung as a real failure"
 }
 
 test_memory_bound_can_be_disabled() {
@@ -1679,5 +1717,6 @@ test_fast_mode_on_a_local_branch_keeps_source_following
 test_changed_mode_hides_cross_file_codes_that_ci_still_sees
 test_authoritative_lint_owns_local_exclusion_completeness
 test_memory_bound_degrades_the_exhausting_root_and_keeps_the_run_green
-test_memory_bound_reports_a_root_that_exhausts_it_without_sources_too
+test_memory_bound_drops_extended_analysis_before_giving_up
+test_memory_bound_reports_a_root_that_exhausts_every_rung
 test_memory_bound_can_be_disabled
