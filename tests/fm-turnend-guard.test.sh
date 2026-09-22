@@ -1186,6 +1186,27 @@ run_hook_claude() {
   printf '{"stop_hook_active":%s,"session_id":"sess-claude-mode"}' "$stop_active" | CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" --claude 2>&1
 }
 
+# The foreign-owner stand-down first asks whether THIS process is itself running
+# inside a harness (fm_harness_ancestry_pids in bin/fm-session-lock-lib.sh),
+# because a lock held by its own session is never foreign. A real Stop hook
+# always has that ancestor, and a developer running this suite from inside
+# Claude Code supplies one by accident, so the case passes there for the wrong
+# reason while a bare CI runner, with no harness anywhere in the tree, refuses.
+# Run the hook under a harness-named parent so the case reproduces the real Stop
+# shape wherever the suite runs. Two commands, for the same reason
+# start_fake_harness needs them: bash exec-replaces itself with a lone final
+# command, and the harness-named parent this exists to create would vanish.
+run_hook_claude_in_harness() {  # <dir> <session-id> <stop-active>
+  local dir=$1 session=$2 stop_active=$3 home
+  home=$(cd "$dir" && pwd)
+  ln -sf /bin/bash "$dir/claude"
+  # shellcheck disable=SC2016 # The quoted -c body is the child's script source.
+  printf '{"stop_hook_active":%s,"session_id":"%s"}' "$stop_active" "$session" \
+    | CLAUDECODE=1 FM_HOME="$home" "$dir/claude" -c \
+      'bash "$1" --claude; rc=$?; exit "$rc"' claude \
+      "$dir/bin/fm-turnend-guard.sh" 2>&1
+}
+
 seed_claude_failure() {
   local dir=$1 outcome=${2:-failed-suppressed}
   : > "$dir/state/.claude-autoarm-failure-notified"
@@ -2009,10 +2030,11 @@ test_hook_claude_mode_stands_down_for_live_foreign_lock_owner() {
   printf '%s\n' "$pid" > "$dir/state/.lock"
   # A leftover budget record from the unbounded incident shape must not matter.
   seed_claude_budget "$dir" 1 197
-  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status=$?
-  out2=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status2=$?
-  out3=$(printf '{"stop_hook_active":true,"session_id":"sess-other"}' \
-    | CLAUDECODE=1 FM_HOME="$dir" bash "$dir/bin/fm-turnend-guard.sh" --claude 2>&1); status3=$?
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 \
+    run_hook_claude_in_harness "$dir" sess-claude-mode true); status=$?
+  out2=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 \
+    run_hook_claude_in_harness "$dir" sess-claude-mode true); status2=$?
+  out3=$(run_hook_claude_in_harness "$dir" sess-other true); status3=$?
   out4=$(run_hook "$dir" false); status4=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
