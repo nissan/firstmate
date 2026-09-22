@@ -2172,6 +2172,28 @@ if ! fm_lock_try_acquire "$WATCH_LOCK"; then
   fi
   exit 0
 fi
+
+# The claim now exists on disk, but watcher_cleanup and the locks it releases
+# are defined hundreds of lines below, so until then a signal would leave the
+# claim behind with nothing registered to drop it: default SIGTERM kills this
+# shell outright and no EXIT trap runs. A bounded foreground checkpoint
+# (bin/fm-watch-checkpoint.sh) terminates the watcher on a fixed budget, so on
+# a slow host that budget can land inside this window and strand the lock,
+# which then reads to the next session as a live watcher that is not there.
+# Register the narrowest possible release right here; the full cleanup below
+# replaces both traps once its dependencies exist. WATCHER_PID is read directly
+# from this shell rather than through a command substitution so it matches the
+# holder pid fm_lock_claim stored, which is also why the later assignment can
+# be this same value.
+WATCHER_PID=${BASHPID:-$$}
+# shellcheck disable=SC2329 # Registered by the traps immediately below.
+watcher_early_release() {
+  [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "$WATCHER_PID" ] || return 0
+  fm_lock_release "$WATCH_LOCK" || true
+}
+trap watcher_early_release EXIT
+trap 'exit 1' HUP INT TERM
+
 WATCHER_RECOVERY_PENDING=0
 if [ -n "${FM_LOCK_RECOVERED_PID:-}" ]; then
   WATCHER_RECOVERY_PENDING=1
@@ -2282,12 +2304,12 @@ watcher_cleanup() {
   fi
   return "$cleanup_status"
 }
+# Replaces the narrow early release registered right after the lock was claimed,
+# now that everything this cleanup releases exists. WATCHER_PID was set there,
+# from this same main shell, for the same reason: it must equal the holder pid
+# fm_lock_claim stored, or the self-eviction check below will not match.
 trap watcher_cleanup EXIT
 trap 'exit 1' HUP INT TERM
-# This watcher's own pid, as recorded in the lock by fm_lock_claim (which writes
-# ${BASHPID:-$$} from this same main shell). Read directly, never via a command
-# substitution, so it matches the stored holder pid for the self-eviction check.
-WATCHER_PID=${BASHPID:-$$}
 printf '%s\n' "$FM_HOME" > "$WATCH_LOCK/fm-home" || true
 printf '%s\n' "$WATCH_PATH" > "$WATCH_LOCK/watcher-path" || true
 # shellcheck disable=SC2034 # Consumed by wake() in the separately linted transition owner.

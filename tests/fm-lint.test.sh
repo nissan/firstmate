@@ -159,6 +159,8 @@ test_help_reports_the_complete_interface() {
   assert_contains "$help" "--list-files" "fm-lint.sh --help omitted --list-files"
   assert_contains "$help" "--help" "fm-lint.sh --help omitted --help"
   assert_contains "$help" "--fast" "fm-lint.sh --help omitted --fast"
+  assert_contains "$help" "FM_LINT_ADDRESS_SPACE_KB" \
+    "fm-lint.sh --help omitted the per-root analysis memory bound"
   assert_contains "$help" "SC1091" "fm-lint.sh --help omitted the local SC1091 exclusion"
   assert_contains "$help" "SC2034" "fm-lint.sh --help omitted the local SC2034 exclusion"
   assert_contains "$help" "SC2153" "fm-lint.sh --help omitted the local SC2153 exclusion"
@@ -341,6 +343,46 @@ if [ -n "\${FM_TEST_CONCURRENCY_DIR:-}" ]; then
   rmdir "\$FM_TEST_CONCURRENCY_DIR/active.\$\$"
 fi
 exit "\${FM_TEST_SHELLCHECK_EXIT:-0}"
+SH
+  chmod +x "$fakebin/shellcheck"
+}
+
+# fm_lint_stub_shellcheck_bound <fakebin> <log>: a ShellCheck that reports the
+# allocation failure a root exceeding the address-space bound produces, so the
+# owner's degrade-and-retry decision is exercised without asking CI to actually
+# allocate several gigabytes. FM_TEST_OOM_ROOT names the root that fails;
+# FM_TEST_OOM_ALWAYS=1 makes it fail without source following too.
+fm_lint_stub_shellcheck_bound() {
+  local fakebin=$1 log=$2
+  : > "$log"
+  cat > "$fakebin/shellcheck" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = --version ]; then
+  printf 'ShellCheck - shell script analysis tool\nversion: 0.11.0\n'
+  exit 0
+fi
+follow=no
+exclude=none
+while [ "\$#" -gt 0 ] && [ "\$1" != -- ]; do
+  case "\$1" in
+    --external-sources) follow=yes ;;
+    --exclude=*) exclude=\${1#--exclude=} ;;
+  esac
+  shift
+done
+[ "\$#" -eq 0 ] || shift
+target=\${1:-}
+printf '%s\n' "\$target" >> "$log"
+if [ -n "\${FM_TEST_FLAG_LOG:-}" ]; then
+  printf '%s external-sources=%s exclude=%s\n' "\$target" "\$follow" "\$exclude" \
+    >> "\$FM_TEST_FLAG_LOG"
+fi
+if [ "\$target" = "\${FM_TEST_OOM_ROOT:-}" ] \
+  && { [ "\$follow" = yes ] || [ "\${FM_TEST_OOM_ALWAYS:-0}" = 1 ]; }; then
+  printf 'shellcheck: out of memory\n' >&2
+  exit 1
+fi
+exit 0
 SH
   chmod +x "$fakebin/shellcheck"
 }
@@ -1522,6 +1564,77 @@ SH
   pass "seeded dispatcher, adapter, production-owner, and test-local diagnostics preserve parity"
 }
 
+test_memory_bound_degrades_the_exhausting_root_and_keeps_the_run_green() {
+  local tmp fakebin log flag_log out
+  tmp=$(fm_test_tmproot fm-lint-bound-degrade)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  flag_log="$tmp/flags.log"
+  : > "$flag_log"
+  fm_lint_stub_shellcheck_bound "$fakebin" "$log"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=1 \
+    FM_TEST_FLAG_LOG="$flag_log" FM_TEST_OOM_ROOT=bin/fm-send.sh \
+    "$LINT" bin/fm-send.sh bin/fm-lint.sh 2>&1) \
+    || fail "a root that exhausted the memory bound failed the whole run"$'\n'"$out"
+
+  assert_contains "$out" "bin/fm-send.sh exceeded the" \
+    "the degraded root was not named"
+  assert_contains "$out" "SC1091,SC2034,SC2153,SC2329" \
+    "the notice did not say which codes go unjudged for the degraded root"
+  assert_not_contains "$out" "bin/fm-lint.sh exceeded the" \
+    "a root that stayed within the bound was degraded too"
+  [ "$(grep -c '^bin/fm-send\.sh ' "$flag_log")" -eq 2 ] \
+    || fail "the exhausting root was not re-linted exactly once"$'\n'"$(cat "$flag_log")"
+  grep -qx 'bin/fm-send\.sh external-sources=no exclude=SC1091,SC2034,SC2153,SC2329' "$flag_log" \
+    || fail "the retry kept source following or dropped the cross-file exclusions"$'\n'"$(cat "$flag_log")"
+  [ "$(grep -c '^bin/fm-lint\.sh ' "$flag_log")" -eq 1 ] \
+    || fail "a root within the bound was linted more than once"$'\n'"$(cat "$flag_log")"
+  pass "fm-lint.sh re-lints a memory-exhausting root without source following and stays green"
+}
+
+test_memory_bound_reports_a_root_that_exhausts_it_without_sources_too() {
+  local tmp fakebin log flag_log out
+  tmp=$(fm_test_tmproot fm-lint-bound-hard)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  flag_log="$tmp/flags.log"
+  : > "$flag_log"
+  fm_lint_stub_shellcheck_bound "$fakebin" "$log"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=1 \
+    FM_TEST_FLAG_LOG="$flag_log" FM_TEST_OOM_ROOT=bin/fm-send.sh FM_TEST_OOM_ALWAYS=1 \
+    "$LINT" bin/fm-send.sh 2>&1) \
+    && fail "a root that cannot be analyzed at all was reported as clean"$'\n'"$out"
+
+  assert_contains "$out" "exhausted the bound even without source following" \
+    "a root that cannot be analyzed at all was not distinguished from a degraded one"
+  pass "fm-lint.sh keeps a root that exhausts the bound without sources as a real failure"
+}
+
+test_memory_bound_can_be_disabled() {
+  local tmp fakebin log flag_log out
+  tmp=$(fm_test_tmproot fm-lint-bound-off)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  flag_log="$tmp/flags.log"
+  : > "$flag_log"
+  fm_lint_stub_shellcheck_bound "$fakebin" "$log"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=1 FM_LINT_ADDRESS_SPACE_KB=0 \
+    FM_TEST_FLAG_LOG="$flag_log" FM_TEST_OOM_ROOT=bin/fm-send.sh \
+    "$LINT" bin/fm-send.sh 2>&1) \
+    && fail "an unbounded run silently recovered from an allocation failure"$'\n'"$out"
+
+  assert_not_contains "$out" "bounded to" \
+    "a disabled bound was still announced"
+  assert_not_contains "$out" "exceeded the" \
+    "a disabled bound still degraded a root"
+  [ "$(grep -c '^bin/fm-send\.sh ' "$flag_log")" -eq 1 ] \
+    || fail "a disabled bound still retried the root"$'\n'"$(cat "$flag_log")"
+  pass "fm-lint.sh honors a disabled memory bound and lets the failure stand"
+}
+
 test_help_reports_the_complete_interface
 test_list_files_reports_the_shell_inventory
 test_canonical_partitions_preserve_full_lint
@@ -1565,3 +1678,6 @@ test_explicit_path_keeps_external_sources
 test_fast_mode_on_a_local_branch_keeps_source_following
 test_changed_mode_hides_cross_file_codes_that_ci_still_sees
 test_authoritative_lint_owns_local_exclusion_completeness
+test_memory_bound_degrades_the_exhausting_root_and_keeps_the_run_green
+test_memory_bound_reports_a_root_that_exhausts_it_without_sources_too
+test_memory_bound_can_be_disabled
