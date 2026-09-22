@@ -101,7 +101,8 @@ It is not the no-mistakes pre-push gate that tracked firstmate changes ship thro
 Point git at it once per clone with `git config core.hooksPath .githooks`, or let a Claude Code session do it for you - `.claude/settings.json` sets that value at session start only when it is empty, so a clone already pointing somewhere else is left alone, and `git config --unset core.hooksPath` opts back out.
 `SKIP_GATE=1 git push` bypasses it.
 Every check runs even after an earlier one fails, so one push reports every fault rather than one per attempt.
-This exists because a firstmate CI run is 17 jobs and GitHub bills every job rounded up to the whole minute: a run costs about 221 billed minutes, while the same two checks take about a minute locally and are free.
+This exists because a firstmate CI run is 17 jobs and GitHub bills every job rounded up to the whole minute: a run costs about 221 billed minutes, while the same checks cost nothing locally.
+How long they take is whatever `--changed` selects, so an ordinary script-plus-test change is quick and a change to a file most suites reference is not; `SKIP_GATE=1` is there for when that is the wrong trade.
 CI stays the authority; the gate only stops it being used as the search.
 
 Check and test the toolbelt before pushing:
