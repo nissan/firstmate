@@ -401,13 +401,15 @@ make_spawn_home() {
 run_gated_spawn() {
   local home=$1 wt=$2 fakebin=$3 proj=$4 id=$5
   shift 5
-  env "$@" \
+  # The caller's assignments come last so they win: env applies them in order.
+  env \
     FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     HOME="$home/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="${TMUX:-fake,1,0}" \
     PATH="$fakebin:$PATH" \
+    "$@" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" --mode local-only --yolo off 2>&1
 }
 
@@ -492,8 +494,28 @@ EOF
 
   # No quota evidence at all: no captured snapshot, and no tool on PATH either.
   fm_test_spawn_brief "$home" failsafe-blind
+  # Drop every PATH entry that carries a real quota-axi, so the developer's own
+  # tool cannot answer, while keeping the git, jq and node the spawn itself needs
+  # (node often shares its directory with quota-axi, so it is linked back in).
+  local dir node_bin blind_path=$fakebin
+  node_bin=$(command -v node 2>/dev/null || true)
+  if [ -n "$node_bin" ]; then
+    mkdir -p "$TMP_ROOT/blind-node"
+    ln -sf "$node_bin" "$TMP_ROOT/blind-node/node"
+    blind_path="$blind_path:$TMP_ROOT/blind-node"
+  fi
+  local IFS=:
+  for dir in $PATH; do
+    [ -n "$dir" ] && [ ! -x "$dir/quota-axi" ] && blind_path="$blind_path:$dir"
+  done
+  unset IFS
+  if PATH="$blind_path" command -v quota-axi >/dev/null 2>&1; then
+    fail "the blind case must have no quota-axi on PATH"
+  fi
   out=$(run_gated_spawn "$home" "$wt" "$fakebin" "$proj" failsafe-blind \
-    FM_RUNWAY_SNAPSHOT='' PATH="$fakebin:/usr/bin:/bin"); status=$?
+    FM_RUNWAY_SNAPSHOT='' PATH="$blind_path"); status=$?
+  assert_contains "$out" "quota-axi is missing" \
+    "with no quota-axi on PATH the gate must say the tool is missing: $out"
   expect_code 0 "$status" "an absent quota tool must not block a spawn: $out"
   assert_contains "$out" "spawned failsafe-blind" "the spawn must still complete: $out"
   pass "fm-spawn: an unavailable allowance signal warns and never blocks a spawn"
