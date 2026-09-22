@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# git pre-push hook: hand straight to the gate, which owns every check.
+# git pipes the ref list on stdin; the gate reads none of it, so drop it here
+# rather than leaving the gate's own commands to inherit an open pipe.
+set -eu
+exec "$(git rev-parse --show-toplevel)"/bin/fm-pre-push-gate.sh </dev/null
