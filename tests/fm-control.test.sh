@@ -597,6 +597,27 @@ test_verb_allowlist_is_closed() {
   pass "fm-control: the verb list is closed - no raw keys, arbitrary text, or clear verb"
 }
 
+# fm-control, fm-quota-choose and the relaunch path all run this check under
+# captured stderr, so it must stay silent even where SIGPIPE is ignored (as on
+# CI runners). A list that pauses after its first entry turns an early return
+# from a live pipe into a certain "Broken pipe" instead of a scheduling race.
+test_harness_support_check_is_silent_when_sigpipe_is_ignored() {
+  local err rc
+  err=$( {
+    trap '' PIPE
+    # shellcheck disable=SC2329  # called by the support check under test
+    fm_control_harnesses() { printf '%s\n' claude; sleep 0.3; printf '%s\n' codex; }
+    fm_control_harness_supported claude || exit 3
+    fm_control_harness_supported codex || exit 4
+    fm_control_harness_supported bogus && exit 5
+    fm_control_harness_supported '' && exit 6
+    exit 0
+  } 2>&1 >/dev/null ); rc=$?
+  expect_code 0 "$rc" "the support check should accept listed harnesses and refuse others"
+  [ -z "$err" ] || fail "the support check wrote to stderr: $err"
+  pass "fm-control: the harness support check stays silent when SIGPIPE is ignored"
+}
+
 test_resume_is_refused_with_its_reason() {
   local dir out rc
   dir=$(new_case resume)
@@ -906,6 +927,7 @@ test_record_bound_to_another_task_is_refused
 test_remote_secondmate_is_refused_by_placement
 test_interrupt_and_exit_lock_before_task_state_resolution
 test_verb_allowlist_is_closed
+test_harness_support_check_is_silent_when_sigpipe_is_ignored
 test_resume_is_refused_with_its_reason
 test_relaunch_only_flags_are_rejected_on_other_verbs
 test_already_stopped_exit_is_idempotent

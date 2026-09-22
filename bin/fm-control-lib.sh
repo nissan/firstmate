@@ -68,11 +68,15 @@ fm_control_harnesses() {
   printf '%s\n' claude codex opencode pi pi-signed grok kimi cursor gemini muse rovo omp agy
 }
 
+# The list is captured whole before it is searched. Returning from a loop that
+# reads a live pipe closes it while the writer may still be printing, and where
+# SIGPIPE is ignored (as on CI runners) that writer reports "Broken pipe" on
+# stderr, which breaks every caller that captures stderr.
 fm_control_harness_supported() {  # <harness>
   local harness
   while read -r harness; do
     [ "$harness" = "${1-}" ] && return 0
-  done < <(fm_control_harnesses)
+  done <<<"$(fm_control_harnesses)"
   return 1
 }
 
