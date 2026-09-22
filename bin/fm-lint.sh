@@ -2,9 +2,9 @@
 # fm-lint.sh - the single owner of firstmate's lint definition.
 #
 # Runs its file set with ShellCheck's default severity, extended analysis,
-# ambient configuration disabled, and one exact ShellCheck version. CI and
-# no-mistakes both invoke this script with no arguments, so this owner selects
-# the context-appropriate rule set without duplicating lint configuration.
+# ambient configuration disabled, and one exact ShellCheck version. CI selects
+# canonical partitions; no-mistakes invokes the context-selected default, so
+# both use this owner without duplicating lint configuration.
 # The explicit --fast mode is local-only and disables ShellCheck's extended
 # dataflow analysis while preserving ordinary shell lint checks and source
 # following. CI, main, and merge-base-less runs keep --norc --external-sources
@@ -41,12 +41,28 @@
 # invocations in the core bin/ and bin/backends/ scripts so every configured
 # backlog backend follows the same tasks-axi lifecycle path.
 #
+# Every source-following invocation also runs under an address-space bound, so
+# a root whose graph exceeds a private runner's memory fails as itself in
+# seconds rather than killing the host, and is then re-linted without source
+# following, excluding only the codes that need that context. Both the bound
+# and each degraded root are printed. FM_LINT_ADDRESS_SPACE_KB overrides the
+# bound and 0 disables it; a host where the bound cannot be applied runs
+# unbounded and says so.
+#
 # Canonical lint uses four stable scheduling shards with bounded workers.
 # Every source-aware canonical root is a separate ShellCheck process, so no
 # process constructs more than one root graph and concurrent graph memory is
 # capped by the worker limit. CI defaults to one worker for the private runner;
 # local callers may use two. Each shard writes separate diagnostics, and the
-# parent replays them in deterministic shard and root order.
+# parent replays them in deterministic shard and root order. FM_LINT_JOBS
+# changes concurrency, not diagnostics or exit selection.
+# --partition 1of2/2of2 splits the entire canonical inventory across
+# two CI runners, each with those same shards and bounded workers. Partitions
+# are complete, disjoint, and byte-weight balanced; --list-files exposes their
+# actual roots. Partition mode is always full source-aware analysis, never
+# changed-only or --fast, and does not accept explicit paths. Each partition
+# also runs workflow lint and backend-purity checks, keeping either invocation
+# independently useful.
 #
 # The same default full run also verifies that the changed-file exclusion list
 # still covers every diagnostic caused only by dropping source context. This
@@ -62,6 +78,8 @@
 #   fm-lint.sh --fast [path]...       local lint with extended analysis disabled
 #   fm-lint.sh <path>...               lint explicit roots with the same config
 #   fm-lint.sh --jobs <1|2> [path]...  override bounded worker count
+#   FM_LINT_ADDRESS_SPACE_KB=<kib|0>   override or disable the per-root bound
+#   fm-lint.sh --partition <1of2|2of2> lint one full-rigor canonical CI partition
 #   fm-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
 #   fm-lint.sh --required-version      print the ShellCheck pin
 #   fm-lint.sh --list-files            print the file set that would be linted
@@ -72,6 +90,23 @@ REQUIRED_SHELLCHECK=0.11.0
 # Cross-file codes that need --external-sources. Local changed-file mode
 # cannot judge them, so they stay CI-only.
 LOCAL_NOX_EXCLUDE=SC1091,SC2034,SC2153,SC2329
+# Source-aware analysis builds one graph per root, and a few roots' graphs need
+# more memory than a private GitHub runner has: 7 GB, against 16 GB for a public
+# one. Exhausting it is not a lint result. The host dies, and the job reports
+# `The runner has received a shutdown signal` and exit 143 after minutes of
+# silence, which reads exactly like an infrastructure fault. Bound each
+# invocation's address space so such a root fails as itself, in seconds, and is
+# then re-linted at a reduced setting instead of taking the job down.
+# Measured 2026-09-22 against this repository with ShellCheck 0.11.0: no bound
+# admits every root, because bin/fm-watch.sh and bin/fm-backlog-handoff.sh
+# still exhaust 7 GiB while following sources, which is the whole runner. So
+# this value is not chosen to separate roots that complete from roots that do
+# not; it is chosen to leave a 7 GB runner about 3 GB for everything else, and
+# the fallback ladder below is what keeps a root that cannot complete covered.
+# An over-tight bound costs analysis on a named root; an over-loose one costs
+# the whole job, so prefer the tighter value. FM_LINT_ADDRESS_SPACE_KB
+# overrides it, and 0 disables bounding entirely.
+FM_LINT_ADDRESS_SPACE_KB_DEFAULT=4194304
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SELF="$SELF_DIR/fm-lint.sh"
 ROOT="$(cd "$SELF_DIR/.." && pwd -P)"
@@ -86,9 +121,33 @@ fm_lint_worker_stop() {
   FM_LINT_WORKER_SHELLCHECK_PID=
 }
 
+# A bounded invocation that runs out of address space reports it on stderr as
+# its own failure. Match that wording rather than the exit status, because
+# ShellCheck also exits nonzero for ordinary findings.
+fm_lint_allocation_failure() {  # <output-file>
+  LC_ALL=C grep -qE 'out of memory|Heap exhausted|failed to allocate|Cannot allocate memory' "$1"
+}
+
+fm_lint_invoke_shellcheck() {  # <output-file> <shellcheck-arg>...
+  local out=$1 rc=0
+  shift
+  if [ "${FM_LINT_INTERNAL_ADDRESS_SPACE_KB:-0}" -gt 0 ]; then
+    # The bound belongs to the analysis process alone, never to this worker.
+    ( ulimit -v "$FM_LINT_INTERNAL_ADDRESS_SPACE_KB" 2>/dev/null
+      exec "$FM_LINT_SHELLCHECK" "$@" ) >> "$out" 2>&1 &
+  else
+    "$FM_LINT_SHELLCHECK" "$@" >> "$out" 2>&1 &
+  fi
+  FM_LINT_WORKER_SHELLCHECK_PID=$!
+  wait "$FM_LINT_WORKER_SHELLCHECK_PID" || rc=$?
+  FM_LINT_WORKER_SHELLCHECK_PID=
+  return "$rc"
+}
+
 fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
   local manifest=$1 output_dir=$2 shard_index=$3 tab index path output invocation_rc rc=0
-  local -a roots shellcheck_args
+  local root_out
+  local -a roots shellcheck_args fallback_args fallback_fast_args
   roots=()
   tab=$(printf '\t')
   while IFS="$tab" read -r index path || [ -n "${index:-}${path:-}" ]; do
@@ -110,20 +169,67 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
     if [ "${FM_LINT_INTERNAL_FAST:-0}" -eq 1 ]; then
       shellcheck_args+=(--extended-analysis=false)
     fi
+    # Only a source-following pass can exhaust the bound, so only it has
+    # fallbacks. They drop capability in the order that costs least. The first
+    # drops source following, which costs exactly the cross-file codes local
+    # changed-file mode already excludes and the full run's exclusion guard
+    # already proves complete. The second drops extended analysis as well,
+    # because that is what actually consumes the memory: the one root here that
+    # needs this rung wants more than 5 GiB with extended analysis on and under
+    # 2 GiB with it off, on the same single file.
+    fallback_args=()
+    fallback_fast_args=()
+    if [ "${FM_LINT_INTERNAL_FOLLOW_SOURCES:-1}" -eq 1 ] \
+      && [ "${FM_LINT_INTERNAL_ADDRESS_SPACE_KB:-0}" -gt 0 ]; then
+      fallback_args=(--norc
+        --exclude="${FM_LINT_INTERNAL_EXCLUDE:+$FM_LINT_INTERNAL_EXCLUDE,}$LOCAL_NOX_EXCLUDE")
+      if [ "${FM_LINT_INTERNAL_FAST:-0}" -eq 1 ]; then
+        # Extended analysis is already off, so the first rung is the last one.
+        fallback_args+=(--extended-analysis=false)
+      else
+        fallback_fast_args=("${fallback_args[@]}" --extended-analysis=false)
+      fi
+    fi
     : > "$output.out"
+    root_out="$output.root"
     # One native invocation per root preserves ShellCheck's exact source graph,
     # full dataflow, codes, and attribution while bounding each process to that
     # one graph. Never batch roots back into one memory-amplifying process.
     for path in "${roots[@]}"; do
       invocation_rc=0
-      "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path" >> "$output.out" 2>&1 &
-      FM_LINT_WORKER_SHELLCHECK_PID=$!
-      wait "$FM_LINT_WORKER_SHELLCHECK_PID" || invocation_rc=$?
-      FM_LINT_WORKER_SHELLCHECK_PID=
+      : > "$root_out"
+      fm_lint_invoke_shellcheck "$root_out" "${shellcheck_args[@]}" -- "$path" \
+        || invocation_rc=$?
+      if [ "$invocation_rc" -ne 0 ] && [ "${#fallback_args[@]}" -gt 0 ] \
+        && fm_lint_allocation_failure "$root_out"; then
+        # Name the root and what it costs. A root that quietly loses its
+        # cross-file analysis is worse than one that loudly keeps failing.
+        printf 'fm-lint.sh: %s exceeded the %s KiB analysis memory bound while following sources; re-linting it without source following, so %s go unjudged for this root.\n' \
+          "$path" "$FM_LINT_INTERNAL_ADDRESS_SPACE_KB" "$LOCAL_NOX_EXCLUDE" >> "$output.out"
+        invocation_rc=0
+        : > "$root_out"
+        fm_lint_invoke_shellcheck "$root_out" "${fallback_args[@]}" -- "$path" \
+          || invocation_rc=$?
+        if fm_lint_allocation_failure "$root_out" \
+          && [ "${#fallback_fast_args[@]}" -gt 0 ]; then
+          printf 'fm-lint.sh: %s exceeded the bound without source following too; re-linting it with extended analysis off as well, so this root also loses ShellCheck'"'"'s deeper dataflow checks.\n' \
+            "$path" >> "$output.out"
+          invocation_rc=0
+          : > "$root_out"
+          fm_lint_invoke_shellcheck "$root_out" "${fallback_fast_args[@]}" -- "$path" \
+            || invocation_rc=$?
+        fi
+        if fm_lint_allocation_failure "$root_out"; then
+          printf 'fm-lint.sh: %s exhausted the bound at every reduced setting; that is a real analysis failure, not a bound to widen.\n' \
+            "$path" >> "$output.out"
+        fi
+      fi
+      cat "$root_out" >> "$output.out"
       if [ "$rc" -eq 0 ] && [ "$invocation_rc" -ne 0 ]; then
         rc=$invocation_rc
       fi
     done
+    rm -f "$root_out"
     trap - HUP INT TERM
   else
     : > "$output.out"
@@ -406,6 +512,8 @@ fi
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 FAST=0
 ANALYSIS_MODE=full
+PARTITION=
+PARTITION_REQUESTED=0
 LIST_FILES=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -425,6 +533,17 @@ while [ "$#" -gt 0 ]; do
       ;;
     --telemetry=*)
       TELEMETRY=${1#*=}
+      shift
+      ;;
+    --partition)
+      [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --partition requires 1of2 or 2of2.\n' >&2; exit 2; }
+      PARTITION=$2
+      PARTITION_REQUESTED=1
+      shift 2
+      ;;
+    --partition=*)
+      PARTITION=${1#*=}
+      PARTITION_REQUESTED=1
       shift
       ;;
     --fast)
@@ -451,6 +570,22 @@ done
 case "$JOBS" in
   1|2) ;;
   *) printf 'fm-lint.sh: jobs must be 1 or 2, got %s.\n' "$JOBS" >&2; exit 2 ;;
+esac
+
+case "$PARTITION" in
+  '')
+    if [ "$PARTITION_REQUESTED" -eq 1 ]; then
+      printf 'fm-lint.sh: --partition requires 1of2 or 2of2.\n' >&2
+      exit 2
+    fi
+    ;;
+  1of2|2of2)
+    if [ "$FAST" -eq 1 ] || [ "$#" -gt 0 ]; then
+      printf 'fm-lint.sh: --partition requires full canonical lint; omit --fast and explicit paths.\n' >&2
+      exit 2
+    fi
+    ;;
+  *) printf 'fm-lint.sh: --partition must be 1of2 or 2of2, got %s.\n' "$PARTITION" >&2; exit 2 ;;
 esac
 
 if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; }; then
@@ -502,7 +637,7 @@ if [ "$#" -gt 0 ]; then
   ROOTS=("$@")
 else
   full_lint=1
-  if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ] \
+  if [ -z "$PARTITION" ] && [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ] \
     && command -v git >/dev/null 2>&1 \
     && git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     && [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" != main ]; then
@@ -528,6 +663,38 @@ if [ "$CHANGED_MODE" -eq 1 ] && [ "$FAST" -eq 0 ]; then
   FOLLOW_SOURCES=0
   EXCLUDE_CODES=$LOCAL_NOX_EXCLUDE
   ANALYSIS_MODE=local
+fi
+# Stable largest-first packing is shared by cross-runner partition selection
+# and the two local workers. Weights are a scheduling proxy, never a skip rule.
+TAB=$(printf '\t')
+fm_lint_root_weights() {
+  local index=1 path weight
+  for path in "${ROOTS[@]}"; do
+    case "$path" in
+      *"$TAB"*|*$'\n'*)
+        printf 'fm-lint.sh: paths containing tabs or newlines are not supported: %s\n' "$path" >&2
+        return 2
+        ;;
+    esac
+    weight=1
+    if [ -f "$path" ]; then
+      weight=$(wc -c < "$path" 2>/dev/null | tr -d '[:space:]')
+    fi
+    case "$weight" in ''|*[!0-9]*) weight=1 ;; esac
+    printf '%s\t%s\t%s\n' "$weight" "$index" "$path"
+    index=$((index + 1))
+  done
+}
+
+if [ -n "$PARTITION" ]; then
+  PARTITION_ROOTS=()
+  partition_weights=$(fm_lint_root_weights) || exit $?
+  while IFS="$TAB" read -r index path; do
+    PARTITION_ROOTS+=("$path")
+  done < <(printf '%s\n' "$partition_weights" | LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n | awk -F '\t' -v want="${PARTITION%%of*}" '
+    { shard=(load[2] < load[1]) ? 2 : 1; load[shard]+=$1; if (shard == want) print $2 "\t" $3 }
+  ' | LC_ALL=C sort -t "$TAB" -k1,1n)
+  ROOTS=("${PARTITION_ROOTS[@]}")
 fi
 ROOT_COUNT=${#ROOTS[@]}
 
@@ -564,6 +731,36 @@ elif [ "$FOLLOW_SOURCES" -eq 0 ]; then
   printf 'fm-lint.sh: local changed-file mode; ShellCheck source following disabled\n' >&2
 else
   printf 'fm-lint.sh: full ShellCheck extended analysis enabled\n' >&2
+fi
+
+# Only a shell that can actually set the limit gets a bounded run; a host that
+# refuses the resource (macOS among them) is left exactly as it was before the
+# bound existed rather than guessed at. The probe deliberately spends no
+# ShellCheck invocation, because an extra one would be indistinguishable from a
+# root in every caller's output. If a host accepts the limit but reserves its
+# address space so differently that ShellCheck cannot run under it, every root
+# says so on its own line and FM_LINT_ADDRESS_SPACE_KB=0 turns it off; that is
+# loud rather than silent, which is the failure this bound exists to prevent.
+fm_lint_resolve_address_space_kb() {
+  local kb
+  kb=${FM_LINT_ADDRESS_SPACE_KB:-$FM_LINT_ADDRESS_SPACE_KB_DEFAULT}
+  case "$kb" in '' | *[!0-9]*) printf '0\n'; return 0 ;; esac
+  [ "$kb" -gt 0 ] || { printf '0\n'; return 0; }
+  if ( ulimit -v "$kb" ) >/dev/null 2>&1; then
+    printf '%s\n' "$kb"
+  else
+    printf '0\n'
+  fi
+}
+ADDRESS_SPACE_KB=0
+if [ "$FOLLOW_SOURCES" -eq 1 ]; then
+  ADDRESS_SPACE_KB=$(fm_lint_resolve_address_space_kb)
+  if [ "$ADDRESS_SPACE_KB" -gt 0 ]; then
+    printf 'fm-lint.sh: per-root analysis bounded to %s KiB of address space\n' \
+      "$ADDRESS_SPACE_KB" >&2
+  else
+    printf 'fm-lint.sh: per-root analysis memory bound unavailable here; running unbounded\n' >&2
+  fi
 fi
 
 if [ "$CHANGED_MODE" -eq 1 ] && [ "$ROOT_COUNT" -eq 0 ]; then
@@ -607,7 +804,6 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-TAB=$(printf '\t')
 WEIGHTS="$TMP_ROOT/weights"
 OUTPUT_DIR="$TMP_ROOT/output"
 mkdir -p "$OUTPUT_DIR"
@@ -621,24 +817,7 @@ while [ "$worker" -lt "$SHARD_COUNT" ]; do
   worker=$((worker + 1))
 done
 
-index=1
-: > "$WEIGHTS"
-for path in "${ROOTS[@]}"; do
-  case "$path" in
-    *"$TAB"*|*$'\n'*)
-      printf 'fm-lint.sh: paths containing tabs or newlines are not supported: %s\n' "$path" >&2
-      exit 2
-      ;;
-  esac
-  if [ -f "$path" ]; then
-    weight=$(wc -c < "$path" 2>/dev/null | tr -d '[:space:]')
-  else
-    weight=1
-  fi
-  case "$weight" in ''|*[!0-9]*) weight=1 ;; esac
-  printf '%s\t%s\t%s\n' "$weight" "$index" "$path" >> "$WEIGHTS"
-  index=$((index + 1))
-done
+fm_lint_root_weights > "$WEIGHTS" || exit $?
 
 # Largest-first deterministic greedy assignment keeps the stable shards
 # balanced without affecting replay order. Direct bytes are a stable portable
@@ -724,6 +903,7 @@ fm_lint_run_worker() {  # <worker-index>
         /usr/bin/time -lp -o "$timing" \
         env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" \
         FM_LINT_INTERNAL_FOLLOW_SOURCES="$FOLLOW_SOURCES" FM_LINT_INTERNAL_EXCLUDE="$EXCLUDE_CODES" \
+        FM_LINT_INTERNAL_ADDRESS_SPACE_KB="$ADDRESS_SPACE_KB" \
         FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     else
@@ -731,6 +911,7 @@ fm_lint_run_worker() {  # <worker-index>
         /usr/bin/time -f 'wall_seconds=%e\nuser_seconds=%U\nsystem_seconds=%S\nmax_rss_kib=%M' -o "$timing" \
         env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" \
         FM_LINT_INTERNAL_FOLLOW_SOURCES="$FOLLOW_SOURCES" FM_LINT_INTERNAL_EXCLUDE="$EXCLUDE_CODES" \
+        FM_LINT_INTERNAL_ADDRESS_SPACE_KB="$ADDRESS_SPACE_KB" \
         FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     fi
@@ -739,6 +920,7 @@ fm_lint_run_worker() {  # <worker-index>
     exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
       env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" \
       FM_LINT_INTERNAL_FOLLOW_SOURCES="$FOLLOW_SOURCES" FM_LINT_INTERNAL_EXCLUDE="$EXCLUDE_CODES" \
+      FM_LINT_INTERNAL_ADDRESS_SPACE_KB="$ADDRESS_SPACE_KB" \
       FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
       "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
   fi
@@ -931,6 +1113,7 @@ EOF
     printf 'content_cksum\t%s\n' "$content_cksum"
     printf 'shellcheck_version\t%s\n' "$resolved"
     printf 'analysis_mode\t%s\n' "$ANALYSIS_MODE"
+    printf 'partition\t%s\n' "${PARTITION:-all}"
     printf 'jobs\t%s\n' "$JOBS"
     printf 'shard_count\t%s\n' "$SHARD_COUNT"
     printf 'root_count\t%s\n' "$ROOT_COUNT"

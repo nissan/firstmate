@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Parity guard for firstmate's shell-lint definition.
 #
-# bin/fm-lint.sh must be the single owner that BOTH CI
-# (.github/workflows/ci.yml) and the pre-push gate (.no-mistakes.yaml
-# commands.lint) invoke, so the local lint can never diverge from CI again.
+# bin/fm-lint.sh is the single owner invoked by CI
+# (.github/workflows/ci.yml) and by the pre-push gate (.no-mistakes.yaml
+# commands.lint). CI runs its two full-rigor canonical partitions; the local
+# gate uses its context-selected default. Their selection differs deliberately,
+# while this owner keeps analysis flags, configuration, and tool versions from
+# drifting.
 # Regression origin: with no commands.lint configured, the local no-mistakes
-# lint step never ran the deterministic
-# `shellcheck bin/*.sh bin/backends/*.sh tests/*.sh`, so PRs passed local
-# validation yet failed that exact check in CI on info/warning findings such as
-# SC2015, SC1007, and SC2034. A second axis was tool-version skew: CI's
-# ShellCheck floated with the runner image and still emitted SC2015, which
-# ShellCheck retired in 0.11.0. fm-lint.sh now pins one exact version and both
-# gates resolve it, so command, file set, config, AND version all match.
+# lint step never ran the deterministic shell lint, so PRs passed local
+# validation yet failed CI on info/warning findings such as SC2015, SC1007, and
+# SC2034. A second axis was tool-version skew: CI's ShellCheck floated with the
+# runner image and still emitted SC2015, which ShellCheck retired in 0.11.0.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -159,6 +159,8 @@ test_help_reports_the_complete_interface() {
   assert_contains "$help" "--list-files" "fm-lint.sh --help omitted --list-files"
   assert_contains "$help" "--help" "fm-lint.sh --help omitted --help"
   assert_contains "$help" "--fast" "fm-lint.sh --help omitted --fast"
+  assert_contains "$help" "FM_LINT_ADDRESS_SPACE_KB" \
+    "fm-lint.sh --help omitted the per-root analysis memory bound"
   assert_contains "$help" "SC1091" "fm-lint.sh --help omitted the local SC1091 exclusion"
   assert_contains "$help" "SC2034" "fm-lint.sh --help omitted the local SC2034 exclusion"
   assert_contains "$help" "SC2153" "fm-lint.sh --help omitted the local SC2153 exclusion"
@@ -176,6 +178,57 @@ test_list_files_reports_the_shell_inventory() {
   [ "$(printf '%s\n' "$listed" | LC_ALL=C sort)" = "$expected" ] \
     || fail "fm-lint.sh --list-files did not return the complete shell inventory"
   pass "fm-lint.sh --list-files reports the complete shell inventory"
+}
+
+test_canonical_partitions_preserve_full_lint() {
+  local tmp fakebin all part selected log flags mode rc option
+  tmp=$(fm_test_tmproot fm-lint-partitions)
+  fakebin="$tmp/bin"
+  mkdir -p "$fakebin"
+  all=$(CI=true "$LINT" --list-files | LC_ALL=C sort)
+  : > "$tmp/union"
+  for part in 1of2 2of2; do
+    selected=$(CI=false GITHUB_ACTIONS=false "$LINT" --partition "$part" --list-files) \
+      || fail "partition $part must select full canonical roots even on a local branch"
+    [ -n "$selected" ] || fail "empty lint partition $part"
+    printf '%s\n' "$selected" >> "$tmp/union"
+    [ "$selected" = "$("$LINT" --partition "$part" --list-files)" ] \
+      || fail "partition $part is nondeterministic"
+    log="$tmp/$part.roots"
+    flags="$tmp/$part.flags"
+    mode="$tmp/$part.mode"
+    fm_lint_stub_shellcheck "$fakebin" "$log"
+    PATH="$fakebin:$PATH" FM_TEST_FLAG_LOG="$flags" FM_TEST_MODE_LOG="$mode" \
+      "$LINT" --partition "$part" > "$tmp/$part.out" 2>&1 \
+      || fail "canonical partition $part failed: $(cat "$tmp/$part.out")"
+    # Each root is linted twice: once source-aware, and once by the no-source
+    # exclusion guard this authoritative run also owns. The SET is what the
+    # partition promised; the duplicate is the guard, asserted separately below.
+    [ "$(LC_ALL=C sort -u "$log")" = "$(printf '%s\n' "$selected" | LC_ALL=C sort -u)" ] \
+      || fail "partition $part executed a different root set than it listed"
+    grep -q '^external-sources=yes$' "$flags" \
+      || fail "partition $part weakened source-aware analysis"
+    grep -q '^external-sources=no$' "$flags" \
+      || fail "partition $part did not run its local-exclusion guard"
+    if [ "$(LC_ALL=C sort -u "$flags" | grep -c '^exclude=')" -ne 1 ] \
+      || ! grep -q '^exclude=none$' "$flags"; then
+      fail "partition $part unexpectedly excluded a ShellCheck code"
+    fi
+    [ "$(LC_ALL=C sort -u "$mode")" = on ] || fail "partition $part disabled full analysis"
+  done
+  [ "$(LC_ALL=C sort "$tmp/union")" = "$all" ] || fail "lint partitions lose or duplicate canonical roots"
+  for option in 0of2 3of2 1of3; do
+    rc=0
+    "$LINT" --partition "$option" --list-files > "$tmp/refused" 2>&1 || rc=$?
+    [ "$rc" = 2 ] || fail "invalid partition $option was not refused"
+  done
+  rc=0
+  "$LINT" --partition 1of2 --fast > "$tmp/refused" 2>&1 || rc=$?
+  [ "$rc" = 2 ] || fail "partition accepted --fast"
+  rc=0
+  "$LINT" --partition 1of2 bin/fm-lint.sh > "$tmp/refused" 2>&1 || rc=$?
+  [ "$rc" = 2 ] || fail "partition accepted an explicit subset"
+  pass "two canonical lint partitions preserve complete source-aware coverage and reject weakened modes"
 }
 
 # fm_lint_stub_git <fakebin-dir>: install a git stub for the changed-file mode
@@ -290,6 +343,52 @@ if [ -n "\${FM_TEST_CONCURRENCY_DIR:-}" ]; then
   rmdir "\$FM_TEST_CONCURRENCY_DIR/active.\$\$"
 fi
 exit "\${FM_TEST_SHELLCHECK_EXIT:-0}"
+SH
+  chmod +x "$fakebin/shellcheck"
+}
+
+# fm_lint_stub_shellcheck_bound <fakebin> <log>: a ShellCheck that reports the
+# allocation failure a root exceeding the address-space bound produces, so the
+# owner's degrade-and-retry decision is exercised without asking CI to actually
+# allocate several gigabytes. FM_TEST_OOM_ROOT names the root that fails;
+# FM_TEST_OOM_ALWAYS=1 makes it fail at every rung, and
+# FM_TEST_OOM_UNLESS_FAST=1 makes it fail until extended analysis is off, which
+# is the real shape of the one root that needs that last rung.
+fm_lint_stub_shellcheck_bound() {
+  local fakebin=$1 log=$2
+  : > "$log"
+  cat > "$fakebin/shellcheck" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = --version ]; then
+  printf 'ShellCheck - shell script analysis tool\nversion: 0.11.0\n'
+  exit 0
+fi
+follow=no
+exclude=none
+ext=on
+while [ "\$#" -gt 0 ] && [ "\$1" != -- ]; do
+  case "\$1" in
+    --external-sources) follow=yes ;;
+    --extended-analysis=false) ext=off ;;
+    --exclude=*) exclude=\${1#--exclude=} ;;
+  esac
+  shift
+done
+[ "\$#" -eq 0 ] || shift
+target=\${1:-}
+printf '%s\n' "\$target" >> "$log"
+if [ -n "\${FM_TEST_FLAG_LOG:-}" ]; then
+  printf '%s external-sources=%s extended-analysis=%s exclude=%s\n' \
+    "\$target" "\$follow" "\$ext" "\$exclude" >> "\$FM_TEST_FLAG_LOG"
+fi
+if [ "\$target" = "\${FM_TEST_OOM_ROOT:-}" ] \
+  && { [ "\$follow" = yes ] \
+    || [ "\${FM_TEST_OOM_ALWAYS:-0}" = 1 ] \
+    || { [ "\${FM_TEST_OOM_UNLESS_FAST:-0}" = 1 ] && [ "\$ext" = on ]; }; }; then
+  printf 'shellcheck: out of memory\n' >&2
+  exit 1
+fi
+exit 0
 SH
   chmod +x "$fakebin/shellcheck"
 }
@@ -1288,12 +1387,14 @@ test_ci_always_uploads_authoritative_lint_telemetry() {
   ruby -ryaml -e '
     doc = YAML.load_file(ARGV[0])
     steps = doc.fetch("jobs").fetch("lint").fetch("steps")
-    run = steps.find { |s| s.is_a?(Hash) && s["name"] == "Run authoritative lint" }
+    run = steps.find { |s| s.is_a?(Hash) && s["name"] == "Lint canonical partition" }
     upload = steps.find { |s| s.is_a?(Hash) && s["name"] == "Upload lint telemetry" }
     raise "missing authoritative lint step" if run.nil?
     raise "missing lint telemetry upload" if upload.nil?
     raise "lint telemetry upload is not unconditional on failure" unless upload.fetch("if") == "always()"
-    raise "wrong lint telemetry artifact" unless upload.fetch("with").fetch("name") == "fm-lint-telemetry"
+    name = upload.fetch("with").fetch("name")
+    raise "wrong lint telemetry artifact" unless name.start_with?("fm-lint-telemetry-")
+    raise "lint telemetry artifact is not per-partition" unless name.include?("matrix.partition")
   ' "$ROOT/.github/workflows/ci.yml" \
     || fail "CI lint telemetry wiring is incomplete"
   pass "CI always uploads telemetry from the authoritative lint owner"
@@ -1469,8 +1570,112 @@ SH
   pass "seeded dispatcher, adapter, production-owner, and test-local diagnostics preserve parity"
 }
 
+test_memory_bound_degrades_the_exhausting_root_and_keeps_the_run_green() {
+  local tmp fakebin log flag_log out
+  tmp=$(fm_test_tmproot fm-lint-bound-degrade)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  flag_log="$tmp/flags.log"
+  : > "$flag_log"
+  fm_lint_stub_shellcheck_bound "$fakebin" "$log"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=1 \
+    FM_TEST_FLAG_LOG="$flag_log" FM_TEST_OOM_ROOT=bin/fm-send.sh \
+    "$LINT" bin/fm-send.sh bin/fm-lint.sh 2>&1) \
+    || fail "a root that exhausted the memory bound failed the whole run"$'\n'"$out"
+
+  assert_contains "$out" "bin/fm-send.sh exceeded the" \
+    "the degraded root was not named"
+  assert_contains "$out" "SC1091,SC2034,SC2153,SC2329" \
+    "the notice did not say which codes go unjudged for the degraded root"
+  assert_not_contains "$out" "bin/fm-lint.sh exceeded the" \
+    "a root that stayed within the bound was degraded too"
+  [ "$(grep -c '^bin/fm-send\.sh ' "$flag_log")" -eq 2 ] \
+    || fail "the exhausting root was not re-linted exactly once"$'\n'"$(cat "$flag_log")"
+  grep -qx 'bin/fm-send\.sh external-sources=no extended-analysis=on exclude=SC1091,SC2034,SC2153,SC2329' "$flag_log" \
+    || fail "the retry kept source following, dropped the cross-file exclusions, or gave up extended analysis early"$'\n'"$(cat "$flag_log")"
+  [ "$(grep -c '^bin/fm-lint\.sh ' "$flag_log")" -eq 1 ] \
+    || fail "a root within the bound was linted more than once"$'\n'"$(cat "$flag_log")"
+  pass "fm-lint.sh re-lints a memory-exhausting root without source following and stays green"
+}
+
+test_memory_bound_drops_extended_analysis_before_giving_up() {
+  local tmp fakebin log flag_log out
+  tmp=$(fm_test_tmproot fm-lint-bound-noext)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  flag_log="$tmp/flags.log"
+  : > "$flag_log"
+  fm_lint_stub_shellcheck_bound "$fakebin" "$log"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=1 \
+    FM_TEST_FLAG_LOG="$flag_log" FM_TEST_OOM_ROOT=bin/fm-send.sh \
+    FM_TEST_OOM_UNLESS_FAST=1 \
+    "$LINT" bin/fm-send.sh bin/fm-lint.sh 2>&1) \
+    || fail "a root that only fits with extended analysis off failed the whole run"$'\n'"$out"
+
+  assert_contains "$out" "bin/fm-send.sh exceeded the bound without source following too" \
+    "the second degradation did not name the root"
+  assert_contains "$out" "deeper dataflow checks" \
+    "the notice did not say what dropping extended analysis costs"
+  assert_not_contains "$out" "exhausted the bound at every reduced setting" \
+    "a root the last rung analyzed was still reported as a failure"
+  [ "$(grep -c '^bin/fm-send\.sh ' "$flag_log")" -eq 3 ] \
+    || fail "the root did not walk exactly three rungs"$'\n'"$(cat "$flag_log")"
+  grep -qx 'bin/fm-send\.sh external-sources=no extended-analysis=off exclude=SC1091,SC2034,SC2153,SC2329' "$flag_log" \
+    || fail "the last rung did not drop extended analysis while keeping the exclusions"$'\n'"$(cat "$flag_log")"
+  [ "$(grep -c '^bin/fm-lint\.sh ' "$flag_log")" -eq 1 ] \
+    || fail "a root within the bound walked the ladder too"$'\n'"$(cat "$flag_log")"
+  pass "fm-lint.sh drops extended analysis for a root that needs it and stays green"
+}
+
+test_memory_bound_reports_a_root_that_exhausts_every_rung() {
+  local tmp fakebin log flag_log out
+  tmp=$(fm_test_tmproot fm-lint-bound-hard)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  flag_log="$tmp/flags.log"
+  : > "$flag_log"
+  fm_lint_stub_shellcheck_bound "$fakebin" "$log"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=1 \
+    FM_TEST_FLAG_LOG="$flag_log" FM_TEST_OOM_ROOT=bin/fm-send.sh FM_TEST_OOM_ALWAYS=1 \
+    "$LINT" bin/fm-send.sh 2>&1) \
+    && fail "a root that cannot be analyzed at all was reported as clean"$'\n'"$out"
+
+  assert_contains "$out" "exhausted the bound at every reduced setting" \
+    "a root that cannot be analyzed at all was not distinguished from a degraded one"
+  [ "$(grep -c '^bin/fm-send\.sh ' "$flag_log")" -eq 3 ] \
+    || fail "a root was given up on before the ladder was spent"$'\n'"$(cat "$flag_log")"
+  pass "fm-lint.sh keeps a root that exhausts every rung as a real failure"
+}
+
+test_memory_bound_can_be_disabled() {
+  local tmp fakebin log flag_log out
+  tmp=$(fm_test_tmproot fm-lint-bound-off)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  flag_log="$tmp/flags.log"
+  : > "$flag_log"
+  fm_lint_stub_shellcheck_bound "$fakebin" "$log"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_JOBS=1 FM_LINT_ADDRESS_SPACE_KB=0 \
+    FM_TEST_FLAG_LOG="$flag_log" FM_TEST_OOM_ROOT=bin/fm-send.sh \
+    "$LINT" bin/fm-send.sh 2>&1) \
+    && fail "an unbounded run silently recovered from an allocation failure"$'\n'"$out"
+
+  assert_not_contains "$out" "bounded to" \
+    "a disabled bound was still announced"
+  assert_not_contains "$out" "exceeded the" \
+    "a disabled bound still degraded a root"
+  [ "$(grep -c '^bin/fm-send\.sh ' "$flag_log")" -eq 1 ] \
+    || fail "a disabled bound still retried the root"$'\n'"$(cat "$flag_log")"
+  pass "fm-lint.sh honors a disabled memory bound and lets the failure stand"
+}
+
 test_help_reports_the_complete_interface
 test_list_files_reports_the_shell_inventory
+test_canonical_partitions_preserve_full_lint
 test_fast_mode_disables_extended_analysis
 test_ci_defaults_to_full_analysis
 test_ci_rejects_explicit_fast_mode
@@ -1511,3 +1716,7 @@ test_explicit_path_keeps_external_sources
 test_fast_mode_on_a_local_branch_keeps_source_following
 test_changed_mode_hides_cross_file_codes_that_ci_still_sees
 test_authoritative_lint_owns_local_exclusion_completeness
+test_memory_bound_degrades_the_exhausting_root_and_keeps_the_run_green
+test_memory_bound_drops_extended_analysis_before_giving_up
+test_memory_bound_reports_a_root_that_exhausts_every_rung
+test_memory_bound_can_be_disabled
