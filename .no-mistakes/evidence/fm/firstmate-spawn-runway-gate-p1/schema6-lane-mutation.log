@@ -1,0 +1,18 @@
+## MUTATION: lane argument removed at bin/fm-runway-lib.sh:246
+diff --git a/bin/fm-runway-lib.sh b/bin/fm-runway-lib.sh
+index 33c0b09..6c0bec9 100644
+--- a/bin/fm-runway-lib.sh
++++ b/bin/fm-runway-lib.sh
+@@ -243,7 +243,7 @@ fm_runway_check() {
+   FM_RUNWAY_PROVIDER=$provider
+   fm_runway_read_snapshot || return 1
+   line=$(printf '%s\n' "$FM_RUNWAY_SNAPSHOT_DATA" |
+-    fm_runway_verdict "$provider" "$(fm_quota_scope_model "$harness" "$model")" "$(fm_quota_lane "$harness" "$model")") || line=""
++    fm_runway_verdict "$provider" "$(fm_quota_scope_model "$harness" "$model")" "") || line=""
+   verdict=${line%%|*}
+   FM_RUNWAY_EVIDENCE=${line#*|}
+   case "$verdict" in
+ok - fm-runway: only the scopes applicable to the harness and model decide
+ok - fm-runway: every spelling of a spent allowance refuses
+ok - fm-runway: a runway that might not last warns rather than refusing
+not ok - a codex spawn must be judged on its codex-home account, not the first row: 0|all_models: 80% remaining, runway through_reset|

@@ -1,0 +1,4 @@
+## target commit 7d327dd (lane argument present):
+$ run test_a_schema6_verdict_reads_the_lanes_own_account
+ok - fm-runway: a schema 6 verdict reads the spawn lane's own account
+exit=0

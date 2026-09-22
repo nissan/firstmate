@@ -1,0 +1,18 @@
+## lane argument REMOVED from fm_runway_verdict (scratch mutation of bin/fm-runway-lib.sh):
+diff --git a/bin/fm-runway-lib.sh b/bin/fm-runway-lib.sh
+index 33c0b09..56e26d3 100644
+--- a/bin/fm-runway-lib.sh
++++ b/bin/fm-runway-lib.sh
+@@ -182,7 +182,7 @@ fm_runway_read_snapshot() {
+ # exists at all.
+ fm_runway_verdict() {
+   local provider=$1 model=${2:-default} lane=${3:-}
+-  fm_quota_applicable_availability "$provider" "$model" "$lane" | jq -r '
++  fm_quota_applicable_availability "$provider" "$model" | jq -r '
+     def describe:
+       "\(.scope): " +
+       (if (.effectivePercentRemaining | type) == "number"
+
+$ run test_a_schema6_verdict_reads_the_lanes_own_account
+not ok - a codex spawn must be judged on its codex-home account, not the first row: 0|all_models: 80% remaining, runway through_reset|
+exit=1

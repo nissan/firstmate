@@ -1,0 +1,35 @@
+
+=== ample runway -> spawns silently
+$ fm-spawn.sh ample-new <proj> --mode local-only --yolo off   [FM_RUNWAY_SNAPSHOT=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/ample.json]
+warning: /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/ample/home/data/ample-new/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: ample-new ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned ample-new harness=claude kind=ship mode=local-only yolo=off window=firstmate:fm-ample-new worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/ample/wt
+exit=0  task-state-created=yes
+
+=== allowance exhausted_now -> REFUSED with evidence
+$ fm-spawn.sh gone-new <proj> --mode local-only --yolo off   [FM_RUNWAY_SNAPSHOT=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/gone.json]
+error: spawn refused: no claude allowance is left for a claude worker on model default, so this work could not finish (all_models: 40% remaining, runway exhausted_now).
+Wait for that allowance to reset, dispatch this on a worker runtime or model that still has runway (bin/fm-quota-choose.sh ranks candidates against the same evidence), or re-run with FM_RUNWAY_OVERRIDE=1 to spawn anyway.
+exit=1  task-state-created=no
+
+=== same, with documented override -> spawns and says so
+$ fm-spawn.sh override-new <proj> --mode local-only --yolo off   [FM_RUNWAY_SNAPSHOT=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/gone.json FM_RUNWAY_OVERRIDE=1]
+warning: FM_RUNWAY_OVERRIDE is set: spawning override-new on claude (model default) with no claude allowance left (all_models: 40% remaining, runway exhausted_now)
+warning: /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/override/home/data/override-new/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: override-new ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned override-new harness=claude kind=ship mode=local-only yolo=off window=firstmate:fm-override-new worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/override/wt
+exit=0  task-state-created=yes
+
+=== unreadable snapshot -> warns and spawns
+$ fm-spawn.sh broken-new <proj> --mode local-only --yolo off   [FM_RUNWAY_SNAPSHOT=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/no-such.json]
+warning: the captured allowance snapshot at /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/no-such.json is not a regular file; spawning broken-new anyway
+warning: /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/broken/home/data/broken-new/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: broken-new ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned broken-new harness=claude kind=ship mode=local-only yolo=off window=firstmate:fm-broken-new worktree=/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-runway-gate.tzV9bx/broken/wt
+exit=0  task-state-created=yes
+
+=== schema 6 (multi-account) verdicts via fm_runway_check; record = rc|evidence|warning (rc 2 = refuse)
+codex default              -> 2|all_models: 0% remaining, runway exhausted_now, about 0s of usable runway left|
+pi openai-codex/gpt-5      -> 2|all_models: 0% remaining, runway exhausted_now|
+pi xai/grok-4              -> 0|all_models: 70% remaining, runway through_reset|
+claude default             -> 0|all_models: 90% remaining, runway through_reset|

@@ -1,0 +1,11 @@
+ok - fm-runway: only the scopes applicable to the harness and model decide
+ok - fm-runway: every spelling of a spent allowance refuses
+ok - fm-runway: a runway that might not last warns rather than refusing
+ok - fm-runway: a schema 6 verdict reads the spawn lane's own account
+ok - fm-runway: no missing or broken quota signal can refuse a spawn
+ok - fm-runway: reading the tool refuses only on real evidence
+ok - fm-spawn: ample runway spawns silently and a spent allowance is refused by name
+ok - fm-spawn: the documented override spawns past the refusal and says so
+ok - fm-spawn: an unavailable allowance signal warns and never blocks a spawn
+ok - fm-runway: the shared evidence fixture spawns silently and never reads the vendor
+bash tests/fm-runway-gate.test.sh  9.60s user 14.77s system 44% cpu 54.966 total
