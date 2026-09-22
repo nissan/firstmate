@@ -177,6 +177,62 @@ test_a_projection_warns_instead_of_refusing() {
   pass "fm-runway: a runway that might not last warns rather than refusing"
 }
 
+# Schema 6: once a provider expands to several accounts, quota-axi keys every
+# row by provider + accountKey, and a spawn spends only the account its lane
+# names. The healthy default row comes FIRST in each provider, so a reader that
+# ignored the lane and took the first row would permit every spawn here.
+write_schema6_snapshot() {
+  cat > "$1" <<'JSON'
+{
+  "schemaVersion": 6,
+  "providers": [
+    {"provider": "codex", "accountKey": "default", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 80,
+       "runway": {"status": "through_reset"}}]}},
+    {"provider": "codex", "accountKey": "codex-home", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 0,
+       "runway": {"status": "exhausted_now", "usableRunwaySeconds": 0}}]}},
+    {"provider": "pi", "accountKey": "default", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 70,
+       "runway": {"status": "through_reset"}}]}},
+    {"provider": "pi", "accountKey": "openai-codex", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 0,
+       "runway": {"status": "exhausted_now"}}]}},
+    {"provider": "claude", "accountKey": "default", "quotaSemantics": {"status": "known", "effectiveAvailability": [
+      {"scope": "all_models", "status": "known", "effectivePercentRemaining": 90,
+       "runway": {"status": "through_reset"}}]}}
+  ]
+}
+JSON
+}
+
+# The verdict must come from the account the spawn's lane binds to, with the
+# default account standing in only when the lane has no row of its own.
+test_a_schema6_verdict_reads_the_lanes_own_account() {
+  local snap record
+  snap="$TMP_ROOT/schema6.json"
+  write_schema6_snapshot "$snap"
+
+  record=$(run_check codex default FM_RUNWAY_SNAPSHOT="$snap")
+  [ "$(rc_of "$record")" = "$REFUSE_RC" ] \
+    || fail "a codex spawn must be judged on its codex-home account, not the first row: $record"
+
+  record=$(run_check pi openai-codex/gpt-5 FM_RUNWAY_SNAPSHOT="$snap")
+  [ "$(rc_of "$record")" = "$REFUSE_RC" ] \
+    || fail "a Pi spawn must be judged on the account its model prefix names: $record"
+
+  record=$(run_check pi xai/grok-4 FM_RUNWAY_SNAPSHOT="$snap")
+  [ "$(rc_of "$record")" = 0 ] \
+    || fail "a lane with no row of its own must fall back to the healthy default account: $record"
+
+  record=$(run_check claude default FM_RUNWAY_SNAPSHOT="$snap")
+  [ "$(rc_of "$record")" = 0 ] \
+    || fail "a harness with no lane must bind the default account: $record"
+  [ -z "$(warning_of "$record")" ] \
+    || fail "ample runway on the default account must be silent: $record"
+  pass "fm-runway: a schema 6 verdict reads the spawn lane's own account"
+}
+
 # --- library: the fail-safe direction ---------------------------------------
 
 # The fleet-bricking class. Every case starts from evidence that DOES refuse and
@@ -500,6 +556,7 @@ STUB
 test_only_the_applicable_scope_decides
 test_every_spelling_of_a_gone_allowance_refuses
 test_a_projection_warns_instead_of_refusing
+test_a_schema6_verdict_reads_the_lanes_own_account
 test_no_missing_or_broken_signal_can_refuse
 test_reading_the_tool_refuses_only_on_real_evidence
 test_spawn_is_silent_with_runway_and_refused_without_it
