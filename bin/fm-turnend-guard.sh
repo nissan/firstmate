@@ -66,7 +66,11 @@
 # auto-arm (bin/fm-claude-stop-autoarm.sh), which fires on the same Stop event:
 #   1. a live identity-matched watcher with a fresh beacon - or, in away mode, a
 #      live identity-matched daemon with a fresh beacon - allows immediately;
-#   2. otherwise wait briefly (FM_CLAUDE_AUTOARM_SYNC_WAIT_MS, default 800ms)
+#   2. an unhealthy session with a verified live session-lock owner it does not
+#      own under the shared ancestry-or-trusted-id verdict exits with a read-only
+#      diagnostic instead of blocking a session that cannot repair supervision
+#      without stealing ownership;
+#   3. otherwise wait briefly (FM_CLAUDE_AUTOARM_SYNC_WAIT_MS, default 800ms)
 #      for the auto-arm to claim this home (a live OPEN generation claim in the
 #      state/.claude-autoarm-epoch ledger - fm_autoarm_claim_open - or a legacy
 #      build's lock-holding claim under the legacy abandonment proof) or to
@@ -75,28 +79,16 @@
 #      without consuming a continuation, so one event epoch yields exactly one recovery turn;
 #      the first fresh exhausted-failure epoch preserves the bounded progression,
 #      while later fresh failed epochs consume it instead of resetting it;
-#   3. only when neither materializes is the auto-arm genuinely absent: re-block
+#   4. only when neither materializes is the auto-arm genuinely absent: re-block
 #      with the repair banner, bounded to FM_CLAUDE_TURNEND_BLOCK_BUDGET
-#      (default 3) consecutive blocks per session, then allow one loud attended
-#      fail-open only for an already verified failure episode. Do NOT rely on
-#      Claude Code's own 8-consecutive-block override as the outer bound: it
-#      did not fire in Claude Code desktop 2.1.260 (2026-09-10, 15+ blocks).
-#   1b. between the healthy/away allows of step 1 and the claim wait of step
-#      2, a session that is NOT the lock owner while a live harness process of
-#      another session holds state/.lock stands down with one notice
-#      (foreign_owner_stand_down below): a healthy home never reaches it, an
-#      unhealthy non-owner home never reaches the re-block. The auto-arm is inert by
-#      identity in that session, so no failed epoch is ever recorded, the
-#      budget never advances past its first count, and the attended fail-open
-#      is unreachable - the 2026-09-10 incident: a Claude session in a home
-#      whose lock a live Codex app-server held was blocked 15+ turns in a row.
-#      The stand-down covers that live-foreign-owner case, which is one of the
-#      states where the auto-arm is inert by identity - not every such state.
-#      A missing or malformed state/.lock, and a dead owner whose reclaim fails
-#      because this session's ancestry cannot be resolved, leave the auto-arm
-#      equally inert yet deliberately keep the cooperative re-block, so they
-#      can still block without bound; that residual is tracked as a follow-up
-#      issue on nissan/firstmate.
+#      (default 3) consecutive blocks per session - safely below Claude Code's
+#      hard 8-consecutive-block override - then allow one loud attended
+#      fail-open only for an already verified failure episode. The budget
+#      charges each event epoch once, and it also charges every re-block
+#      against an epoch the auto-arm never advanced past the previous
+#      re-block (budget_account_current_epoch owns that rule), so an inert
+#      hook that leaves the ledger frozen cannot hold the guard in an
+#      unbounded re-block loop below that override.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -129,8 +121,6 @@ done
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
 # shellcheck source=bin/fm-hook-host-lib.sh
 . "$SCRIPT_DIR/fm-hook-host-lib.sh"
-# shellcheck source=bin/fm-session-lock-lib.sh
-. "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
 # Read the whole turn-end hook payload once; never block on unreadable/absent
 # stdin.
@@ -181,6 +171,10 @@ fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 # --- the actual predicate ----------------------------------------------------
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+if [ "$CLAUDE_MODE" -eq 1 ]; then
+  # shellcheck source=bin/fm-session-lock-lib.sh
+  . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+fi
 
 BUDGET_FILE="$STATE/.turnend-claude-blocks"
 BUDGET_LOCK="$STATE/.turnend-claude-blocks.lock"
@@ -260,61 +254,17 @@ block_stop() {
   exit 2
 }
 
-# --- --claude: foreign live lock owner -----------------------------------------
-# The --claude re-block exists to cooperate with the Stop-owned auto-arm, and
-# the auto-arm only ever arms from the session whose harness ancestry holds
-# state/.lock (bin/fm-claude-stop-autoarm.sh "identity"). When another LIVE
-# harness process owns that lock - the same numeric-pid-plus-liveness test the
-# auto-arm and the Cursor park use, so a Codex app-server, a second Claude
-# session, or any other verified harness all count - this session's auto-arm is
-# inert by design: it never claims, never fails, never records an epoch. Every
-# proof the cooperative path waits for is therefore structurally unreachable
-# here, the block budget cannot advance because the epoch identity never
-# changes, and blocking would repeat on every turn forever. Supervision of this
-# home is the lock owner's responsibility, exactly as a read-only session start
-# already tells this session, so stand down like the Cursor and child-worktree
-# scope cases: exit 0, with one notice per (session, owner) on stdout.
-# stderr is deliberately not used - the harness discards it on exit 0.
-# A dead, malformed, or missing lock is NOT this case: a stale owner is the
-# auto-arm's own recovery path only when this session's ancestry resolves, and a
-# missing or malformed lock leaves the auto-arm inert with nothing to recover.
-# All of them keep the cooperative path below and so can still block without
-# bound - the deliberate residual tracked as nissan/firstmate issue #4.
-# The lock pid is read ONCE and every test - own ancestry, harness liveness -
-# is made on that same value. Testing self-ownership by re-reading the file
-# would race the Stop-owned auto-arm's stale-lock reclaim on the same event: it
-# could reject the stale pid, then read the pid the auto-arm just wrote for
-# THIS session, find it alive, and stand down for its own session. Residual:
-# a dead owner's pid reused by an unrelated verified harness reads as a live
-# foreign owner, exactly as it does for the auto-arm's identity gate, which
-# stays inert in the same case - so the alternative there is the unbounded
-# block this stand-down exists to end, not a recovery.
-# The notice ledger is append-only, one line per (session, owner), so several
-# non-owner sessions in one home each get their own single notice instead of
-# overwriting one another's record - except that sessions whose payload carries
-# no readable session_id all collapse onto the SESSION_ID fallback `unknown` and
-# share one record, a residual tracked as nissan/firstmate issue #7.
-FOREIGN_OWNER_NOTICE="$STATE/.turnend-claude-foreign-owner"
-foreign_owner_stand_down() {
-  local lock_pid owner_desc record
-  [ "$CLAUDE_MODE" -eq 1 ] || return 1
-  lock_pid=$(cat "$STATE/.lock" 2>/dev/null || true)
-  case "$lock_pid" in ''|*[!0-9]*) return 1 ;; esac
-  fm_pid_in_harness_ancestry "$lock_pid" && return 1
-  fm_harness_pid_alive "$lock_pid" || return 1
-  record="session=$SESSION_ID owner=$lock_pid"
-  if grep -qxF -- "$record" "$FOREIGN_OWNER_NOTICE" 2>/dev/null; then
-    exit 0
-  fi
-  printf '%s\n' "$record" >> "$FOREIGN_OWNER_NOTICE" 2>/dev/null || true
-  owner_desc=$(basename -- "$(ps -o comm= -p "$lock_pid" 2>/dev/null)" 2>/dev/null || true)
-  [ -n "$owner_desc" ] || owner_desc=harness
-  # JSON-safe: the process name is interpolated into a systemMessage string.
-  owner_desc=$(printf '%s' "$owner_desc" | jq -Rr '@json | .[1:-1]' 2>/dev/null || printf 'harness')
-  printf '{"systemMessage":"FIRSTMATE TURN-END GUARD STANDING DOWN: this session does not hold this home'"'"'s fleet lock - a live %s process (pid %s) does - so watcher supervision here is that session'"'"'s responsibility and the Stop-owned auto-arm is inert in this session by design. Operate read-only in this home and do not arm a watcher yourself; this notice is shown once per session while that owner is alive."}\n' "$owner_desc" "$lock_pid"
+# Another verified live session owns the home lock under the shared
+# ancestry-or-trusted-id verdict. This session is read-only and cannot arm or
+# repair supervision without
+# stealing ownership, so blocking its Stop would create an impossible loop.
+# Report the ownership conflict as a diagnostic and let this turn end safely;
+# the owning session remains responsible for restoring the watcher.
+if [ "$CLAUDE_MODE" -eq 1 ] && fm_session_lock_foreign_owner_live "$STATE"; then
+  printf '{"systemMessage":"FIRSTMATE SUPERVISION IS OWNED BY ANOTHER LIVE SESSION: this read-only session cannot and should not arm or repair the watcher (lock owner pid %s). Allowing this turn to end safely; the owning session must restore supervision."}\n' \
+    "$FM_SESSION_LOCK_FOREIGN_OWNER_PID"
   exit 0
-}
-foreign_owner_stand_down
+fi
 
 if [ "$CLAUDE_MODE" -eq 0 ]; then
   block_stop
@@ -324,12 +274,31 @@ fi
 # The Stop-owned auto-arm fires on the same Stop event. Give it a brief bounded
 # window to prove it owns recovery for this event epoch before consuming one of
 # Claude's bounded continuations.
-budget_account_current_epoch() {
-  local current_epoch outcome old_session old_count old_epoch tmp initialized
+#
+# Budget accounting, under the budget lock. Sets COUNT (the session's
+# consumed continuations, including this one) and BUDGET_INITIALIZED_FAILURE.
+# The ledger's epoch identity is what is charged: a new epoch charges once,
+# and an epoch this same invocation already charged is never charged again,
+# because the wait loop above can observe one fresh terminal epoch many times
+# before the block decision. Across Stops the two callers differ:
+#   - observe (the allow paths in autoarm_owns_recovery): seeing an
+#     already-charged epoch again is free - it is the same claim, seen again.
+#   - block (the re-block path): a re-block against the epoch the previous
+#     re-block already charged is a new consumed continuation, because the
+#     auto-arm advanced nothing between the two Stops - it did not participate
+#     at all, which is exactly the absence this budget bounds. Charging only
+#     epoch changes let an inert hook (identity-gated, never fired, or failing
+#     before its generation claim) freeze the ledger and the count together,
+#     so the guard re-blocked without limit and the attended fail-open below
+#     never became reachable.
+BUDGET_CHARGED_EPOCH=
+budget_account_current_epoch() {  # [observe|block]
+  local mode=${1:-observe} current_epoch outcome old_session old_count old_epoch tmp initialized charged
   fm_lock_try_acquire "$BUDGET_LOCK" || return 1
   current_epoch=$(sed -n '1s/^epoch=\([0-9][0-9]*\) .*/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
   outcome=$(sed -n '1s/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
   initialized=0
+  charged=0
   COUNT=0
   if [ -f "$BUDGET_FILE" ]; then
     old_session=$(sed -n '1s/^session=//p' "$BUDGET_FILE" 2>/dev/null || true)
@@ -341,13 +310,18 @@ budget_account_current_epoch() {
     if [ "$old_session" = "$SESSION_ID" ]; then
       COUNT=$old_count
       if [ -n "$current_epoch" ] && [ "$old_epoch" = "$current_epoch" ]; then
-        :
+        if [ "$mode" = block ] && [ "$BUDGET_CHARGED_EPOCH" != "$current_epoch" ]; then
+          COUNT=$((COUNT + 1))
+          charged=1
+        fi
       else
         COUNT=$((COUNT + 1))
+        charged=1
       fi
     fi
   fi
   if [ ! -f "$BUDGET_FILE" ] || [ "${old_session:-}" != "$SESSION_ID" ]; then
+    charged=1
     case "$outcome" in
       failed|failed-suppressed)
         if [ -e "$FAILURE_NOTICE" ]; then
@@ -368,6 +342,7 @@ budget_account_current_epoch() {
     return 1
   fi
   rm -f "$tmp" 2>/dev/null || true
+  [ "$charged" -eq 0 ] || BUDGET_CHARGED_EPOCH=$current_epoch
   BUDGET_INITIALIZED_FAILURE=$initialized
   fm_lock_release "$BUDGET_LOCK"
   return 0
@@ -531,7 +506,7 @@ fi
 
 # The auto-arm genuinely failed to establish: consume the bounded re-block
 # budget before considering the verified one-time attended fail-open.
-budget_account_current_epoch || block_stop
+budget_account_current_epoch block || block_stop
 terminal_fail_open
 terminal_status=$?
 if [ "$terminal_status" -eq 0 ]; then
