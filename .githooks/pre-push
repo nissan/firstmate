@@ -6,6 +6,9 @@
 # thing that says what the push contains. Reading it here to EOF is both how the
 # checker learns it and what leaves nothing on stdin for the commands the
 # checker runs to consume.
+#
+# This file has no .sh suffix, so bin/fm-lint.sh's file set does not cover it
+# and CI never shellchecks it. Run shellcheck over it by hand when you change it.
 set -eu
 root=$(git rev-parse --show-toplevel)
 FM_PUSH_REFS=$(cat)

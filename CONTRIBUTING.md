@@ -96,16 +96,17 @@ Verify the same way the gate does: reach for `bin/fm-test-run.sh` with the subje
 The pipeline publishes that evidence itself, so never hand-commit `.no-mistakes/` paths onto a feature branch; CI rejects them as tracked personal fleet paths.
 
 A local push check runs the cheap subset of CI before a push leaves the machine.
-`bin/fm-local-push-check.sh` runs `bin/fm-lint.sh` and `bin/fm-test-run.sh --changed`; `.githooks/pre-push` is a shim that reads git's ref list and calls it.
-Its header owns the rest: what it stands down for, what it refuses, and every variable it reads.
-This is not the no-mistakes pre-push gate that tracked firstmate changes ship through, and never claims to be: it is the subset that runs anywhere, including a fresh clone with no firstmate home, and it stands aside inside that pipeline, which owns lint and tests for the pushes it drives.
-`bin/fm-githooks-wire.sh` arms it, and every firstmate session start runs that script for its own checkout; run it by hand in any other clone, or set `core.hooksPath` yourself.
-That script's header owns when it declines to write and how to opt back out.
-`SKIP_GATE=1 git push` bypasses one push.
-Every check runs even after an earlier one fails, so one push reports every fault rather than one per attempt.
 It exists because CI fans out across every lane on each run and GitHub bills every job rounded up to the whole minute, so a push that only needed a one-line lint fix costs the same as a full green run.
-How long the checks take is whatever `--changed` selects, so an ordinary script-plus-test change is quick and a change to a file most suites reference is not; `SKIP_GATE=1` is there for when that is the wrong trade.
 CI stays the authority; the local check only stops it being used as the search.
+
+This is NOT the no-mistakes pre-push gate that tracked firstmate changes ship through, and never claims to be.
+It is the subset that runs anywhere, including a fresh clone with no firstmate home, and it stands aside inside that pipeline, which owns lint and tests for the pushes it drives.
+`bin/fm-local-push-check.sh` is the check and its header is the contract; `.githooks/pre-push` is the hook that calls it.
+
+`bin/fm-githooks-wire.sh` arms a clone, and every firstmate session start runs it for that session's own checkout; run it by hand in any other clone.
+Opting out means naming your own hooks directory rather than clearing the setting, because a cleared `core.hooksPath` is wired again at the next session start; that script's header owns the exact rule.
+`SKIP_GATE=1 git push` bypasses a single push.
+How long the checks take is whatever `--changed` selects, so an ordinary script-plus-test change is quick and a change to a file most suites reference is not; `SKIP_GATE=1` is there for when that is the wrong trade.
 
 Check and test the toolbelt before pushing:
 

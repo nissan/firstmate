@@ -20,6 +20,8 @@
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
+#                 "BOOTSTRAP_INFO: pointed this checkout at its tracked .githooks/ push check",
+#                 "BOOTSTRAP_INFO: could not point this checkout at .githooks/; the local push check stays off",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "SECONDMATE_HANDOFF: secondmate <id>: pending delivery: <n> item(s)",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
@@ -101,10 +103,10 @@
 #          The `code-root <file>` variant is a detect-only local check that runs
 #          even in a read-only session; detect_code_root_backlog_fork owns what
 #          it reports.
-#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the six MUTATING sweeps
+#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the seven MUTATING sweeps
 #          (backlog_record_reconcile, secondmate_sync,
 #          secondmate_liveness_sweep, secondmate_handoff_resume, x_mode_setup,
-#          fleet_sync) while still
+#          fleet_sync, githooks_wire_setup) while still
 #          printing every read-only detect line
 #          above; the TANGLE line switches to advisory-only wording with no
 #          checkout command. Used by
@@ -1370,11 +1372,23 @@ backlog_record_reconcile() {
 }
 
 githooks_wire_setup() {
-  # The tracked push check in .githooks/ only fires when core.hooksPath names
-  # it, and that is per-clone local config no clone inherits. bin/fm-githooks-wire.sh
-  # owns the decision, including leaving an existing hooksPath of any scope
-  # alone; this is only where every harness's session start reaches it.
-  "$FM_ROOT/bin/fm-githooks-wire.sh" "$FM_ROOT" || true
+  # bin/fm-githooks-wire.sh owns every part of this decision, including when it
+  # declines to write; its header is the contract. This is only where a session
+  # start reaches it, on every harness. Its own stderr line is written for a
+  # person running it by hand, so drop it here and report the outcome in this
+  # section's own vocabulary: a write is a completed fact, a refused write is a
+  # completed fact with the check left off, and leaving somebody else's
+  # hooksPath alone is a routine confirmation that stays silent.
+  local outcome
+  outcome=$("$FM_ROOT/bin/fm-githooks-wire.sh" "$FM_ROOT" 2>/dev/null) || return 0
+  case "$outcome" in
+    wired)
+      printf 'BOOTSTRAP_INFO: pointed this checkout at its tracked .githooks/ push check\n'
+      ;;
+    failed)
+      printf 'BOOTSTRAP_INFO: could not point this checkout at .githooks/; the local push check stays off\n'
+      ;;
+  esac
 }
 
 startup_memory_budget_setup() {

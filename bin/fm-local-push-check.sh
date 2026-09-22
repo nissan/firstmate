@@ -6,16 +6,9 @@
 #   stdin. .githooks/pre-push is the hook that calls it; that hook owns reading
 #   git's ref list and passes what it learned in FM_PUSH_REFS.
 #
-# Why it exists: GitHub bills every CI job rounded UP to the whole minute, and
-# this repository's CI fans out across every lane on each run, so a push that
-# only needed a one-line lint fix costs the same as a full green run. Running
-# the same checks here first makes CI a confirmation instead of a search. CI
-# stays the authority.
-#
-# This is NOT the no-mistakes pipeline that CONTRIBUTING.md points tracked
-# firstmate changes at. It runs a strict subset, it needs no firstmate home,
-# and it stands down entirely inside that pipeline (see NO_MISTAKES_GATE
-# below), which owns lint and tests for the pushes it drives.
+# CONTRIBUTING.md "Development" owns why this exists and how it relates to the
+# separate no-mistakes pre-push gate, which this is not. bin/fm-githooks-wire.sh
+# owns how a clone comes to run it.
 #
 # Environment:
 #   SKIP_GATE=1       Skip every check and exit 0.
@@ -23,18 +16,24 @@
 #                     When present this script stands down, because that
 #                     pipeline already ran lint and targeted tests for the push
 #                     it is about to make. core.hooksPath is repository-wide
-#                     git config shared by every linked worktree, so a pipeline
-#                     worker inherits the hook whether or not anyone wired it
-#                     there; standing down here is what keeps that harmless.
+#                     config shared by every linked worktree (see
+#                     bin/fm-githooks-wire.sh), so a pipeline worker inherits
+#                     this hook whether or not anyone wired it there; standing
+#                     down is what keeps that harmless.
 #   FM_PUSH_REFS      The pre-push ref list, verbatim, as .githooks/pre-push
 #                     read it from git. See "What gets checked" below.
 #
-# What gets checked: this script inspects the WORKING TREE, which is only the
-# same thing as the push when the push carries the checked-out commit. With
-# FM_PUSH_REFS set it proves that rather than assuming it: a push that updates
-# no ref it can tie to HEAD is refused, naming the override, instead of being
-# waved through on the strength of an unrelated clean tree. Deletions carry no
-# content and are let through untouched.
+# What gets checked: bin/fm-lint.sh, then bin/fm-test-run.sh --changed, each
+# owning its own definition. Both run even when the first fails, so one push
+# reports every fault rather than one per attempt.
+#
+# These read the WORKING TREE, which is only the same thing as the push when
+# the push carries the checked-out commit. With FM_PUSH_REFS set this script
+# proves that rather than assuming it: a push that updates no ref it can tie to
+# HEAD is refused, naming the override, instead of being waved through on the
+# strength of an unrelated clean tree. Deletions carry no content and are let
+# through untouched. The remote-side commit, when git named one, is passed as
+# --base so the test selection covers exactly what is being sent.
 #
 # Known limits, so a refusal here is recognisable rather than mysterious:
 #   - bin/fm-test-run.sh --changed counts untracked, non-ignored files as
@@ -71,8 +70,7 @@ if ! ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
 fi
 cd "$ROOT"
 
-# Resolve the push against the working tree. Sets BASE to the remote-side commit
-# when git named one, so the test selection covers exactly what is being pushed.
+# Sets BASE to the remote-side commit when git named one; see the header.
 BASE=
 resolve_push_scope() {
   local head local_sha remote_sha updates=0 matched=0
@@ -124,14 +122,11 @@ step() {  # <label> <command>...
   fail=1
 }
 
-# bin/fm-lint.sh is the single owner of the lint definition, including which
-# files it selects and how; a syntax error surfaces here as a ShellCheck parse
-# error, so there is no separate parse pass to keep in step with it.
+# A syntax error surfaces here as a ShellCheck parse error, so there is no
+# separate parse pass to keep in step with the lint definition.
 step 'linting (bin/fm-lint.sh)' bin/fm-lint.sh
 
-# bin/fm-test-run.sh owns suite selection. --base pins it to the commits this
-# push actually adds when git told us the remote side; without that it falls
-# back to its own default base.
+# Without a remote side to pin to, the suite runner keeps its own default base.
 if [ -n "$BASE" ]; then
   step 'running affected tests (bin/fm-test-run.sh --changed)' \
     bin/fm-test-run.sh --changed --base "$BASE"

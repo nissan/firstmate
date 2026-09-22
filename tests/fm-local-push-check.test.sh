@@ -129,10 +129,9 @@ test_skip_gate_is_the_one_way_past() {
   pass "SKIP_GATE=1 skips every check and permits the push"
 }
 
-# core.hooksPath lives in the shared config every linked worktree reads, so a
-# no-mistakes worker inherits this hook whether or not anyone wired it there.
-# That pipeline runs its own lint and targeted tests before it pushes, so the
-# check must stand down rather than run them a second time inside it.
+# A no-mistakes worker inherits this hook whether or not anyone wired it there
+# (bin/fm-local-push-check.sh's NO_MISTAKES_GATE entry owns why), so the check
+# must stand down rather than run that pipeline's own lint and tests again.
 test_the_no_mistakes_pipeline_is_left_alone() {
   local dir out rc
   dir=$(make_checkout nomistakes 1 1) || fail "could not build the pipeline fixture"
@@ -234,9 +233,8 @@ test_the_hook_refuses_exactly_as_the_checker_does() {
   pass ".githooks/pre-push refuses exactly as the checker does"
 }
 
-# The check only fires when core.hooksPath names .githooks, and that is
-# per-clone local config no clone inherits. bin/fm-githooks-wire.sh is what a
-# session start runs to set it, so its restraint matters more than its action.
+# bin/fm-githooks-wire.sh's header owns why a clone needs arming at all. What
+# these pin is its restraint, which matters more than its action.
 wire_fixture() {  # <name>
   local dir=$1
   dir="$TMP_ROOT/$dir"
@@ -248,10 +246,9 @@ wire_fixture() {  # <name>
 wired_local() { git -C "$1" config --local --get core.hooksPath 2>/dev/null || true; }
 wired_effective() { git -C "$1" config --get core.hooksPath 2>/dev/null || true; }
 
-# core.hooksPath is stored once for the whole repository, so every linked
-# worktree resolves the same string. A relative one names nothing in a worktree
-# whose checkout has no .githooks, and a hooks path naming nothing disables
-# that worktree's hooks entirely instead of adding one.
+# A relative hooks path would name nothing in a worktree whose checkout has no
+# .githooks, disabling that worktree's hooks instead of adding one; the wiring
+# script's header owns why the value is shared across worktrees at all.
 test_wiring_writes_an_absolute_path() {
   local dir
   dir=$(wire_fixture wire-empty) || fail "could not build the unwired fixture"
@@ -289,7 +286,41 @@ test_wiring_never_overwrites_a_local_choice() {
   bash "$WIRE" "$dir" >/dev/null 2>&1 || fail "wiring an already-wired checkout failed"
   [ "$(wired_local "$dir")" = .myhooks ] \
     || fail "wiring overwrote an existing core.hooksPath: '$(wired_local "$dir")'"
-  pass "wiring leaves an existing core.hooksPath alone, so unsetting it is a durable opt-out"
+  pass "wiring leaves an existing core.hooksPath alone, so naming your own is a durable opt-out"
+}
+
+# Naming a directory is the opt-out; clearing the setting is not, because the
+# next session start finds nothing set and wires it again. The header says so,
+# so pin it: a header that promised the opposite is what this replaced.
+test_clearing_the_setting_is_not_an_opt_out() {
+  local dir
+  dir=$(wire_fixture wire-cleared) || fail "could not build the cleared fixture"
+  bash "$WIRE" "$dir" >/dev/null 2>&1 || fail "wiring an unwired checkout failed"
+  git -C "$dir" config --local --unset core.hooksPath 2>/dev/null \
+    || fail "could not clear core.hooksPath in the fixture"
+  [ -z "$(wired_local "$dir")" ] \
+    || fail "the fixture did not actually clear core.hooksPath, so this proves nothing"
+  bash "$WIRE" "$dir" >/dev/null 2>&1 || fail "wiring after a clear failed"
+  [ -n "$(wired_local "$dir")" ] \
+    || fail "a cleared core.hooksPath was left cleared, which the header says it is not"
+  pass "a cleared core.hooksPath is wired again, exactly as the header warns"
+}
+
+# bin/fm-bootstrap.sh classifies the startup digest's line from this token, so
+# it is a contract rather than a convenience, and 'kept' stays quiet because a
+# routine confirmation is not news.
+test_wiring_names_its_outcome_for_a_caller() {
+  local dir out err
+  dir=$(wire_fixture wire-outcome) || fail "could not build the outcome fixture"
+  out=$(bash "$WIRE" "$dir" 2>/dev/null)
+  [ "$out" = wired ] || fail "a first wiring did not report 'wired': '$out'"
+  out=$(bash "$WIRE" "$dir" 2>/tmp/fm-wire-kept.$$)
+  err=$(cat /tmp/fm-wire-kept.$$ 2>/dev/null); rm -f /tmp/fm-wire-kept.$$
+  [ "$out" = kept ] || fail "wiring an already-wired checkout did not report 'kept': '$out'"
+  [ -z "$err" ] || fail "leaving our own value alone was announced instead of staying quiet: '$err'"
+  out=$(bash "$WIRE" "$TMP_ROOT" 2>/dev/null)
+  [ "$out" = skipped ] || fail "a checkout it cannot wire did not report 'skipped': '$out'"
+  pass "wiring names its outcome on stdout so a session start can classify it"
 }
 
 # A global hooks path is usually somebody's org-wide signing or secret-scanning
@@ -353,6 +384,8 @@ test_the_hook_refuses_exactly_as_the_checker_does
 test_wiring_writes_an_absolute_path
 test_wiring_survives_a_worktree_without_the_hooks_directory
 test_wiring_never_overwrites_a_local_choice
+test_clearing_the_setting_is_not_an_opt_out
+test_wiring_names_its_outcome_for_a_caller
 test_wiring_never_shadows_a_global_choice
 test_wiring_skips_a_checkout_with_no_hooks_directory
 test_wiring_skips_a_bare_repository
