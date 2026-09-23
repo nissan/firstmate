@@ -1227,7 +1227,9 @@ test_portable_serial_plan_has_deterministic_safe_margin() {
     puts job.fetch("strategy").fetch("matrix").fetch("shard").join(",")
     puts job.fetch("timeout-minutes")
   ' "$ROOT/.github/workflows/ci.yml") || fail "could not parse portable serial CI matrix"
-  expected=$(seq -s, 1 "$lines")
+  # BSD seq (macOS) leaves a trailing separator after the last number, so
+  # `seq -s,` never matched there; paste joins identically on BSD and GNU.
+  expected=$(seq 1 "$lines" | paste -sd, -)
   [ "$matrix" = "$expected"$'\n30' ] \
     || fail "portable serial CI matrix/count or unchanged timeout diverged: $matrix"
   pass "the generated shard plan is deterministic, current, and retains safe 30-minute margin"
