@@ -23,6 +23,9 @@ jobs:
   check:
     name: PR must be raised via no-mistakes
     runs-on: ubuntu-latest
+    # One signature/attestation check that finishes in seconds; bound it so a
+    # hung step cannot hold a runner for GitHub's 6-hour default.
+    timeout-minutes: 5
     if: >-
       github.event.pull_request.user.login != 'github-actions[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]'
