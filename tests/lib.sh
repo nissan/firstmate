@@ -195,6 +195,15 @@ trap 'fm_test_cleanup; exit 143' TERM
 trap 'fm_test_cleanup; exit 129' HUP
 trap 'fm_test_cleanup; exit 131' QUIT
 
+# Pin the suite's remaining-allowance evidence (bin/fm-runway-lib.sh), so no
+# test's verdict depends on the developer's real provider allowance and no spawn
+# pays a live vendor read. tests/runway-evidence-helpers.sh owns the fixture and says
+# why; the directory is registered for cleanup like any other.
+# shellcheck source=tests/runway-evidence-helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/runway-evidence-helpers.sh"
+FM_TEST_RUNWAY_DIR=$(fm_test_tmproot fm-runway-evidence) || return 1
+fm_test_pin_runway_evidence "$FM_TEST_RUNWAY_DIR" || return 1
+
 # fm_test_reap_orphans: best-effort sweep for fixture roots left behind by a
 # prior run that was killed hard enough to skip the traps above (e.g. a
 # SIGKILL timeout). Only removes directories carrying the .fm-test-fixture

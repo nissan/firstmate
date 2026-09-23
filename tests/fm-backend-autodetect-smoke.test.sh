@@ -65,6 +65,14 @@ herdr_forget_inherited_pane
 # The dedicated regression is
 # tests/fm-backend.test.sh:test_spawn_symlinked_project_prefix_avoids_false_refusal.
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-backend-autodetect-smoke.XXXXXX")
+# The pre-spawn runway gate (bin/fm-runway-lib.sh) consults the remaining
+# provider allowance on every fresh spawn, so pin the evidence it reads: this
+# suite drives the real bin/fm-spawn.sh and sources no shared test library, and
+# unpinned it would take its verdict from the developer's live quota and pay a
+# vendor read per spawn. tests/runway-evidence-helpers.sh owns the fixture.
+# shellcheck source=tests/runway-evidence-helpers.sh
+. "$ROOT/tests/runway-evidence-helpers.sh"
+fm_test_pin_runway_evidence "$TMP_ROOT"
 HERDR_LAB_HELPER="$ROOT/bin/fm-herdr-lab.sh"
 HERDR_LAB_SESSION=$("$HERDR_LAB_HELPER" name fm-autodetect-smoke-concurrency-h3) || {
   rm -rf "$TMP_ROOT"

@@ -66,6 +66,14 @@ herdr_forget_inherited_pane
 # canonicalized project and backend cwd comparisons in the worktree-discovery
 # poll.
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-herdr-e2e.XXXXXX")
+# The pre-spawn runway gate (bin/fm-runway-lib.sh) consults the remaining
+# provider allowance on every fresh spawn, so pin the evidence it reads: this
+# suite drives the real bin/fm-spawn.sh and sources no shared test library, and
+# unpinned it would take its verdict from the developer's live quota and pay a
+# vendor read per spawn. tests/runway-evidence-helpers.sh owns the fixture.
+# shellcheck source=tests/runway-evidence-helpers.sh
+. "$ROOT/tests/runway-evidence-helpers.sh"
+fm_test_pin_runway_evidence "$TMP_ROOT"
 SESSION="fm-lab-herdr-e2e-$$"
 export HERDR_SESSION="$SESSION"
 WT1=; WT2=

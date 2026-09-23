@@ -26,8 +26,7 @@
 # candidate remains eligible under the captured quota evidence.
 #
 # Multi-provider limitation: this helper maps each harness to ONE primary
-# provider family (fm_quota_provider_for_harness in bin/fm-quota-axi-lib.sh)
-# and checks quota for that
+# provider family (bin/fm-quota-axi-lib.sh owns the map) and checks quota for that
 # family only. Some harnesses can run models from several providers - for
 # example, Pi and OpenCode may dispatch xAI, Anthropic, or other models - so a
 # candidate whose established provider differs from the harness's primary family
@@ -319,32 +318,16 @@ fi
 
 printf '%s\n' "$QUOTA_JSON" | fm_quota_json_valid || die "invalid quota-axi provider data"
 
-# provider_for_harness <harness> [<model>]
-# The harness -> primary provider family table is owned by
-# fm_quota_provider_for_harness in bin/fm-quota-axi-lib.sh; see the header
-# limitation note for why one family per harness is all this helper checks.
-provider_for_harness() {
-  fm_quota_provider_for_harness "$@"
-}
-
 # effective_for_provider_model <provider> <model> <lane>
 # Print the most constraining applicable quota evidence for the provider/model
-# tuple, including provider-wide and exact model or product scopes. The row is
-# bound through quota_row from bin/fm-quota-axi-lib.sh, so <lane> matters only
-# on a schema 6 snapshot.
+# tuple. bin/fm-quota-axi-lib.sh owns which row and scopes apply; this reduces
+# them to the single row that decides eligibility.
 effective_for_provider_model() {
   local provider=$1 model=${2:-default} lane=${3:-}
-  printf '%s\n' "$QUOTA_JSON" | jq -c --arg provider "$provider" --arg model "$model" --arg lane "$lane" "$FM_QUOTA_ROW_JQ"'
-    ($model | sub("^model:"; "")) as $model_token |
-    quota_row(.; $provider; $lane) as $p |
-    if ($p // null) == null then {status: "unknown"}
-    else ($p.quotaSemantics.effectiveAvailability // []) |
-    map(select(.scope as $scope |
-      $scope == "all_models" or $scope == "all_products" or
-      ($model_token != "" and $model_token != "default" and
-       (($scope | startswith("model:")) or ($scope | startswith("product:"))) and
-       ($model_token == ($scope | sub("^(model|product):"; ""))))
-    )) as $applicable |
+  printf '%s\n' "$QUOTA_JSON" |
+    fm_quota_applicable_availability "$provider" "$model" "$lane" |
+    jq -c '
+    . as $applicable |
     ($applicable | map(select(.status == "known"))) as $known |
     if ($applicable | length) == 0 then {status: "unknown"}
     elif any($applicable[]; (.runway.status // "") == "exhausted_now") then
@@ -353,7 +336,6 @@ effective_for_provider_model() {
     elif any($known[]; .effectivePercentRemaining == 0) then
       ($known | map(select(.effectivePercentRemaining == 0)) | first)
     else ($known | min_by(.effectivePercentRemaining))
-    end
     end
   ' 2>/dev/null
 }
@@ -364,7 +346,7 @@ for c in "${CANDIDATES[@]}"; do
   [ "$model" = "$c" ] && model="default"
   [ -n "$model" ] || die "invalid candidate: $c"
   fm_control_harness_supported "$harness" || die "unknown harness: $harness"
-  provider_for_harness "$harness" "$model" >/dev/null || case "$harness" in
+  fm_quota_provider_for_harness "$harness" "$model" >/dev/null || case "$harness" in
     omp) die "omp quota mapping covers only the openai-codex and claude-bridge prefixes: $model" ;;
     *) die "unknown harness: $harness" ;;
   esac
@@ -375,11 +357,9 @@ for c in "${CANDIDATES[@]}"; do
   harness=${c%%:*}
   model=${c#*:}
   [ "$model" = "$c" ] && model="default"
-  provider=$(provider_for_harness "$harness" "$model")
-  scope_model=$model
-  [ "$harness" != omp ] || scope_model=${model#*/}
-  lane=$(jq -rn --arg h "$harness" --arg m "$model" "$FM_QUOTA_ROW_JQ"'quota_lane($h; $m)')
-  effective=$(effective_for_provider_model "$provider" "$scope_model" "$lane")
+  provider=$(fm_quota_provider_for_harness "$harness" "$model")
+  lane=$(fm_quota_lane "$harness" "$model")
+  effective=$(effective_for_provider_model "$provider" "$(fm_quota_scope_model "$harness" "$model")" "$lane")
   if [ -z "$effective" ] || [ "$effective" = "null" ]; then
     continue
   fi
