@@ -1,0 +1,4 @@
+[base d074f2e] fm_control_harness_supported claude -> captured output: 'supported /Users/nissan/.no-mistakes/evidence/01M36121TCC3GAQX1AEGJQNT36/broken-pipe-repro.sh: line 12: printf: write error: Broken pipe'
+[base d074f2e] fm_quota_single_provider_for_harness claude -> captured output: 'claude /Users/nissan/.no-mistakes/evidence/01M36121TCC3GAQX1AEGJQNT36/broken-pipe-repro.sh: line 13: printf: write error: Broken pipe'
+[fixed ba95d37] fm_control_harness_supported claude -> captured output: 'supported'
+[fixed ba95d37] fm_quota_single_provider_for_harness claude -> captured output: 'claude'

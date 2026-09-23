@@ -1,0 +1,37 @@
+supported(claude) rc=0 out=''
+provider(claude) rc=0 out=claude
+supported(codex) rc=0 out=''
+provider(codex) rc=0 out=codex
+supported(opencode) rc=0 out=''
+provider(opencode) rc=1 out=''
+supported(pi) rc=0 out=''
+provider(pi) rc=1 out=''
+supported(pi-signed) rc=0 out=''
+provider(pi-signed) rc=1 out=''
+supported(grok) rc=0 out=''
+provider(grok) rc=0 out=grok
+supported(kimi) rc=0 out=''
+provider(kimi) rc=0 out=kimi
+supported(cursor) rc=0 out=''
+provider(cursor) rc=0 out=cursor
+supported(gemini) rc=0 out=''
+provider(gemini) rc=1 out=''
+supported(muse) rc=0 out=''
+provider(muse) rc=0 out=meta
+supported(rovo) rc=0 out=''
+provider(rovo) rc=1 out=''
+supported(omp) rc=0 out=''
+provider(omp) rc=1 out=''
+supported(agy) rc=0 out=''
+provider(agy) rc=0 out=agy
+supported('') rc=1 out=''
+provider('') rc=1 out=''
+supported(bogus) rc=1 out=''
+provider(bogus) rc=1 out=''
+supported(clau) rc=1 out=''
+provider(clau) rc=1 out=''
+supported(claude\ codex) rc=1 out=''
+provider(claude\ codex) rc=1 out=''
+supported(meta) rc=1 out=''
+provider(meta) rc=1 out=''
+supported(no-arg) rc=1
