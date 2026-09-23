@@ -69,10 +69,14 @@ fm_control_harnesses() {
 }
 
 fm_control_harness_supported() {  # <harness>
-  local harness
+  local harness list
+  # Capture the list before scanning it: an early return from a loop fed by a
+  # live pipe can leave the writer mid-printf, and its "Broken pipe" stderr
+  # leaks into whatever output the caller is capturing.
+  list=$(fm_control_harnesses)
   while read -r harness; do
     [ "$harness" = "${1-}" ] && return 0
-  done < <(fm_control_harnesses)
+  done <<< "$list"
   return 1
 }
 

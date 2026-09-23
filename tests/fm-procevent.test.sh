@@ -1727,11 +1727,21 @@ pe_register "$HR" lavish race-src -- "$RACE_BLOCKER" "$RACE_LOG" "$RACE_TRIGGER"
 printf '%s\n%s\nold-token\nold-identity\n' "$TMP_ROOT/gone-home" 999999 > "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim"
 chmod 0600 "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim"
 race_pids=()
-for _ in $(seq 1 24); do
-  pe "$HR" start race-src >/dev/null &
+RACE_OUT="$TMP_ROOT/race-contender-out"
+mkdir -p "$RACE_OUT"
+for n in $(seq 1 24); do
+  pe "$HR" start race-src > "$RACE_OUT/$n" 2>&1 &
   race_pids+=("$!")
 done
-wait_for "$RACE_LOG" || fail "no contender acquired the stale claim"
+# 24 contenders on a shared CI runner can take well past 10s to settle, so the
+# bound is 30s, and a miss records what the contenders saw so a real livelock
+# can be told apart from a slow runner.
+if ! wait_for "$RACE_LOG" 300; then
+  race_diag="claim: $(tr '\n' ' ' < "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim" 2>/dev/null || printf 'absent')"
+  race_diag="$race_diag; contenders: $(cat "$RACE_OUT"/* 2>/dev/null | sort | uniq -c | tr '\n' ' ' | cut -c1-600)"
+  : > "$RACE_TRIGGER"
+  fail "no contender acquired the stale claim ($race_diag)"
+fi
 sleep 0.5
 [ "$(wc -l < "$RACE_LOG" | tr -d ' ')" = 1 ] || fail "stale-claim race started more than one runner"
 : > "$RACE_TRIGGER"
