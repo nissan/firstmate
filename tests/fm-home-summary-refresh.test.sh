@@ -903,13 +903,19 @@ LOCK_HOLDER_PID=
 PATH="$FAKEBIN:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$RESTART_HOME" \
   FM_HOME_SUMMARY_IF_IDLE=1 "$WRITER" --best-effort \
   || fail "stale-lock recovery changed the best-effort caller result"
+# Bounded at 30s for a shared CI runner; a miss records the lock and the
+# refresh log so a wedged lock can be told apart from a slow runner.
 i=0
-while [ ! -e "$RESTART_HOME/state/home-summary.json" ] && [ "$i" -lt 200 ]; do
+while [ ! -e "$RESTART_HOME/state/home-summary.json" ] && [ "$i" -lt 600 ]; do
   sleep 0.05
   i=$((i + 1))
 done
-[ -e "$RESTART_HOME/state/home-summary.json" ] \
-  || fail "a dead publication lock wedged publication"
+if [ ! -e "$RESTART_HOME/state/home-summary.json" ]; then
+  lock_diag="lock: $(cat "$RESTART_HOME/state/.home-summary-refresh.lock/pid" 2>/dev/null || printf 'absent')"
+  lock_diag="$lock_diag; watcher alive: $(kill -0 "$WATCH_PID" 2>/dev/null && printf yes || printf no)"
+  lock_diag="$lock_diag; refresh log: $(tail -n 5 "$RESTART_HOME/state/.home-summary-refresh.log" 2>/dev/null | tr '\n' ' ' | cut -c1-600)"
+  fail "a dead publication lock wedged publication ($lock_diag)"
+fi
 kill "$WATCH_PID" >/dev/null 2>&1 || true
 wait "$WATCH_PID" >/dev/null 2>&1 || true
 WATCH_PID=

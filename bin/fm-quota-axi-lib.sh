@@ -154,13 +154,16 @@ fm_quota_single_provider_table() {
 }
 
 fm_quota_single_provider_for_harness() {
-  local harness provider
+  local harness provider table
+  # Captured first for the same reason as fm_control_harness_supported: an early
+  # return from a pipe-fed loop can surface the writer's "Broken pipe" on stderr.
+  table=$(fm_quota_single_provider_table)
   while read -r harness provider; do
     if [ "$harness" = "$1" ]; then
       printf '%s\n' "$provider"
       return 0
     fi
-  done < <(fm_quota_single_provider_table)
+  done <<< "$table"
   return 1
 }
 
