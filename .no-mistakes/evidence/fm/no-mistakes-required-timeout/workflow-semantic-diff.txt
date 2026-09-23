@@ -1,0 +1,7 @@
+job name: PR must be raised via no-mistakes
+base timeout-minutes: <unset: GitHub 6h default>
+new  timeout-minutes: 5 int
+all other keys (triggers 'on', concurrency, if/exempt authors, steps/pinned action) identical to base: True
+jobs in workflow: ['check']
+steps uses: ['kunchenguid/no-mistakes/.github/actions/require-no-mistakes@f6441c96c352a18b9cadcaef6b6c7017e9ac3970']
+RESULT: PASS
