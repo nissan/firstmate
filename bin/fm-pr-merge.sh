@@ -13,6 +13,11 @@
 # is open, not a draft, mergeable, free of conflicts, and every unwaived check
 # is green at the exact current head commit, where github_checks_not_green below
 # owns what makes a check green and judges each one by its current run.
+# A task recorded in no-mistakes mode, and every task of any mode merging into
+# the local-validation repositories github.com/nissan/firstmate and
+# github.com/nissan/Work, must additionally carry one locally verified
+# no-mistakes attestation bound to that same live head;
+# bin/fm-no-mistakes-attestation.sh owns the attestation format.
 # Every failing condition is reported, not
 # just the first. The verified head is then passed to gh as
 # --match-head-commit, so a push that lands between that read and the merge
@@ -20,8 +25,14 @@
 # state needs gh and jq, and either one absent stops the merge before any
 # state is recorded. An attended --allow-red <check-name> may be passed once,
 # with the name as a separate argument; it waives only checks with that exact
-# name, still requires every other check green, and still binds the head. It is
-# refused while the away-posture record exists, and it never
+# name, still requires every other check green, and still binds the head.
+# The attended --allow-unstarted-actions migration option is narrower: it is
+# accepted only for a no-mistakes task with valid exact-head local evidence and
+# only when every otherwise-red check is a completed GitHub Actions job, found
+# through the check's detailsUrl in this repository, whose live job record binds
+# the same run and head and has no runner and no steps. A real, pending, unreadable, or
+# non-Actions check remains red. Both options are refused while the away-posture
+# record exists, and neither
 # applies on GitLab, where a merge already requires the head pipeline to have
 # succeeded. After gh returns success, GitHub's live state is read back and
 # accepted only when the pull request is merged or in the merge queue. gh's
@@ -100,7 +111,7 @@
 # explicit captain instruction and never skips the live green check, the
 # away-record read, or a captain hold.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [-- <extra forge merge args>]
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>|--allow-unstarted-actions] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -146,9 +157,14 @@ PR_NUMBER=$FM_PR_NUMBER
 # glab resolves the instance from the project URL passed to -R, so the host is
 # rebuilt from the parsed identity rather than read from any ambient default.
 PROJECT_URL="https://$FM_PR_HOST/$FM_PR_PATH"
+LOCAL_VALIDATION_REPO=false
+case "$PROVIDER:$(printf '%s/%s' "$PR_HOST" "$PR_PATH" | tr '[:upper:]' '[:lower:]')" in
+  github:github.com/nissan/firstmate|github:github.com/nissan/work) LOCAL_VALIDATION_REPO=true ;;
+esac
 shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
+ALLOW_UNSTARTED_ACTIONS=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --attended-override)
@@ -169,12 +185,29 @@ while [ "$#" -gt 0 ]; do
       echo "error: --allow-red requires a separate check name argument" >&2
       exit 2
       ;;
+    --allow-unstarted-actions)
+      [ "$ALLOW_UNSTARTED_ACTIONS" = false ] || { echo "error: --allow-unstarted-actions may be specified only once" >&2; exit 2; }
+      ALLOW_UNSTARTED_ACTIONS=true
+      shift
+      ;;
+    --allow-unstarted-actions=*)
+      echo "error: --allow-unstarted-actions takes no value" >&2
+      exit 2
+      ;;
     --) shift; break ;;
     *) break ;;
   esac
 done
 if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
   echo "error: --allow-red does not apply to GitLab, where a merge already requires the head pipeline to have succeeded" >&2
+  exit 2
+fi
+if [ "$ALLOW_UNSTARTED_ACTIONS" = true ] && [ "$PROVIDER" != github ]; then
+  echo "error: --allow-unstarted-actions applies only to GitHub" >&2
+  exit 2
+fi
+if [ "$ALLOW_UNSTARTED_ACTIONS" = true ] && [ "${#ALLOW_RED[@]}" -gt 0 ]; then
+  echo "error: --allow-unstarted-actions and --allow-red cannot be combined" >&2
   exit 2
 fi
 
@@ -332,6 +365,14 @@ if ! fm_backlog_meta_spawn_gen_optional "$META" "$STATE"; then
   echo "error: PR merge refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
 fi
+TASK_MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
+case "$TASK_MODE" in
+  no-mistakes|direct-PR|local-only|'') ;;
+  *)
+    echo "error: task metadata has an invalid delivery mode" >&2
+    exit 1
+    ;;
+esac
 MERGE_EXPECTED_SPAWN_GEN=$FM_BACKLOG_META_SPAWN_GEN
 
 MERGE_CONTROL_LOCK=
@@ -569,14 +610,77 @@ github_checks_not_green() {
   ' 2>/dev/null || return 1
 }
 
+# Prove that every currently red check failed before GitHub assigned a runner or
+# executed a step. This is the one guarded bootstrap path for moving a repository
+# off hosted routine gates when account limits reject jobs at admission time.
+# It never classifies from timing or error prose: each check must resolve to a
+# live Actions job at the exact PR head with runner_id=0 and an empty steps list.
+github_verify_unstarted_action_failures() {
+  local json=$1 red=$2 name rows row url job_id run_id job repo_prefix
+  repo_prefix=$(printf 'https://github.com/%s/actions/runs/' "$PR_PATH" | tr '[:upper:]' '[:lower:]')
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if ! rows=$(printf '%s' "$json" | jq -r --arg name "$name" '
+      .statusCheckRollup[]
+      | select(.__typename == "CheckRun" and (.name // "") == $name)
+      | select(.status != "COMPLETED" or ((.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED") | not))
+      | [(.detailsUrl // ""), (.status // ""), (.conclusion // "")] | @tsv
+    ' 2>/dev/null) || [ -z "$rows" ]; then
+      echo "error: cannot prove that check '$name' was rejected before execution" >&2
+      return 1
+    fi
+    while IFS= read -r row; do
+      url=$(printf '%s\n' "$row" | cut -f1)
+      case "$row" in
+        "$url"$'\tCOMPLETED\tFAILURE') ;;
+        *)
+          echo "error: check '$name' is not a completed pre-execution Actions failure" >&2
+          return 1
+          ;;
+      esac
+      url=$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')
+      case "$url" in
+        "$repo_prefix"*/job/*) run_id=${url#"$repo_prefix"}; run_id=${run_id%%/job/*}; job_id=${url##*/job/} ;;
+        *) run_id=''; job_id='' ;;
+      esac
+      case "$run_id:$job_id" in :*|*:|*[!0-9:]*)
+        echo "error: check '$name' has no readable GitHub Actions job URL in this repository" >&2
+        return 1
+        ;;
+      esac
+      if ! job=$(gh api "repos/$PR_PATH/actions/jobs/$job_id" 2>/dev/null) \
+        || ! printf '%s' "$job" | jq -e --arg head "$FM_PR_MERGE_HEAD_CANDIDATE" --arg run "$run_id" --arg job "$job_id" '
+          type == "object"
+          and ((.id | tostring) == $job)
+          and ((.run_id | tostring) == $run)
+          and (.head_sha == $head)
+          and (.status == "completed")
+          and (.conclusion == "failure")
+          and (.runner_id == 0)
+          and ((.runner_name // "") == "")
+          and ((.steps | type) == "array")
+          and ((.steps | length) == 0)
+        ' >/dev/null 2>&1; then
+        echo "error: check '$name' executed, is unreadable, or is not bound to the current head" >&2
+        return 1
+      fi
+    done <<ROWS
+$rows
+ROWS
+  done <<NAMES
+$red
+NAMES
+  return 0
+}
+
 # Pre-merge conditions for a GitHub pull request, read from one live view.
 # Sets FM_PR_MERGE_HEAD to the verified head on success.
 github_verify_mergeable() {
   local json fields line red name covered
-  local total=0 named=0 refusals=''
+  local total=0 named=0 refusals='' attestation_ok=false
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
-  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
+  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,body 2>/dev/null) \
     || [ -z "$json" ]; then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
@@ -622,6 +726,15 @@ FIELDS
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
   fi
+  if [ "$TASK_MODE" = no-mistakes ] || [ "$LOCAL_VALIDATION_REPO" = true ]; then
+    if printf '%s' "$json" | jq -er '.body | select(type == "string")' \
+      | "$SCRIPT_DIR/fm-no-mistakes-attestation.sh" "$live_head" >&2; then
+      attestation_ok=true
+    else
+      refusals="$refusals  - the pull-request body has no valid no-mistakes local-validation attestation for head $live_head
+"
+    fi
+  fi
 
   case "$state" in
     [oO][pP][eE][nN]) ;;
@@ -639,6 +752,28 @@ FIELDS
   [ "$merge_state" != DIRTY ] \
     || refusals="$refusals  - mergeStateStatus is DIRTY (conflicts)
 "
+
+  if [ "$ALLOW_UNSTARTED_ACTIONS" = true ]; then
+    if [ "$TASK_MODE" != no-mistakes ]; then
+      refusals="$refusals  - --allow-unstarted-actions requires a no-mistakes task
+"
+    elif [ "$attestation_ok" != true ]; then
+      refusals="$refusals  - --allow-unstarted-actions requires valid exact-head local validation
+"
+    elif [ -z "$red" ]; then
+      refusals="$refusals  - --allow-unstarted-actions was requested but no failing check needs migration
+"
+    else
+      FM_PR_MERGE_HEAD_CANDIDATE=$live_head
+      if github_verify_unstarted_action_failures "$json" "$red"; then
+        printf 'verified: every reported failure was rejected before GitHub assigned a runner or executed a step; local exact-head validation remains authoritative\n' >&2
+        red=''
+      else
+        refusals="$refusals  - --allow-unstarted-actions could not prove every failing check stopped before execution
+"
+      fi
+    fi
+  fi
 
   uncovered=''
   while IFS= read -r name; do
@@ -664,8 +799,13 @@ EOF
     [ -z "$uncovered" ] || printf 'error: these checks are not green: %s\n' "$uncovered" >&2
     return 1
   fi
-  printf 'verified: %s is open and mergeable, with every required check green at head %s\n' \
-    "$URL" "$live_head" >&2
+  if [ "$attestation_ok" = true ]; then
+    printf 'verified: %s is open and mergeable, with local no-mistakes validation bound to head %s and every reported check green\n' \
+      "$URL" "$live_head" >&2
+  else
+    printf 'verified: %s is open and mergeable, with every reported check green at head %s\n' \
+      "$URL" "$live_head" >&2
+  fi
   FM_PR_MERGE_HEAD=$live_head
   FM_PR_GITHUB_BASE=$base
 }
@@ -935,6 +1075,10 @@ require_current_away_authority() {
   resolve_merge_authority || return 1
   if [ "$FM_PR_AWAY_POSTURE" = true ] && [ "${#ALLOW_RED[@]}" -gt 0 ]; then
     echo "error: --allow-red is attended-only; while the away-posture record exists the green check is absolute" >&2
+    return 2
+  fi
+  if [ "$FM_PR_AWAY_POSTURE" = true ] && [ "$ALLOW_UNSTARTED_ACTIONS" = true ]; then
+    echo "error: --allow-unstarted-actions is attended-only; while the away-posture record exists the green check is absolute" >&2
     return 2
   fi
 }
