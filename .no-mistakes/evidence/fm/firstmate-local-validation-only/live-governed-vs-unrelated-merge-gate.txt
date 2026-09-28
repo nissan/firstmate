@@ -1,0 +1,68 @@
+$ fm-pr-merge.sh task-x1 https://github.com/nissan/Work/pull/64    [task mode=direct-PR]
+armed: state/task-x1.check.sh
+verified no-mistakes local validation at head 589cfb58a0359758f30a0176071309369e1e858d
+verified: https://github.com/nissan/Work/pull/64 is open and mergeable, with local no-mistakes validation bound to head 589cfb58a0359758f30a0176071309369e1e858d and every reported check green
+LIVE-HARNESS: merge intercepted (would run gh pr merge 64 --repo nissan/Work --match-head-commit 589cfb58a0359758f30a0176071309369e1e858d --squash)
+error: GitHub merge outcome was not successful: state=OPEN, merged=false, isInMergeQueue=false
+rc=1
+
+$ [attestation line stripped from live body] fm-pr-merge.sh task-x1 https://github.com/nissan/Work/pull/64    [task mode=direct-PR]
+armed: state/task-x1.check.sh
+no-mistakes attestation: expected exactly one no-mistakes v1 attestation, found 0
+error: refusing to merge https://github.com/nissan/Work/pull/64
+  - the pull-request body has no valid no-mistakes local-validation attestation for head 589cfb58a0359758f30a0176071309369e1e858d
+rc=1
+
+$ [attestation line stripped from live body] fm-pr-merge.sh task-x1 https://github.com/nissan/Work/pull/64    [task mode=<unrecorded>]
+armed: state/task-x1.check.sh
+no-mistakes attestation: expected exactly one no-mistakes v1 attestation, found 0
+error: refusing to merge https://github.com/nissan/Work/pull/64
+  - the pull-request body has no valid no-mistakes local-validation attestation for head 589cfb58a0359758f30a0176071309369e1e858d
+rc=1
+
+$ fm-pr-merge.sh task-x1 https://github.com/nissan/firstmate/pull/30    [task mode=direct-PR]
+armed: state/task-x1.check.sh
+no-mistakes attestation: expected exactly one no-mistakes pipeline signature, found 0
+error: refusing to merge https://github.com/nissan/firstmate/pull/30
+  - the pull-request body has no valid no-mistakes local-validation attestation for head 33555141e05f4c990a805580d5ab864c99716374
+  - the pull request is a draft
+  - check 'Behavior portable serial 1' is not green
+  - check 'Behavior portable serial 2' is not green
+  - check 'Behavior portable serial 3' is not green
+  - check 'Behavior portable serial 4' is not green
+  - check 'Behavior portable serial 5' is not green
+  - check 'Behavior portable serial 6' is not green
+  - check 'Behavior portable serial 7' is not green
+  - check 'Behavior portable serial 8' is not green
+  - check 'Behavior portable serial 9' is not green
+  - check 'Behavior tests (Herdr)' is not green
+  - check 'Lint 1' is not green
+  - check 'Lint 2' is not green
+  - check 'PR must be raised via no-mistakes' is not green
+error: these checks are not green: Behavior portable serial 1, Behavior portable serial 2, Behavior portable serial 3, Behavior portable serial 4, Behavior portable serial 5, Behavior portable serial 6, Behavior portable serial 7, Behavior portable serial 8, Behavior portable serial 9, Behavior tests (Herdr), Lint 1, Lint 2, PR must be raised via no-mistakes
+rc=1
+
+$ [attestation line stripped from live body] fm-pr-merge.sh task-x1 https://github.com/nissan/reddi-agent-protocol/pull/655    [task mode=direct-PR]
+armed: state/task-x1.check.sh
+verified: https://github.com/nissan/reddi-agent-protocol/pull/655 is open and mergeable, with every reported check green at head b4e6b6610b74398ddd11245922dc46991536e95a
+LIVE-HARNESS: merge intercepted (would run gh pr merge 655 --repo nissan/reddi-agent-protocol --match-head-commit b4e6b6610b74398ddd11245922dc46991536e95a --squash)
+error: GitHub merge outcome was not successful: state=OPEN, merged=false, isInMergeQueue=false
+rc=1
+
+$ [attestation line stripped from live body] fm-pr-merge.sh task-x1 https://github.com/nissan/reddi-agent-protocol/pull/655    [task mode=no-mistakes]
+armed: state/task-x1.check.sh
+no-mistakes attestation: expected exactly one no-mistakes v1 attestation, found 0
+error: refusing to merge https://github.com/nissan/reddi-agent-protocol/pull/655
+  - the pull-request body has no valid no-mistakes local-validation attestation for head b4e6b6610b74398ddd11245922dc46991536e95a
+rc=1
+
+--- gh calls issued (no real merge; pr merge is intercepted by the harness):
+      1 gh api graphql -f query=query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){state merged is
+      1 gh api graphql -f query=query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){state merged is
+      1 gh api --paginate repos/nissan/reddi-agent-protocol/rules/branches/main --jq .[] | select(.type == "merge_queue") | "merge_method=" + (.parameters.merge
+      1 gh api --paginate repos/nissan/Work/rules/branches/main --jq .[] | select(.type == "merge_queue") | "merge_method=" + (.parameters.merge_method // "")
+      1 gh pr merge 64 --repo nissan/Work --match-head-commit 589cfb58a0359758f30a0176071309369e1e858d --squash
+      1 gh pr merge 655 --repo nissan/reddi-agent-protocol --match-head-commit b4e6b6610b74398ddd11245922dc46991536e95a --squash
+      1 gh pr view https://github.com/nissan/firstmate/pull/30 --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,body
+      2 gh pr view https://github.com/nissan/reddi-agent-protocol/pull/655 --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRol
+      3 gh pr view https://github.com/nissan/Work/pull/64 --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,body

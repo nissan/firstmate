@@ -1,0 +1,14 @@
+$ [manual workflow step script, GITHUB_REPOSITORY=nissan/firstmate PR_NUMBER=36, real gh]
+verified no-mistakes local validation at head 537f2bbc95e7f42905cdbc48318514333f02f56d
+rc=0
+$ [manual workflow step script, GITHUB_REPOSITORY=nissan/firstmate PR_NUMBER=30, real gh]
+no-mistakes attestation: expected exactly one no-mistakes pipeline signature, found 0
+rc=1
+
+$ workflow triggers (parsed):
+.github/workflows/ci.yml: ["workflow_dispatch"]
+.github/workflows/no-mistakes-required.yml: ["workflow_dispatch"]
+.github/workflows/windows-herdr-spike.yml: ["workflow_dispatch"]
+
+nissan/firstmate#36 state after run: OPEN
+nissan/Work#64 state after run: OPEN

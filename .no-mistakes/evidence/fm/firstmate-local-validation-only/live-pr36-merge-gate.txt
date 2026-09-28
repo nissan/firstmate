@@ -1,0 +1,95 @@
+$ fm-pr-merge.sh task-x1 https://github.com/nissan/firstmate/pull/36    [task mode=no-mistakes]
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+armed: state/task-x1.check.sh
+verified no-mistakes local validation at head 537f2bbc95e7f42905cdbc48318514333f02f56d
+error: refusing to merge https://github.com/nissan/firstmate/pull/36
+  - check 'Behavior portable parallel 1' is not green
+  - check 'Behavior portable parallel 2' is not green
+  - check 'Behavior portable serial 1' is not green
+  - check 'Behavior portable serial 2' is not green
+  - check 'Behavior portable serial 3' is not green
+  - check 'Behavior portable serial 4' is not green
+  - check 'Behavior portable serial 5' is not green
+  - check 'Behavior portable serial 6' is not green
+  - check 'Behavior portable serial 7' is not green
+  - check 'Behavior portable serial 8' is not green
+  - check 'Behavior portable serial 9' is not green
+  - check 'Behavior tests (Herdr)' is not green
+  - check 'Behavior timing aggregate' is not green
+  - check 'Lint 1' is not green
+  - check 'Lint 2' is not green
+  - check 'PR must be raised via no-mistakes' is not green
+  - check 'Repo invariants' is not green
+  - check 'Stock macOS Bash snapshot compatibility' is not green
+  - check 'Test coverage guard' is not green
+error: these checks are not green: Behavior portable parallel 1, Behavior portable parallel 2, Behavior portable serial 1, Behavior portable serial 2, Behavior portable serial 3, Behavior portable serial 4, Behavior portable serial 5, Behavior portable serial 6, Behavior portable serial 7, Behavior portable serial 8, Behavior portable serial 9, Behavior tests (Herdr), Behavior timing aggregate, Lint 1, Lint 2, PR must be raised via no-mistakes, Repo invariants, Stock macOS Bash snapshot compatibility, Test coverage guard
+rc=1
+
+$ fm-pr-merge.sh task-x1 https://github.com/nissan/firstmate/pull/36 --allow-unstarted-actions   [task mode=no-mistakes]
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+armed: state/task-x1.check.sh
+verified no-mistakes local validation at head 537f2bbc95e7f42905cdbc48318514333f02f56d
+verified: every reported failure was rejected before GitHub assigned a runner or executed a step; local exact-head validation remains authoritative
+verified: https://github.com/nissan/firstmate/pull/36 is open and mergeable, with local no-mistakes validation bound to head 537f2bbc95e7f42905cdbc48318514333f02f56d and every reported check green
+LIVE-HARNESS: merge intercepted (would merge pr merge 36 --repo nissan/firstmate --match-head-commit 537f2bbc95e7f42905cdbc48318514333f02f56d --squash)
+error: GitHub merge outcome was not successful: state=OPEN, merged=false, isInMergeQueue=false
+rc=1
+
+$ fm-pr-merge.sh task-x1 https://github.com/nissan/firstmate/pull/36 --allow-unstarted-actions   [task mode=direct-PR]
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+armed: state/task-x1.check.sh
+verified no-mistakes local validation at head 537f2bbc95e7f42905cdbc48318514333f02f56d
+error: refusing to merge https://github.com/nissan/firstmate/pull/36
+  - --allow-unstarted-actions requires a no-mistakes task
+  - check 'Behavior portable parallel 1' is not green
+  - check 'Behavior portable parallel 2' is not green
+  - check 'Behavior portable serial 1' is not green
+  - check 'Behavior portable serial 2' is not green
+  - check 'Behavior portable serial 3' is not green
+  - check 'Behavior portable serial 4' is not green
+  - check 'Behavior portable serial 5' is not green
+  - check 'Behavior portable serial 6' is not green
+  - check 'Behavior portable serial 7' is not green
+  - check 'Behavior portable serial 8' is not green
+  - check 'Behavior portable serial 9' is not green
+  - check 'Behavior tests (Herdr)' is not green
+  - check 'Behavior timing aggregate' is not green
+  - check 'Lint 1' is not green
+  - check 'Lint 2' is not green
+  - check 'PR must be raised via no-mistakes' is not green
+  - check 'Repo invariants' is not green
+  - check 'Stock macOS Bash snapshot compatibility' is not green
+  - check 'Test coverage guard' is not green
+error: these checks are not green: Behavior portable parallel 1, Behavior portable parallel 2, Behavior portable serial 1, Behavior portable serial 2, Behavior portable serial 3, Behavior portable serial 4, Behavior portable serial 5, Behavior portable serial 6, Behavior portable serial 7, Behavior portable serial 8, Behavior portable serial 9, Behavior tests (Herdr), Behavior timing aggregate, Lint 1, Lint 2, PR must be raised via no-mistakes, Repo invariants, Stock macOS Bash snapshot compatibility, Test coverage guard
+rc=1
+
+--- gh calls issued:
+      1 gh api graphql -f query=query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){state merged isInMergeQueue baseRefName}}} -F owner=nissan -F repo=firstmate -F number=36 --jq .data.repository.pullRequest | "state=" + (.state // ""), "merged=" + (.merged | tostring), "queued=" + (.isInMergeQueue | tostring), "base=" + (.baseRefName // "")
+      1 gh api --paginate repos/nissan/firstmate/rules/branches/main --jq .[] | select(.type == "merge_queue") | "merge_method=" + (.parameters.merge_method // "")
+      1 gh api repos/nissan/firstmate/actions/jobs/108762733755
+      1 gh api repos/nissan/firstmate/actions/jobs/108762733973
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734126
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734137
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734140
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734158
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734165
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734166
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734193
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734258
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734266
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734270
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734291
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734317
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734337
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734351
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734357
+      1 gh api repos/nissan/firstmate/actions/jobs/108762734394
+      1 gh api repos/nissan/firstmate/actions/jobs/108762745691
+      1 gh pr merge 36 --repo nissan/firstmate --match-head-commit 537f2bbc95e7f42905cdbc48318514333f02f56d --squash
+      3 gh pr view https://github.com/nissan/firstmate/pull/36 --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,body

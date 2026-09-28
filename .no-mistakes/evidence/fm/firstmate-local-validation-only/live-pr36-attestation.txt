@@ -1,0 +1,6 @@
+$ gh api repos/nissan/firstmate/pulls/36 | (body) | bin/fm-no-mistakes-attestation.sh <head>
+verified no-mistakes local validation at head 537f2bbc95e7f42905cdbc48318514333f02f56d
+rc=0
+$ same body against stale head 1195692...
+no-mistakes attestation: attestation is malformed, stale, duplicated, or missing a completed local review, test, document, or lint phase
+rc=1

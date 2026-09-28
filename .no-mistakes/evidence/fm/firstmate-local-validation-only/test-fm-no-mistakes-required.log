@@ -1,0 +1,4 @@
+ok - local attestation accepts an exact head with every authoritative phase completed
+ok - local attestation rejects a mismatched or missing head
+ok - local attestation rejects missing, skipped, and duplicate authoritative phases
+ok - local attestation refuses ambiguous duplicate evidence
