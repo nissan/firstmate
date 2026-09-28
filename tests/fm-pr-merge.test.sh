@@ -58,22 +58,38 @@ make_case() {
   printf '%s\n' "$case_dir"
 }
 
+# The exact-head local validation marker required for no-mistakes task merges.
+attested_body_json() {
+  local head=$1
+  jq -cn --arg head "$head" '
+    "Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)\n\n<!-- no-mistakes-pipeline-attestation:v1 "
+    + ({head_sha:$head,steps:[
+        {step:"review",status:"completed"},
+        {step:"test",status:"completed"},
+        {step:"document",status:"completed"},
+        {step:"lint",status:"completed"}
+      ]} | tojson)
+    + " -->"'
+}
+
 # Live GitHub JSON for the pre-merge verify, plus gh-axi for the
 # post-merge fallback view. Merge itself is `gh pr merge --match-head-commit`.
 # Args: case_dir head_sha
 write_github_live_json() {
-  local case_dir=$1 head=$2
+  local case_dir=$1 head=$2 body
+  body=$(attested_body_json "$head")
   printf '%s\n' "$head" > "$case_dir/github-head"
   cat > "$case_dir/github-view.json" <<JSON
-{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"$head","baseRefName":"main","statusCheckRollup":[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]}
+{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"$head","baseRefName":"main","statusCheckRollup":[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}],"body":$body}
 JSON
 }
 
 write_github_red_json() {
-  local case_dir=$1 head=$2 name=$3
+  local case_dir=$1 head=$2 name=$3 body
+  body=$(attested_body_json "$head")
   printf '%s\n' "$head" > "$case_dir/github-head"
   cat > "$case_dir/github-view.json" <<JSON
-{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"$head","baseRefName":"main","statusCheckRollup":[{"__typename":"CheckRun","name":"$name","status":"COMPLETED","conclusion":"FAILURE"}]}
+{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"$head","baseRefName":"main","statusCheckRollup":[{"__typename":"CheckRun","name":"$name","status":"COMPLETED","conclusion":"FAILURE"}],"body":$body}
 JSON
 }
 
@@ -101,14 +117,15 @@ status_context() {
 # stays CLEAN because that is what GitHub reports for exactly this case.
 # Args: case_dir head_sha <rollup-entry-json>...
 write_github_rollup_json() {
-  local case_dir=$1 head=$2 entry rollup=''
+  local case_dir=$1 head=$2 entry rollup='' body
   shift 2
   for entry in "$@"; do
     rollup="${rollup:+$rollup,}$entry"
   done
+  body=$(attested_body_json "$head")
   printf '%s\n' "$head" > "$case_dir/github-head"
   cat > "$case_dir/github-view.json" <<JSON
-{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"$head","baseRefName":"main","statusCheckRollup":[$rollup]}
+{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"$head","baseRefName":"main","statusCheckRollup":[$rollup],"body":$body}
 JSON
 }
 
@@ -198,6 +215,13 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
   api\ *)
+    case " $* " in
+      *"/actions/jobs/"*)
+        [ -n "${FM_TEST_ACTION_JOB_JSON:-}" ] || exit 1
+        cat "$FM_TEST_ACTION_JOB_JSON"
+        exit 0
+        ;;
+    esac
     if [ -f "${FM_TEST_GH_RULES_FAIL_BODY:-}" ]; then
       cat "$FM_TEST_GH_RULES_FAIL_BODY" >&2
       exit 1
@@ -387,6 +411,7 @@ run_pr_merge() {
   FM_TEST_GH_LOG="$case_dir/gh.log" \
   FM_TEST_GH_OUTCOME="$case_dir/github-outcome" \
   FM_TEST_GH_RULES="$case_dir/github-rules" \
+  FM_TEST_ACTION_JOB_JSON="${FM_TEST_ACTION_JOB_JSON:-}" \
   FM_TEST_GH_VIEW_JSON="$case_dir/github-view.json" \
   FM_TEST_GH_HEAD="$case_dir/github-head" \
   FM_TEST_GH_MERGE_RC_FILE="$case_dir/github-merge-rc" \
@@ -2406,6 +2431,78 @@ test_github_red_checks_refuse_and_allow_red_waives_named() {
   pass "fm-pr-merge refuses red GitHub checks and waives only a named --allow-red check"
 }
 
+test_no_mistakes_merge_requires_exact_head_local_attestation() {
+  local case_dir rc head old body
+  head=1212121212121212121212121212121212121212
+  old=3434343434343434343434343434343434343434
+
+  case_dir=$(make_case github-local-attestation-zero-checks)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  jq '.statusCheckRollup = []' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/118 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "exact-head local attestation with zero hosted checks should merge"
+  assert_logged_gh_merge "$case_dir" 118 example/repo --squash
+
+  case_dir=$(make_case github-stale-local-attestation)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  body=$(attested_body_json "$old")
+  jq --argjson body "$body" '.body = $body' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/119 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "stale-attestation: local evidence from another head must refuse"
+  assert_grep 'no valid no-mistakes local-validation attestation' "$case_dir/stderr" \
+    "stale-attestation: refusal did not name the exact-head local evidence"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "stale-attestation: forge merge ran with stale local evidence"
+  pass "no-mistakes merges require completed local validation bound to the live head"
+}
+
+test_unstarted_actions_migration_is_narrow_and_attended() {
+  local case_dir rc head job
+  head=5656565656565656565656565656565656565656
+
+  case_dir=$(make_case github-unstarted-actions-migration)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  jq '.statusCheckRollup = [{"__typename":"CheckRun","databaseId":701,"name":"CI","status":"COMPLETED","conclusion":"FAILURE"}]' \
+    "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+  job="$case_dir/action-job.json"
+  jq -cn --arg head "$head" '{id:701,head_sha:$head,status:"completed",conclusion:"failure",runner_id:0,runner_name:"",steps:[]}' > "$job"
+  FM_TEST_ACTION_JOB_JSON="$job" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/120 \
+    --allow-unstarted-actions > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "unstarted-actions: a runner-admission failure with exact-head local evidence should migrate: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 120 example/repo --squash
+
+  case_dir=$(make_case github-executed-actions-refuse-migration)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  jq '.statusCheckRollup = [{"__typename":"CheckRun","databaseId":702,"name":"CI","status":"COMPLETED","conclusion":"FAILURE"}]' \
+    "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+  job="$case_dir/action-job.json"
+  jq -cn --arg head "$head" '{id:702,head_sha:$head,status:"completed",conclusion:"failure",runner_id:9,runner_name:"hosted",steps:[{name:"test",conclusion:"failure"}]}' > "$job"
+  set +e
+  FM_TEST_ACTION_JOB_JSON="$job" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/121 \
+    --allow-unstarted-actions > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "executed-actions: a real failing job must remain red"
+  assert_grep 'executed, is unreadable, or is not bound to the current head' "$case_dir/stderr" \
+    "executed-actions: refusal did not distinguish a real check failure"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "executed-actions: forge merge ran after a real check failure"
+  pass "the hosted-limit migration accepts only unstarted exact-head Actions failures"
+}
+
 # A draft cannot be merged, and neither can a pull request whose draft state the
 # forge did not report as a boolean; both refuse before any merge call.
 test_github_draft_or_unreadable_draft_state_refuses() {
@@ -3231,6 +3328,8 @@ test_untraversable_user_backend_config_directory_refuses_the_merge
 test_absent_user_backend_config_directory_and_backlog_still_merge
 test_backend_override_bypasses_unreadable_user_config
 test_github_red_checks_refuse_and_allow_red_waives_named
+test_no_mistakes_merge_requires_exact_head_local_attestation
+test_unstarted_actions_migration_is_narrow_and_attended
 test_github_draft_or_unreadable_draft_state_refuses
 test_superseded_failed_check_run_no_longer_refuses
 test_check_runs_never_supersede_status_contexts

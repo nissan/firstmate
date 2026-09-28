@@ -1,36 +1,35 @@
 name: Require no-mistakes
-run-name: "PR #${{ github.event.pull_request.number }} body compliance - ${{ github.event.action }} - event ${{ github.run_number }} (run ${{ github.run_id }})"
+run-name: "Manual local-validation attestation check for PR #${{ inputs.pull_request }}"
 
 on:
-  pull_request:
-    types: [opened, edited, synchronize, reopened]
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number to inspect
+        required: true
+        type: number
 
 permissions:
   contents: read
   pull-requests: read
 
-# GitHub concurrency groups retain at most one pending run, replacing older
-# pending runs even when cancel-in-progress is false. Give body-bearing events
-# an immutable per-event group so first-time-fork approvals can never collapse
-# opened/edited checks. Keep synchronize/reopened coalescing as before.
-concurrency:
-  group: no-mistakes-required-${{ github.event.pull_request.number }}-${{ (github.event.action == 'opened' || github.event.action == 'edited') && github.run_id || 'head-change' }}
-  cancel-in-progress: true
-
 jobs:
   check:
     name: PR must be raised via no-mistakes
     runs-on: ubuntu-latest
-    # One signature/attestation check that finishes in seconds; bound it so a
-    # hung step cannot hold a runner for GitHub's 6-hour default.
     timeout-minutes: 5
-    if: >-
-      github.event.pull_request.user.login != 'github-actions[bot]' &&
-      github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
-      - name: Verify no-mistakes signature and pipeline attestation
-        uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@f6441c96c352a18b9cadcaef6b6c7017e9ac3970 # v1.80.1
+      - name: Check out the trusted verifier
+        uses: actions/checkout@v6
         with:
-          exempt-authors: kunchenguid
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Verify exact-head local validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pull_request }}
+        run: |
+          set -eu
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > "$RUNNER_TEMP/pr.json"
+          jq -er '.body | select(type == "string")' "$RUNNER_TEMP/pr.json" > "$RUNNER_TEMP/pr-body.md"
+          head=$(jq -er '.head.sha | select(type == "string")' "$RUNNER_TEMP/pr.json")
+          bin/fm-no-mistakes-attestation.sh "$head" < "$RUNNER_TEMP/pr-body.md"
