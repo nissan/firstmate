@@ -1,0 +1,45 @@
+=== Issue #24 repro: stale-task and live-task both record slot /tmp/nm-issue24.po6l/pool/1/project; slot claim names live-task
+--- state: records=[live-task.meta stale-task.meta ] claim=[task=live-task home=/tmp/nm-issue24.po6l/home ] owner-file=owner-work tmux-windows=[control fm-live-task ]
+=== 1. plain teardown of either record refuses symmetrically (pre-existing guard)
+
+$ fm-teardown.sh stale-task --force
+REFUSED: task stale-task's recorded worktree /tmp/nm-issue24.po6l/pool/1/project is also task live-task's recorded worktree.
+Returning that pool slot would kill live-task's processes and reset its copy, so nothing was changed - not even with --force.
+Reconcile whichever record is wrong (bin/fm-crew-state.sh stale-task; bin/fm-crew-state.sh live-task). If the slot claim proves stale-task is stale, re-run with --record-only.
+exit=1
+
+$ fm-teardown.sh live-task --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+REFUSED: task live-task's recorded worktree /tmp/nm-issue24.po6l/pool/1/project is also task stale-task's recorded worktree.
+Returning that pool slot would kill stale-task's processes and reset its copy, so nothing was changed - not even with --force.
+Reconcile whichever record is wrong (bin/fm-crew-state.sh live-task; bin/fm-crew-state.sh stale-task). If the slot claim proves live-task is stale, re-run with --record-only.
+exit=1
+--- state: records=[live-task.meta stale-task.meta ] claim=[task=live-task home=/tmp/nm-issue24.po6l/home ] owner-file=owner-work tmux-windows=[control fm-live-task ]
+=== 2. adversarial: --record-only on the CURRENT owner (claim names it) must refuse
+
+$ fm-teardown.sh live-task --record-only --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+REFUSED: --record-only cannot retire task live-task because the Treehouse slot claim still names that task; nothing was changed
+exit=1
+--- state: records=[live-task.meta stale-task.meta ] claim=[task=live-task home=/tmp/nm-issue24.po6l/home ] owner-file=owner-work tmux-windows=[control fm-live-task ]
+=== 3. adversarial: --record-only without --force does not grant discard authority (report-less scout)
+
+$ fm-teardown.sh stale-task --record-only
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: --record-only proved task stale-task's recorded Treehouse slot was reassigned to task live-task in home /tmp/nm-issue24.po6l/home; the claimed slot is left untouched and only stale-task's ordinary cleanup runs.
+REFUSED: scout task stale-task has no report at /tmp/nm-issue24.po6l/home/data/stale-task/report.md.
+The report is the work product. Have the crewmate write it, or use --force after explicit discard approval.
+exit=1
+--- state: records=[live-task.meta stale-task.meta ] claim=[task=live-task home=/tmp/nm-issue24.po6l/home ] owner-file=owner-work tmux-windows=[control fm-live-task ]
+=== 4. sanctioned reconciliation: --record-only retires the stale record only
+
+$ fm-teardown.sh stale-task --record-only --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: --record-only proved task stale-task's recorded Treehouse slot was reassigned to task live-task in home /tmp/nm-issue24.po6l/home; the claimed slot is left untouched and only stale-task's ordinary cleanup runs.
+NOTICE: FORCED teardown of scout task stale-task with NO report at /tmp/nm-issue24.po6l/home/data/stale-task/report.md - its investigation is being discarded and cannot be recovered.
+teardown stale-task complete (window firstmate:fm-stale-task; pool slot /tmp/nm-issue24.po6l/pool/1/project left to task live-task (home /tmp/nm-issue24.po6l/home), which it was reassigned to)
+Backlog: stale-task just finished (this home keeps no markdown backlog at /tmp/nm-issue24.po6l/home/data/backlog.md). Update /tmp/nm-issue24.po6l/home/data/backlog.md - move stale-task to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+exit=0
+--- state: records=[live-task.meta ] claim=[task=live-task home=/tmp/nm-issue24.po6l/home ] owner-file=owner-work tmux-windows=[control fm-live-task ]
+=== 5. current owner record is now sole holder; plain teardown no longer reports a collision
+state: unknown · source: pane · harness state unavailable (unknown missing)

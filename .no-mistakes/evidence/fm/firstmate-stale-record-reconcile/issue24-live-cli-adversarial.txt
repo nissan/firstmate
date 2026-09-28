@@ -1,0 +1,20 @@
+=== 6. adversarial: stale record whose own endpoint is still live must not be retired
+--- state: records=[live-task.meta stale-task.meta ] claim=[task=live-task home=/tmp/nm-issue24b.DDjC/home ] owner-file=owner-work tmux-windows=[control fm-live-task fm-stale-task ]
+
+$ fm-teardown.sh stale-task --record-only --force
+warning: --record-only proved task stale-task's recorded Treehouse slot was reassigned to task live-task in home /tmp/nm-issue24b.DDjC/home; the claimed slot is left untouched and only stale-task's ordinary cleanup runs.
+REFUSED: --record-only proved task stale-task's worktree binding is stale, but its recorded endpoint reads 'ambiguous', not confidently dead or agent-less; nothing was changed
+exit=1
+--- state: records=[live-task.meta stale-task.meta ] claim=[task=live-task home=/tmp/nm-issue24b.DDjC/home ] owner-file=owner-work tmux-windows=[control fm-live-task fm-stale-task ]
+=== 7. adversarial: claim names live-task but in a DIFFERENT Firstmate home -> contradictory, refuse
+
+$ fm-teardown.sh stale-task --record-only --force
+REFUSED: --record-only found 1 other task record(s) naming /tmp/nm-issue24b.DDjC/pool/1/project, but the slot claim for task live-task in home /tmp/nm-issue24b.DDjC/other-home must match exactly one; ownership is missing, ambiguous, or contradictory and nothing was changed
+exit=1
+--- state: records=[live-task.meta stale-task.meta ] claim=[task=live-task home=/tmp/nm-issue24b.DDjC/other-home ] owner-file=owner-work tmux-windows=[control fm-live-task ]
+=== 8. adversarial: slot claim removed (no positive owner evidence) -> refuse
+
+$ fm-teardown.sh stale-task --record-only --force
+REFUSED: --record-only cannot retire task stale-task because the Treehouse slot has no owner claim; positive stale-record evidence is required and nothing was changed
+exit=1
+--- state: records=[live-task.meta stale-task.meta ] owner-file=owner-work git-worktrees=2
