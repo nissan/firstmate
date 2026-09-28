@@ -36,7 +36,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 
 Do not require hosted workflow contexts for routine delivery.
 The repository's trusted default-branch `.no-mistakes.yaml` declares `no_ci: true`, which lets no-mistakes accept exactly zero reported checks; any check that does report is still judged normally and a pending or failing result is never waived by that declaration.
-`bin/fm-pr-merge.sh` independently verifies the exact-head local attestation for every task delivered in no-mistakes mode and for any pull request that reports zero checks, and still applies its ordinary live mergeability, conflict, reported-check, merge-authority, and head-binding safeguards.
+`bin/fm-pr-merge.sh` independently verifies the exact-head local attestation for every task delivered in no-mistakes mode, and for every task of any delivery mode in `nissan/firstmate` and `nissan/Work`, and still applies its ordinary live mergeability, conflict, reported-check, merge-authority, and head-binding safeguards.
 
 When migrating an existing ruleset, first snapshot it with the authenticated GitHub rulesets API or settings UI.
 Remove only the retired required-status-check contexts from the existing rule, preserve its pull-request, merge-method, linear-history, deletion, non-fast-forward, and administrator-bypass settings, then read back both the ruleset and effective branch rules.

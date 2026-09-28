@@ -353,6 +353,7 @@ The path's worker, automated gates, and captain approval remain authoritative:
 
 - **no-mistakes** runs the full pipeline through a PR, then waits for the configured merge authority.
 - **direct-PR** has the worker push and open a PR without the no-mistakes pipeline, then waits for the configured merge authority.
+  In `nissan/firstmate` and `nissan/Work`, where routine validation is local-only, `fm-pr-merge.sh` refuses any PR without exact-head local no-mistakes evidence, so ship there in `no-mistakes` mode.
 - **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before firstmate uses the guarded fast-forward merge path.
 
 Delivery mode and `yolo` are orthogonal.

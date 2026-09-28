@@ -2485,15 +2485,15 @@ test_unstarted_actions_migration_is_narrow_and_attended() {
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" "$head"
   write_github_rollup_json "$case_dir" "$head" \
-    "$(actions_check_run "Lint 1" https://github.com/example/repo/actions/runs/36369539646/job/108762734165)"
+    "$(actions_check_run "Lint 1" https://github.com/nissan/firstmate/actions/runs/36369539646/job/108762734165)"
   job="$case_dir/action-job.json"
   jq -cn --arg head "$head" '{id:108762734165,run_id:36369539646,name:"Lint 1",head_sha:$head,status:"completed",conclusion:"failure",runner_id:0,runner_name:"",steps:[]}' > "$job"
-  FM_TEST_ACTION_JOB_JSON="$job" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/120 \
+  FM_TEST_ACTION_JOB_JSON="$job" run_pr_merge "$case_dir" task-x1 https://github.com/nissan/firstmate/pull/36 \
     --allow-unstarted-actions > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "unstarted-actions: a runner-admission failure with exact-head local evidence should migrate: $(cat "$case_dir/stderr")"
-  assert_grep 'api repos/example/repo/actions/jobs/108762734165' "$case_dir/gh.log" \
+  assert_grep 'api repos/nissan/firstmate/actions/jobs/108762734165' "$case_dir/gh.log" \
     "unstarted-actions: the job was not read by the id in the check's detailsUrl"
-  assert_logged_gh_merge "$case_dir" 120 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 36 nissan/firstmate --squash
 
   case_dir=$(make_case github-executed-actions-refuse-migration)
   mkdir -p "$case_dir/wt"
@@ -2533,51 +2533,55 @@ test_unstarted_actions_migration_is_narrow_and_attended() {
   pass "the hosted-limit migration accepts only unstarted exact-head Actions failures"
 }
 
-# With routine validation local, a pull request reporting zero checks carries
-# no hosted evidence, so every task mode must bring exact-head local evidence.
-test_zero_check_merge_requires_local_attestation_in_every_mode() {
-  local case_dir rc head
+# nissan/firstmate and nissan/Work validate routinely only locally, so every
+# task mode there needs exact-head local evidence; other repositories keep the
+# ordinary per-mode rule, where a direct-PR task merges on its reported checks.
+test_local_validation_repos_require_attestation_in_every_mode() {
+  local case_dir rc head repo n=122
   head=7878787878787878787878787878787878787878
 
-  case_dir=$(make_case github-direct-pr-zero-checks-unattested)
-  mkdir -p "$case_dir/wt"
-  printf 'mode=direct-PR\n' >> "$case_dir/state/task-x1.meta"
-  add_gh_mocks "$case_dir" "$head"
-  jq '.statusCheckRollup = [] | .body = "A direct pull request."' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
-  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
-  set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/123 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-  expect_code 1 "$rc" "direct-PR zero checks: a merge with no hosted or local evidence must refuse"
-  assert_grep 'no valid no-mistakes local-validation attestation' "$case_dir/stderr" \
-    "direct-PR zero checks: refusal did not name the missing local evidence"
-  assert_no_grep 'pr merge' "$case_dir/gh.log" \
-    "direct-PR zero checks: forge merge ran without validation evidence"
+  for repo in nissan/firstmate NISSAN/Work; do
+    n=$((n + 1))
+    case_dir=$(make_case "github-governed-direct-pr-unattested-$n")
+    mkdir -p "$case_dir/wt"
+    printf 'mode=direct-PR\n' >> "$case_dir/state/task-x1.meta"
+    add_gh_mocks "$case_dir" "$head"
+    jq '.body = "A direct pull request."' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+    mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+    set +e
+    run_pr_merge "$case_dir" task-x1 "https://github.com/$repo/pull/$n" \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "$repo direct-PR: a merge without local evidence must refuse even with green checks"
+    assert_grep 'no valid no-mistakes local-validation attestation' "$case_dir/stderr" \
+      "$repo direct-PR: refusal did not name the missing local evidence"
+    assert_no_grep 'pr merge' "$case_dir/gh.log" \
+      "$repo direct-PR: forge merge ran without local validation evidence"
+  done
 
-  case_dir=$(make_case github-direct-pr-zero-checks-attested)
+  case_dir=$(make_case github-governed-direct-pr-zero-checks-attested)
   mkdir -p "$case_dir/wt"
   printf 'mode=direct-PR\n' >> "$case_dir/state/task-x1.meta"
   add_gh_mocks "$case_dir" "$head"
   jq '.statusCheckRollup = []' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
   mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/124 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/nissan/firstmate/pull/125 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
-    || fail "direct-PR zero checks: exact-head local evidence should merge: $(cat "$case_dir/stderr")"
-  assert_logged_gh_merge "$case_dir" 124 example/repo --squash
+    || fail "nissan/firstmate direct-PR: exact-head local evidence should merge: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 125 nissan/firstmate --squash
 
-  case_dir=$(make_case github-direct-pr-green-checks-unattested)
+  case_dir=$(make_case github-unrelated-direct-pr-zero-checks-unattested)
   mkdir -p "$case_dir/wt"
   printf 'mode=direct-PR\n' >> "$case_dir/state/task-x1.meta"
   add_gh_mocks "$case_dir" "$head"
-  jq '.body = "A direct pull request."' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+  jq '.statusCheckRollup = [] | .body = "A direct pull request."' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
   mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/125 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/nissan/firstmate-fork/pull/126 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
-    || fail "direct-PR green checks: reported green checks should still merge: $(cat "$case_dir/stderr")"
-  assert_logged_gh_merge "$case_dir" 125 example/repo --squash
-  pass "a zero-check pull request merges only with exact-head local evidence in every task mode"
+    || fail "unrelated direct-PR: a repository outside the local-validation policy should merge: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 126 nissan/firstmate-fork --squash
+  pass "nissan/firstmate and nissan/Work require exact-head local evidence in every mode; other repositories keep the per-mode rule"
 }
 
 # A draft cannot be merged, and neither can a pull request whose draft state the
@@ -3407,7 +3411,7 @@ test_backend_override_bypasses_unreadable_user_config
 test_github_red_checks_refuse_and_allow_red_waives_named
 test_no_mistakes_merge_requires_exact_head_local_attestation
 test_unstarted_actions_migration_is_narrow_and_attended
-test_zero_check_merge_requires_local_attestation_in_every_mode
+test_local_validation_repos_require_attestation_in_every_mode
 test_github_draft_or_unreadable_draft_state_refuses
 test_superseded_failed_check_run_no_longer_refuses
 test_check_runs_never_supersede_status_contexts

@@ -13,10 +13,10 @@
 # is open, not a draft, mergeable, free of conflicts, and every unwaived check
 # is green at the exact current head commit, where github_checks_not_green below
 # owns what makes a check green and judges each one by its current run.
-# A task recorded in no-mistakes mode, and any pull request that reports zero
-# checks whatever its task mode, must additionally carry one locally verified
-# no-mistakes attestation bound to that same live head, so no merge lands
-# without either reported green checks or exact-head local evidence;
+# A task recorded in no-mistakes mode, and every task of any mode merging into
+# the local-validation repositories github.com/nissan/firstmate and
+# github.com/nissan/Work, must additionally carry one locally verified
+# no-mistakes attestation bound to that same live head;
 # bin/fm-no-mistakes-attestation.sh owns the attestation format.
 # Every failing condition is reported, not
 # just the first. The verified head is then passed to gh as
@@ -157,6 +157,10 @@ PR_NUMBER=$FM_PR_NUMBER
 # glab resolves the instance from the project URL passed to -R, so the host is
 # rebuilt from the parsed identity rather than read from any ambient default.
 PROJECT_URL="https://$FM_PR_HOST/$FM_PR_PATH"
+LOCAL_VALIDATION_REPO=false
+case "$PROVIDER:$(printf '%s/%s' "$PR_HOST" "$PR_PATH" | tr '[:upper:]' '[:lower:]')" in
+  github:github.com/nissan/firstmate|github:github.com/nissan/work) LOCAL_VALIDATION_REPO=true ;;
+esac
 shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
@@ -722,8 +726,7 @@ FIELDS
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
   fi
-  if [ "$TASK_MODE" = no-mistakes ] \
-    || printf '%s' "$json" | jq -e '.statusCheckRollup == []' >/dev/null 2>&1; then
+  if [ "$TASK_MODE" = no-mistakes ] || [ "$LOCAL_VALIDATION_REPO" = true ]; then
     if printf '%s' "$json" | jq -er '.body | select(type == "string")' \
       | "$SCRIPT_DIR/fm-no-mistakes-attestation.sh" "$live_head" >&2; then
       attestation_ok=true
