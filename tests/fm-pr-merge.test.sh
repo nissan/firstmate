@@ -2465,6 +2465,18 @@ test_no_mistakes_merge_requires_exact_head_local_attestation() {
   pass "no-mistakes merges require completed local validation bound to the live head"
 }
 
+# Rollup entries mirror the fields `gh pr view --json statusCheckRollup`
+# actually returns for an Actions check run: the job id is only in detailsUrl.
+actions_check_run() {
+  local name=$1 details_url=$2
+  jq -cn --arg name "$name" --arg url "$details_url" '{
+    __typename:"CheckRun", name:$name, workflowName:"CI",
+    status:"COMPLETED", conclusion:"FAILURE",
+    startedAt:"2026-09-28T02:22:02Z", completedAt:"2026-09-28T02:22:04Z",
+    detailsUrl:$url
+  }'
+}
+
 test_unstarted_actions_migration_is_narrow_and_attended() {
   local case_dir rc head job
   head=5656565656565656565656565656565656565656
@@ -2472,24 +2484,24 @@ test_unstarted_actions_migration_is_narrow_and_attended() {
   case_dir=$(make_case github-unstarted-actions-migration)
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" "$head"
-  jq '.statusCheckRollup = [{"__typename":"CheckRun","databaseId":701,"name":"CI","status":"COMPLETED","conclusion":"FAILURE"}]' \
-    "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
-  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+  write_github_rollup_json "$case_dir" "$head" \
+    "$(actions_check_run "Lint 1" https://github.com/example/repo/actions/runs/36369539646/job/108762734165)"
   job="$case_dir/action-job.json"
-  jq -cn --arg head "$head" '{id:701,head_sha:$head,status:"completed",conclusion:"failure",runner_id:0,runner_name:"",steps:[]}' > "$job"
+  jq -cn --arg head "$head" '{id:108762734165,run_id:36369539646,name:"Lint 1",head_sha:$head,status:"completed",conclusion:"failure",runner_id:0,runner_name:"",steps:[]}' > "$job"
   FM_TEST_ACTION_JOB_JSON="$job" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/120 \
     --allow-unstarted-actions > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "unstarted-actions: a runner-admission failure with exact-head local evidence should migrate: $(cat "$case_dir/stderr")"
+  assert_grep 'api repos/example/repo/actions/jobs/108762734165' "$case_dir/gh.log" \
+    "unstarted-actions: the job was not read by the id in the check's detailsUrl"
   assert_logged_gh_merge "$case_dir" 120 example/repo --squash
 
   case_dir=$(make_case github-executed-actions-refuse-migration)
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" "$head"
-  jq '.statusCheckRollup = [{"__typename":"CheckRun","databaseId":702,"name":"CI","status":"COMPLETED","conclusion":"FAILURE"}]' \
-    "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
-  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+  write_github_rollup_json "$case_dir" "$head" \
+    "$(actions_check_run "Lint 1" https://github.com/example/repo/actions/runs/36369539646/job/108762734165)"
   job="$case_dir/action-job.json"
-  jq -cn --arg head "$head" '{id:702,head_sha:$head,status:"completed",conclusion:"failure",runner_id:9,runner_name:"hosted",steps:[{name:"test",conclusion:"failure"}]}' > "$job"
+  jq -cn --arg head "$head" '{id:108762734165,run_id:36369539646,name:"Lint 1",head_sha:$head,status:"completed",conclusion:"failure",runner_id:9,runner_name:"hosted",steps:[{name:"test",conclusion:"failure"}]}' > "$job"
   set +e
   FM_TEST_ACTION_JOB_JSON="$job" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/121 \
     --allow-unstarted-actions > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -2500,7 +2512,72 @@ test_unstarted_actions_migration_is_narrow_and_attended() {
     "executed-actions: refusal did not distinguish a real check failure"
   assert_no_grep 'pr merge' "$case_dir/gh.log" \
     "executed-actions: forge merge ran after a real check failure"
+
+  case_dir=$(make_case github-foreign-actions-url-refuses-migration)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" \
+    "$(actions_check_run "Lint 1" https://github.com/other/repo/actions/runs/36369539646/job/108762734165)"
+  job="$case_dir/action-job.json"
+  jq -cn --arg head "$head" '{id:108762734165,run_id:36369539646,name:"Lint 1",head_sha:$head,status:"completed",conclusion:"failure",runner_id:0,runner_name:"",steps:[]}' > "$job"
+  set +e
+  FM_TEST_ACTION_JOB_JSON="$job" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/122 \
+    --allow-unstarted-actions > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "foreign-actions-url: a check whose job lives in another repository must remain red"
+  assert_grep 'no readable GitHub Actions job URL in this repository' "$case_dir/stderr" \
+    "foreign-actions-url: refusal did not name the unreadable job identity"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "foreign-actions-url: forge merge ran without a job in this repository"
   pass "the hosted-limit migration accepts only unstarted exact-head Actions failures"
+}
+
+# With routine validation local, a pull request reporting zero checks carries
+# no hosted evidence, so every task mode must bring exact-head local evidence.
+test_zero_check_merge_requires_local_attestation_in_every_mode() {
+  local case_dir rc head
+  head=7878787878787878787878787878787878787878
+
+  case_dir=$(make_case github-direct-pr-zero-checks-unattested)
+  mkdir -p "$case_dir/wt"
+  printf 'mode=direct-PR\n' >> "$case_dir/state/task-x1.meta"
+  add_gh_mocks "$case_dir" "$head"
+  jq '.statusCheckRollup = [] | .body = "A direct pull request."' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/123 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "direct-PR zero checks: a merge with no hosted or local evidence must refuse"
+  assert_grep 'no valid no-mistakes local-validation attestation' "$case_dir/stderr" \
+    "direct-PR zero checks: refusal did not name the missing local evidence"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "direct-PR zero checks: forge merge ran without validation evidence"
+
+  case_dir=$(make_case github-direct-pr-zero-checks-attested)
+  mkdir -p "$case_dir/wt"
+  printf 'mode=direct-PR\n' >> "$case_dir/state/task-x1.meta"
+  add_gh_mocks "$case_dir" "$head"
+  jq '.statusCheckRollup = []' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/124 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "direct-PR zero checks: exact-head local evidence should merge: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 124 example/repo --squash
+
+  case_dir=$(make_case github-direct-pr-green-checks-unattested)
+  mkdir -p "$case_dir/wt"
+  printf 'mode=direct-PR\n' >> "$case_dir/state/task-x1.meta"
+  add_gh_mocks "$case_dir" "$head"
+  jq '.body = "A direct pull request."' "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+  mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/125 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "direct-PR green checks: reported green checks should still merge: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 125 example/repo --squash
+  pass "a zero-check pull request merges only with exact-head local evidence in every task mode"
 }
 
 # A draft cannot be merged, and neither can a pull request whose draft state the
@@ -3330,6 +3407,7 @@ test_backend_override_bypasses_unreadable_user_config
 test_github_red_checks_refuse_and_allow_red_waives_named
 test_no_mistakes_merge_requires_exact_head_local_attestation
 test_unstarted_actions_migration_is_narrow_and_attended
+test_zero_check_merge_requires_local_attestation_in_every_mode
 test_github_draft_or_unreadable_draft_state_refuses
 test_superseded_failed_check_run_no_longer_refuses
 test_check_runs_never_supersede_status_contexts

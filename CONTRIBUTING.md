@@ -36,14 +36,14 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 
 Do not require hosted workflow contexts for routine delivery.
 The repository's trusted default-branch `.no-mistakes.yaml` declares `no_ci: true`, which lets no-mistakes accept exactly zero reported checks; any check that does report is still judged normally and a pending or failing result is never waived by that declaration.
-`bin/fm-pr-merge.sh` independently verifies the exact-head local attestation for every task delivered in no-mistakes mode and still applies its ordinary live mergeability, conflict, reported-check, merge-authority, and head-binding safeguards.
+`bin/fm-pr-merge.sh` independently verifies the exact-head local attestation for every task delivered in no-mistakes mode and for any pull request that reports zero checks, and still applies its ordinary live mergeability, conflict, reported-check, merge-authority, and head-binding safeguards.
 
 When migrating an existing ruleset, first snapshot it with the authenticated GitHub rulesets API or settings UI.
 Remove only the retired required-status-check contexts from the existing rule, preserve its pull-request, merge-method, linear-history, deletion, non-fast-forward, and administrator-bypass settings, then read back both the ruleset and effective branch rules.
 A repository with no ruleset or classic branch protection needs no remote protection mutation; repositories with existing protection must use those supported interfaces rather than bypass flags.
 
 The pull request that lands this migration may already carry failed hosted checks from account admission limits.
-After local no-mistakes review, test, document, and lint evidence is bound to its live head, an attended merge may use `bin/fm-pr-merge.sh --allow-unstarted-actions`; the helper reads every failed Actions job and accepts only jobs with no assigned runner and no executed steps, so a real or unreadable failure still refuses.
+After local no-mistakes review, test, document, and lint evidence is bound to its live head, an attended merge may use `bin/fm-pr-merge.sh --allow-unstarted-actions`; the helper reads every failed Actions job named by its check's details URL and accepts only jobs with no assigned runner and no executed steps, so a real or unreadable failure still refuses.
 Land the workflow and trusted `no_ci` change before moving an older open pull request to a new head.
 For an open pull request such as https://github.com/nissan/firstmate/pull/36, rerun no-mistakes after the migration lands so its guarded rebase produces a new exact-head attestation under the trusted zero-check policy.
 The old hosted failures remain historical evidence on the old commit and are not waived; the replacement head must report zero checks and pass the local attestation gate normally.

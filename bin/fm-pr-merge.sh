@@ -13,10 +13,11 @@
 # is open, not a draft, mergeable, free of conflicts, and every unwaived check
 # is green at the exact current head commit, where github_checks_not_green below
 # owns what makes a check green and judges each one by its current run.
-# A task recorded in no-mistakes mode must additionally carry one locally
-# verified no-mistakes attestation bound to that same live head. This remains
-# required when the trusted repository config declares no_ci and no hosted
-# checks report; bin/fm-no-mistakes-attestation.sh owns the attestation format.
+# A task recorded in no-mistakes mode, and any pull request that reports zero
+# checks whatever its task mode, must additionally carry one locally verified
+# no-mistakes attestation bound to that same live head, so no merge lands
+# without either reported green checks or exact-head local evidence;
+# bin/fm-no-mistakes-attestation.sh owns the attestation format.
 # Every failing condition is reported, not
 # just the first. The verified head is then passed to gh as
 # --match-head-commit, so a push that lands between that read and the merge
@@ -27,8 +28,9 @@
 # name, still requires every other check green, and still binds the head.
 # The attended --allow-unstarted-actions migration option is narrower: it is
 # accepted only for a no-mistakes task with valid exact-head local evidence and
-# only when every otherwise-red check is a completed GitHub Actions job whose
-# live job record has no runner and no steps. A real, pending, unreadable, or
+# only when every otherwise-red check is a completed GitHub Actions job, found
+# through the check's detailsUrl in this repository, whose live job record binds
+# the same run and head and has no runner and no steps. A real, pending, unreadable, or
 # non-Actions check remains red. Both options are refused while the away-posture
 # record exists, and neither
 # applies on GitLab, where a merge already requires the head pipeline to have
@@ -610,35 +612,43 @@ github_checks_not_green() {
 # It never classifies from timing or error prose: each check must resolve to a
 # live Actions job at the exact PR head with runner_id=0 and an empty steps list.
 github_verify_unstarted_action_failures() {
-  local json=$1 red=$2 name rows row job_id job
+  local json=$1 red=$2 name rows row url job_id run_id job repo_prefix
+  repo_prefix=$(printf 'https://github.com/%s/actions/runs/' "$PR_PATH" | tr '[:upper:]' '[:lower:]')
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     if ! rows=$(printf '%s' "$json" | jq -r --arg name "$name" '
       .statusCheckRollup[]
       | select(.__typename == "CheckRun" and (.name // "") == $name)
       | select(.status != "COMPLETED" or ((.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED") | not))
-      | [(.databaseId // ""), (.status // ""), (.conclusion // "")] | @tsv
+      | [(.detailsUrl // ""), (.status // ""), (.conclusion // "")] | @tsv
     ' 2>/dev/null) || [ -z "$rows" ]; then
       echo "error: cannot prove that check '$name' was rejected before execution" >&2
       return 1
     fi
     while IFS= read -r row; do
-      job_id=$(printf '%s\n' "$row" | cut -f1)
+      url=$(printf '%s\n' "$row" | cut -f1)
       case "$row" in
-        "$job_id"$'\tCOMPLETED\tFAILURE') ;;
+        "$url"$'\tCOMPLETED\tFAILURE') ;;
         *)
           echo "error: check '$name' is not a completed pre-execution Actions failure" >&2
           return 1
           ;;
       esac
-      case "$job_id" in ''|*[!0-9]*)
-        echo "error: check '$name' has no readable GitHub Actions job id" >&2
+      url=$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')
+      case "$url" in
+        "$repo_prefix"*/job/*) run_id=${url#"$repo_prefix"}; run_id=${run_id%%/job/*}; job_id=${url##*/job/} ;;
+        *) run_id=''; job_id='' ;;
+      esac
+      case "$run_id:$job_id" in :*|*:|*[!0-9:]*)
+        echo "error: check '$name' has no readable GitHub Actions job URL in this repository" >&2
         return 1
         ;;
       esac
       if ! job=$(gh api "repos/$PR_PATH/actions/jobs/$job_id" 2>/dev/null) \
-        || ! printf '%s' "$job" | jq -e --arg head "$FM_PR_MERGE_HEAD_CANDIDATE" '
+        || ! printf '%s' "$job" | jq -e --arg head "$FM_PR_MERGE_HEAD_CANDIDATE" --arg run "$run_id" --arg job "$job_id" '
           type == "object"
+          and ((.id | tostring) == $job)
+          and ((.run_id | tostring) == $run)
           and (.head_sha == $head)
           and (.status == "completed")
           and (.conclusion == "failure")
@@ -712,7 +722,8 @@ FIELDS
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
   fi
-  if [ "$TASK_MODE" = no-mistakes ]; then
+  if [ "$TASK_MODE" = no-mistakes ] \
+    || printf '%s' "$json" | jq -e '.statusCheckRollup == []' >/dev/null 2>&1; then
     if printf '%s' "$json" | jq -er '.body | select(type == "string")' \
       | "$SCRIPT_DIR/fm-no-mistakes-attestation.sh" "$live_head" >&2; then
       attestation_ok=true
@@ -785,11 +796,11 @@ EOF
     [ -z "$uncovered" ] || printf 'error: these checks are not green: %s\n' "$uncovered" >&2
     return 1
   fi
-  if [ "$TASK_MODE" = no-mistakes ]; then
+  if [ "$attestation_ok" = true ]; then
     printf 'verified: %s is open and mergeable, with local no-mistakes validation bound to head %s and every reported check green\n' \
       "$URL" "$live_head" >&2
   else
-    printf 'verified: %s is open and mergeable, with every required check green at head %s\n' \
+    printf 'verified: %s is open and mergeable, with every reported check green at head %s\n' \
       "$URL" "$live_head" >&2
   fi
   FM_PR_MERGE_HEAD=$live_head
