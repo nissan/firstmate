@@ -138,7 +138,15 @@
 # descendant Treehouse slot before touching any child.
 # These refusals are not relaxed by --force: --force authorizes discarding THIS
 # task's unlanded work, never another task's live work. Nothing of this task's
-# own is removed by a refusal; reconcile whichever record is wrong and re-run.
+# own is removed by a refusal. `--record-only` is the sanctioned reconciliation
+# for the exact two-record collision: it proceeds only when the slot's readable
+# owner claim names the one other record and its canonical Firstmate home. It
+# then treats this record as stale and runs only its ordinary cleanup while
+# leaving the claimed slot untouched. A missing, unreadable, self-naming,
+# unmatched, multiply matched, or home-mismatched claim refuses, even with
+# --force. The ordinary report, unlanded-work, endpoint-identity,
+# backlog-transition, and cleanup gates remain in force; --record-only never
+# supplies discard authority.
 # Orca is not a pool slot and proves its path through
 # require_orca_worktree_path_match instead.
 # Orca tasks use the same safety checks, then close the recorded terminal and
@@ -169,7 +177,7 @@
 # leased home releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--record-only]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
@@ -199,6 +207,15 @@
 #   landed-work checks. Every other windowless record, including one with a
 #   spawn_gen, a non-tmux backend, or an ambiguous field, still faces the
 #   validator and refuses.
+#   --record-only retires a stale task record without inspecting, resetting,
+#   returning, reaping processes in, or otherwise changing the Treehouse slot
+#   now claimed by the one other task record. It requires the recorded worktree
+#   to remain a live Treehouse pool slot and requires its plain owner claim to
+#   identify that other record by both task id and canonical Firstmate home.
+#   The stale record's exact endpoint must also read as dead or missing.
+#   Every absent, unreadable, ambiguous, or contradictory ownership shape
+#   refuses without mutation. This flag does not imply --force and does not
+#   bypass any non-slot cleanup or backlog safety gate.
 #
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
@@ -333,11 +350,13 @@ fi
 ID=$1
 FORCE=
 LEGACY_RECORD_GIVEN=0
+RECORD_ONLY=0
 shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    --record-only) RECORD_ONLY=1 ;;
     *)
       echo "error: invalid teardown request" >&2
       exit 2
@@ -367,6 +386,30 @@ fi
 fm_lease_guard "$ID" "teardown (fm-teardown)"
 
 META="$STATE/$ID.meta"
+# Record-only reconciliation must identify the claim beside a Treehouse slot
+# without asking Git to inspect the current owner's checkout. The managed pool
+# layout and its plain state file establish that this is a pool slot; the exact
+# other record, claim, home, and project-lock identity are proved later under
+# the lock. Prints the canonical slot path on success.
+teardown_record_only_pool_slot() {  # <worktree>
+  local worktree=$1 slot pool state
+  [ -d "$worktree" ] || return 1
+  slot=$(CDPATH='' cd -- "$worktree" 2>/dev/null && pwd -P) || return 1
+  pool=$(dirname "$(dirname "$slot")")
+  state="$pool/treehouse-state.json"
+  [ -f "$state" ] && [ ! -L "$state" ] || return 1
+  printf '%s\n' "$slot"
+}
+
+teardown_record_only_project_lock_path() {  # <project> <worktree>
+  local project=$1 worktree=$2 slot project_abs
+  slot=$(teardown_record_only_pool_slot "$worktree") || return 1
+  project_abs=$(CDPATH='' cd -- "$project" 2>/dev/null && pwd -P) || return 1
+  case "$project_abs/" in "$slot/"*) return 1 ;; esac
+  case "$slot/" in "$project_abs/"*) return 1 ;; esac
+  fm_treehouse_project_lock_path "$project_abs"
+}
+
 TREEHOUSE_PROJECT_LOCK=
 TREEHOUSE_PROJECT_LOCK_HELD=0
 TREEHOUSE_SLOT_LOCK_REQUIRED=0
@@ -379,12 +422,23 @@ if [ -f "$META" ] && [ ! -L "$META" ]; then
   TEARDOWN_LOCK_PROJECT=$(fm_meta_get "$META" project)
   if [ "$TEARDOWN_LOCK_KIND" != secondmate ] \
      && [ "$TEARDOWN_LOCK_BACKEND" != orca ] \
-     && fm_treehouse_pool_slot "$TEARDOWN_LOCK_PROJECT" "$TEARDOWN_LOCK_WT"; then
+     && { { [ "$RECORD_ONLY" = 1 ] \
+          && teardown_record_only_pool_slot "$TEARDOWN_LOCK_WT" >/dev/null; } \
+       || { [ "$RECORD_ONLY" != 1 ] \
+          && fm_treehouse_pool_slot "$TEARDOWN_LOCK_PROJECT" "$TEARDOWN_LOCK_WT"; }; }; then
     TREEHOUSE_SLOT_LOCK_REQUIRED=1
-    TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$TEARDOWN_LOCK_PROJECT") || {
-      echo "REFUSED: cannot resolve the shared Treehouse project lock for ${TEARDOWN_LOCK_PROJECT:-<missing>}; nothing was changed" >&2
-      exit 1
-    }
+    if [ "$RECORD_ONLY" = 1 ]; then
+      TREEHOUSE_PROJECT_LOCK=$(teardown_record_only_project_lock_path \
+        "$TEARDOWN_LOCK_PROJECT" "$TEARDOWN_LOCK_WT") || {
+        echo "REFUSED: cannot resolve a slot-disjoint shared Treehouse project lock for ${TEARDOWN_LOCK_PROJECT:-<missing>}; nothing was changed" >&2
+        exit 1
+      }
+    else
+      TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$TEARDOWN_LOCK_PROJECT") || {
+        echo "REFUSED: cannot resolve the shared Treehouse project lock for ${TEARDOWN_LOCK_PROJECT:-<missing>}; nothing was changed" >&2
+        exit 1
+      }
+    fi
     fm_lock_try_acquire "$TREEHOUSE_PROJECT_LOCK" || {
       echo "REFUSED: another Treehouse slot allocation or return is in progress for $TEARDOWN_LOCK_PROJECT; nothing was changed" >&2
       exit 1
@@ -1067,11 +1121,20 @@ CLEANUP_RECOVERY=$TEARDOWN_CLEANUP_RECOVERY
 KIND=$TEARDOWN_META_KIND
 EXPECTED_TREEHOUSE_PROJECT_LOCK=
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ] \
-   && fm_treehouse_pool_slot "$PROJ" "$WT"; then
-  EXPECTED_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ") || {
-    echo "REFUSED: cannot resolve the shared Treehouse project lock for ${PROJ:-<missing>}; nothing was changed" >&2
-    exit 1
-  }
+   && { { [ "$RECORD_ONLY" = 1 ] \
+        && teardown_record_only_pool_slot "$WT" >/dev/null; } \
+     || { [ "$RECORD_ONLY" != 1 ] && fm_treehouse_pool_slot "$PROJ" "$WT"; }; }; then
+  if [ "$RECORD_ONLY" = 1 ]; then
+    EXPECTED_TREEHOUSE_PROJECT_LOCK=$(teardown_record_only_project_lock_path "$PROJ" "$WT") || {
+      echo "REFUSED: cannot resolve a slot-disjoint shared Treehouse project lock for ${PROJ:-<missing>}; nothing was changed" >&2
+      exit 1
+    }
+  else
+    EXPECTED_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ") || {
+      echo "REFUSED: cannot resolve the shared Treehouse project lock for ${PROJ:-<missing>}; nothing was changed" >&2
+      exit 1
+    }
+  fi
   if [ "$TREEHOUSE_PROJECT_LOCK_HELD" != 1 ] \
      || [ "$TREEHOUSE_PROJECT_LOCK" != "$EXPECTED_TREEHOUSE_PROJECT_LOCK" ]; then
     echo "REFUSED: task $ID's Treehouse project identity changed while teardown acquired its locks; nothing was changed" >&2
@@ -2310,8 +2373,12 @@ require_orca_worktree_path_match_if_present() {
 # record with nothing live to return skips them rather than refusing.
 teardown_live_slot_path() {
   [ "$KIND" != secondmate ] || return 1
-  fm_treehouse_pool_slot "$PROJ" "$WT" || return 1
-  canonical_existing_dir "$WT"
+  if [ "$RECORD_ONLY" = 1 ]; then
+    teardown_record_only_pool_slot "$WT"
+  else
+    fm_treehouse_pool_slot "$PROJ" "$WT" || return 1
+    canonical_existing_dir "$WT"
+  fi
 }
 
 collect_local_firstmate_states() {
@@ -2377,7 +2444,7 @@ require_exclusive_worktree_slot_record() {
         [ "$other_slot" = "$slot" ] || continue
         echo "REFUSED: task $record_id's recorded worktree $slot is also task $other_id's recorded $field." >&2
         echo "Returning that pool slot would kill $other_id's processes and reset its copy, so nothing was changed - not even with --force." >&2
-        echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $other_id), then re-run teardown." >&2
+        echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $other_id). If the slot claim proves $record_id is stale, re-run with --record-only." >&2
         return 1
       done
     done
@@ -2388,6 +2455,135 @@ require_exclusive_task_worktree_slot() {
   local slot
   slot=$(teardown_live_slot_path) || return 0
   require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot"
+}
+
+# Authorize the narrow record-only collision repair. The slot claim is the
+# positive evidence: it must name exactly one other record which names this
+# same slot, and its home= must resolve to the home containing that record.
+# Project-lock acquisition happened before the task locks, so a normal spawn or
+# return cannot change the claim or publish another record during this proof.
+# Every mismatch refuses before any ordinary teardown cleanup begins.
+require_stale_record_only_reconciliation() {
+  local slot tasktmp_abs claim_home state_dir other other_id other_home other_project other_lock
+  local field other_path other_slot
+  local collision_count=0 owner_match_count=0 record_matches
+
+  [ "$KIND" != secondmate ] || {
+    echo "REFUSED: --record-only applies only to an ordinary task's stale Treehouse slot record; nothing was changed" >&2
+    return 1
+  }
+  slot=$(teardown_live_slot_path) || {
+    echo "REFUSED: --record-only requires task $ID to name a live Treehouse pool slot; nothing was changed" >&2
+    return 1
+  }
+  if [ -n "$TASK_TMP" ]; then
+    [ "$TASK_TMP" = "/tmp/fm-$ID" ] || {
+      echo "REFUSED: --record-only found an unexpected tasktmp path for task $ID; nothing was changed" >&2
+      return 1
+    }
+    if [ -e "$TASK_TMP" ] || [ -L "$TASK_TMP" ]; then
+      [ -d "$TASK_TMP" ] && [ ! -L "$TASK_TMP" ] || {
+        echo "REFUSED: --record-only found an unsafe tasktmp path for task $ID; nothing was changed" >&2
+        return 1
+      }
+      tasktmp_abs=$(canonical_existing_dir "$TASK_TMP") || return 1
+      case "$tasktmp_abs/" in "$slot/"*)
+        echo "REFUSED: --record-only found task $ID's tasktmp inside the claimed Treehouse slot; nothing was changed" >&2
+        return 1
+        ;;
+      esac
+      case "$slot/" in "$tasktmp_abs/"*)
+        echo "REFUSED: --record-only found task $ID's tasktmp above the claimed Treehouse slot; nothing was changed" >&2
+        return 1
+        ;;
+      esac
+    fi
+  fi
+  fm_treehouse_slot_owner_state "$slot" "$ID"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in
+    other) ;;
+    mine)
+      echo "REFUSED: --record-only cannot retire task $ID because the Treehouse slot claim still names that task; nothing was changed" >&2
+      return 1
+      ;;
+    absent)
+      echo "REFUSED: --record-only cannot retire task $ID because the Treehouse slot has no owner claim; positive stale-record evidence is required and nothing was changed" >&2
+      return 1
+      ;;
+    *)
+      echo "REFUSED: --record-only cannot retire task $ID because the Treehouse slot-owner claim is unreadable; positive stale-record evidence is required and nothing was changed" >&2
+      return 1
+      ;;
+  esac
+  [ -n "$FM_TREEHOUSE_SLOT_OWNER_HOME" ] || {
+    echo "REFUSED: --record-only cannot identify task $FM_TREEHOUSE_SLOT_OWNER_ID's Firstmate home because the slot claim has no home=; nothing was changed" >&2
+    return 1
+  }
+  claim_home=$(canonical_existing_dir "$FM_TREEHOUSE_SLOT_OWNER_HOME") || {
+    echo "REFUSED: --record-only cannot resolve the claimed Firstmate home $FM_TREEHOUSE_SLOT_OWNER_HOME; nothing was changed" >&2
+    return 1
+  }
+
+  collect_local_firstmate_states "$STATE" || return 1
+  for state_dir in "${TREEHOUSE_OWNER_STATES[@]}"; do
+    other_home=$(canonical_existing_dir "$(dirname "$state_dir")") || {
+      echo "REFUSED: --record-only cannot resolve the Firstmate home containing $state_dir; nothing was changed" >&2
+      return 1
+    }
+    for other in "$state_dir"/*.meta; do
+      [ -f "$other" ] && [ ! -L "$other" ] || continue
+      [ "$other" != "$META" ] || continue
+      other_id=$(basename "$other" .meta)
+      record_matches=0
+      for field in worktree home; do
+        other_path=$(fm_meta_get "$other" "$field")
+        [ -n "$other_path" ] || continue
+        other_slot=$(canonical_existing_dir "$other_path") || continue
+        [ "$other_slot" = "$slot" ] || continue
+        record_matches=1
+        break
+      done
+      [ "$record_matches" -eq 1 ] || continue
+      collision_count=$((collision_count + 1))
+      if [ "$other_id" = "$FM_TREEHOUSE_SLOT_OWNER_ID" ] \
+         && [ "$other_home" = "$claim_home" ]; then
+        other_project=$(fm_meta_get "$other" project)
+        other_lock=$(FM_HOME="$other_home" teardown_record_only_project_lock_path \
+          "$other_project" "$slot" 2>/dev/null || true)
+        if [ -n "$other_lock" ] && [ "$other_lock" = "$TREEHOUSE_PROJECT_LOCK" ]; then
+          owner_match_count=$((owner_match_count + 1))
+        fi
+      fi
+    done
+  done
+
+  if [ "$collision_count" -ne 1 ] || [ "$owner_match_count" -ne 1 ]; then
+    echo "REFUSED: --record-only found $collision_count other task record(s) naming $slot, but the slot claim for task $FM_TREEHOUSE_SLOT_OWNER_ID in home $claim_home must match exactly one; ownership is missing, ambiguous, or contradictory and nothing was changed" >&2
+    return 1
+  fi
+
+  TEARDOWN_SLOT_REASSIGNED=1
+  TEARDOWN_SLOT_REASSIGNED_TO=$FM_TREEHOUSE_SLOT_OWNER_ID
+  TEARDOWN_SLOT_REASSIGNED_HOME=$claim_home
+  echo "warning: --record-only proved task $ID's recorded Treehouse slot was reassigned to task $TEARDOWN_SLOT_REASSIGNED_TO in home $TEARDOWN_SLOT_REASSIGNED_HOME; the claimed slot is left untouched and only $ID's ordinary cleanup runs." >&2
+}
+
+# A stale worktree binding is not permission to retire a still-live task.
+# Require the same recovery-grade endpoint proof used for legacy records; an
+# agent-less or absent endpoint can safely enter ordinary cleanup, while every
+# live, ambiguous, unreadable, or unsupported verdict preserves both records.
+require_stale_record_only_endpoint() {
+  local endpoint_state
+  if [ "$TEARDOWN_WINDOWLESS" = 1 ]; then
+    endpoint_state=missing
+  else
+    endpoint_state=$(fm_backend_agent_state "$BACKEND" "$T")
+  fi
+  case "$endpoint_state" in
+    dead|missing) return 0 ;;
+  esac
+  echo "REFUSED: --record-only proved task $ID's worktree binding is stale, but its recorded endpoint reads '$endpoint_state', not confidently dead or agent-less; nothing was changed" >&2
+  return 1
 }
 
 # Positive slot ownership, read from the claim the task that took the slot wrote
@@ -3322,8 +3518,13 @@ remove_secondmate_registry_entry() {
   return "$rc"
 }
 
-require_exclusive_task_worktree_slot || exit 1
-require_owned_task_worktree_slot || exit 1
+if [ "$RECORD_ONLY" = 1 ]; then
+  require_stale_record_only_reconciliation || exit 1
+  require_stale_record_only_endpoint || exit 1
+else
+  require_exclusive_task_worktree_slot || exit 1
+  require_owned_task_worktree_slot || exit 1
+fi
 
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
@@ -3454,6 +3655,16 @@ fi
 # every durable record, and the endpoint are all still intact for a plain
 # rerun. An unresolvable lock path (for example an unreachable server) also
 # refuses before any destructive step.
+# A record-only repair never falls back from a tasktmp scan to signaling the
+# endpoint's whole process group: that group could still have a process whose
+# cwd is the reassigned slot. With no tasktmp there is no private process root
+# to reap; with one, lsof is required so cleanup stays path-exact.
+if [ "$RECORD_ONLY" = 1 ] && [ -n "$TASK_TMP" ] \
+   && ! command -v lsof >/dev/null 2>&1; then
+  echo "REFUSED: --record-only cannot verify leaked tasktmp processes for $ID because lsof is unavailable; nothing was changed" >&2
+  exit 1
+fi
+
 TEARDOWN_HERDR_SESSION=
 TEARDOWN_HERDR_PANE=
 if [ "$BACKEND" = herdr ]; then
@@ -3551,6 +3762,8 @@ fi
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   conclude_task_no_mistakes_run "$WT"
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
+elif [ "$KIND" != secondmate ] && [ "$RECORD_ONLY" = 1 ]; then
+  [ -z "$TASK_TMP" ] || reap_task_worktree_processes tasktmp "$TASK_TMP"
 elif [ "$KIND" != secondmate ]; then
   reap_task_worktree_processes tasktmp "$TASK_TMP"
 fi

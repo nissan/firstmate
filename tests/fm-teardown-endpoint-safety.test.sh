@@ -60,6 +60,16 @@ run_case() {  # <case> <id>
     "$TEARDOWN" "$id" --force
 }
 
+run_record_only_case() {  # <case> <id> [--force]
+  local dir=$1 id=$2 force=--force
+  local -a args=(--record-only)
+  [ "$#" -lt 3 ] || force=$3
+  [ -z "$force" ] || args+=("$force")
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+  FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" "${args[@]}"
+}
+
 assert_refused_without_mutation() {  # <case> <id> <description>
   local dir=$1 id=$2 description=$3 rc
   set +e
@@ -531,6 +541,270 @@ test_reused_pool_slot_refuses_before_touching_the_other_task() {
     || fail "teardown reached the runtime on a slot held by a secondmate home: $(cat "$dir/runtime.log")"
 
   pass "fm-teardown: a pool slot named by a second task record is never returned, killed, or reset"
+}
+
+assert_record_only_refused() {  # <case> <stale-id> <owner-id> <description>
+  local dir=$1 stale=$2 owner=$3 description=$4 rc
+  set +e
+  run_record_only_case "$dir" "$stale" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "$description: record-only reconciliation unexpectedly succeeded"
+  assert_present "$dir/home/state/$stale.meta" "$description: stale metadata changed before refusal"
+  [ -z "$owner" ] || assert_present "$dir/home/state/$owner.meta" "$description: owner metadata changed before refusal"
+  assert_present "$dir/worktree/sentinel" "$description: claimed slot changed before refusal"
+  [ ! -s "$dir/runtime.log" ] || fail "$description: runtime command ran before refusal: $(cat "$dir/runtime.log")"
+}
+
+test_record_only_reconciliation_requires_exact_positive_owner_evidence() {
+  local dir stale=stale-task owner=live-task third=third-task worker rc real_git
+
+  dir=$(make_case record-only-success)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+  real_git=$(command -v git)
+  cat > "$dir/fakebin/git" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *" -C $dir/pool/1/project "*) printf 'slot checkout read: %s\n' "\$*" >> "$dir/slot-read.log" ;;
+esac
+exec '$real_git' "\$@"
+SH
+  chmod +x "$dir/fakebin/git"
+  ( cd "$dir/worktree" && exec sleep 30 ) &
+  worker=$!
+
+  set +e
+  run_record_only_case "$dir" "$stale" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "record-only reconciliation with exact owner evidence failed: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$stale.meta" "record-only reconciliation left the stale record"
+  assert_present "$dir/home/state/$owner.meta" "record-only reconciliation removed the current owner's record"
+  assert_present "$dir/worktree/sentinel" "record-only reconciliation changed the current owner's slot"
+  assert_present "$dir/pool/1/.fm-slot-owner" "record-only reconciliation removed the current owner's claim"
+  assert_contains "$(cat "$dir/pool/1/.fm-slot-owner")" "task=$owner" \
+    "record-only reconciliation rewrote the current owner's claim"
+  kill -0 "$worker" 2>/dev/null || fail "record-only reconciliation killed a process in the current owner's slot"
+  ! grep -Fq "treehouse" "$dir/runtime.log" \
+    || fail "record-only reconciliation returned the current owner's slot: $(cat "$dir/runtime.log")"
+  assert_absent "$dir/slot-read.log" \
+    "record-only reconciliation asked Git to inspect the current owner's slot"
+  ! grep -Fq "kill-window> <=firstmate:=fm-$owner>" "$dir/runtime.log" \
+    || fail "record-only reconciliation closed the current owner's endpoint: $(cat "$dir/runtime.log")"
+  assert_contains "$(cat "$dir/stderr")" "proved" \
+    "successful record-only reconciliation should report its positive ownership proof"
+  kill "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+
+  dir=$(make_case record-only-no-discard-authority)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+  set +e
+  run_record_only_case "$dir" "$stale" "" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "record-only reconciliation supplied its own discard authority"
+  assert_present "$dir/home/state/$stale.meta" "unforced record-only reconciliation removed a report-less scout record"
+  assert_present "$dir/home/state/$owner.meta" "unforced record-only reconciliation removed the current owner's record"
+  assert_present "$dir/worktree/sentinel" "unforced record-only reconciliation changed the current owner's slot"
+  assert_contains "$(cat "$dir/stderr")" "has no report" \
+    "unforced record-only reconciliation did not preserve the scout report gate"
+  ! grep -Fq "treehouse" "$dir/runtime.log" \
+    || fail "unforced record-only reconciliation returned the current owner's slot: $(cat "$dir/runtime.log")"
+
+  dir=$(make_case record-only-invalid-endpoint)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+  assert_record_only_refused "$dir" "$stale" "$owner" "stale record with mismatched endpoint identity"
+
+  dir=$(make_case record-only-unreadable-endpoint)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+  cat > "$dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+printf 'tmux' >> "${FM_RUNTIME_LOG:?}"
+printf ' <%s>' "$@" >> "${FM_RUNTIME_LOG:?}"
+printf '\n' >> "${FM_RUNTIME_LOG:?}"
+if [ "${1:-}" = list-windows ]; then
+  echo 'permission denied' >&2
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$dir/fakebin/tmux"
+  set +e
+  run_record_only_case "$dir" "$stale" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "record-only reconciliation accepted an unreadable stale endpoint"
+  assert_present "$dir/home/state/$stale.meta" "unreadable stale endpoint lost its task record"
+  assert_present "$dir/home/state/$owner.meta" "unreadable stale endpoint lost the current owner's record"
+  assert_present "$dir/worktree/sentinel" "unreadable stale endpoint changed the current owner's slot"
+  assert_contains "$(cat "$dir/stderr")" "unreadable" \
+    "record-only endpoint refusal did not report the recovery-grade verdict"
+  ! grep -Fq "treehouse" "$dir/runtime.log" \
+    || fail "record-only endpoint refusal returned the current owner's slot: $(cat "$dir/runtime.log")"
+
+  dir=$(make_case record-only-no-counterpart)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+  assert_record_only_refused "$dir" "$stale" "" "missing current-owner record"
+
+  dir=$(make_case record-only-no-claim)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  assert_record_only_refused "$dir" "$stale" "$owner" "absent owner claim"
+
+  dir=$(make_case record-only-unreadable-claim)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  printf 'not-a-claim\n' > "$dir/pool/1/.fm-slot-owner"
+  assert_record_only_refused "$dir" "$stale" "$owner" "unreadable owner claim"
+
+  dir=$(make_case record-only-self-claim)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$stale" "$dir/home"
+  assert_record_only_refused "$dir" "$stale" "$owner" "self-naming owner claim"
+
+  dir=$(make_case record-only-third-claim)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$third" "$dir/home"
+  assert_record_only_refused "$dir" "$stale" "$owner" "claim naming an unrecorded third task"
+
+  dir=$(make_case record-only-missing-home)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  printf 'task=%s\nhome=\n' "$owner" > "$dir/pool/1/.fm-slot-owner"
+  assert_record_only_refused "$dir" "$stale" "$owner" "claim missing its home"
+
+  dir=$(make_case record-only-unresolvable-home)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/missing-home"
+  assert_record_only_refused "$dir" "$stale" "$owner" "unresolvable claimed home"
+
+  dir=$(make_case record-only-wrong-home)
+  mark_case_as_treehouse_pool "$dir"
+  mkdir -p "$dir/other-home"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/other-home"
+  assert_record_only_refused "$dir" "$stale" "$owner" "claim naming the wrong Firstmate home"
+
+  dir=$(make_case record-only-wrong-project)
+  mark_case_as_treehouse_pool "$dir"
+  mkdir -p "$dir/other-project"
+  git init -q "$dir/other-project"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/other-project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+  assert_record_only_refused "$dir" "$stale" "$owner" "owner record naming another project"
+
+  dir=$(make_case record-only-unsafe-tasktmp)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "tasktmp=$dir/worktree"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+  assert_record_only_refused "$dir" "$stale" "$owner" "tasktmp overlapping the current owner's slot"
+
+  dir=$(make_case record-only-ambiguous)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$third.meta" \
+    "window=firstmate:fm-$third" "endpoint_task_id=$third" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+  assert_record_only_refused "$dir" "$stale" "$owner" "multiple current-owner records"
+  assert_present "$dir/home/state/$third.meta" "ambiguous refusal removed the third record"
+
+  dir=$(make_case record-only-not-pool)
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  assert_record_only_refused "$dir" "$stale" "$owner" "non-Treehouse path"
+
+  pass "fm-teardown: record-only reconciliation requires one exact readable slot owner and refuses every missing, ambiguous, or contradictory ownership shape"
 }
 
 test_cross_home_pool_slot_collision_refuses() {
@@ -1383,6 +1657,7 @@ test_orca_close_failure_refuses_even_under_force
 test_already_gone_endpoint_still_completes_without_a_refusal
 test_bare_relative_origin_shares_project_lock_with_clone
 test_reused_pool_slot_refuses_before_touching_the_other_task
+test_record_only_reconciliation_requires_exact_positive_owner_evidence
 test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
