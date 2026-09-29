@@ -52,7 +52,7 @@ queued_guard_wake() {  # <state>
 # read yields NO observation, which is what keeps an unrecognised harness on
 # exactly the coverage it had before rather than on a guessed number.
 test_pane_token_parsing() {
-  local got
+  local got capture i
   # The two recorded spellings, verbatim, with their recorded surroundings.
   got=$(fm_noprogress_pane_tokens '✢ Pollinating… (16s · ↓ 1.1k tokens · thought for 1s)')
   [ "$got" = 1100 ] || fail "the recorded claude 'k'-suffixed footer parsed as '$got', not 1100"
@@ -60,6 +60,21 @@ test_pane_token_parsing() {
   [ "$got" = 234 ] || fail "the recorded claude bare-integer footer parsed as '$got', not 234"
   got=$(fm_noprogress_pane_tokens ' ⠘⠆ Running  59 tokens')
   [ "$got" = 59 ] || fail "the recorded cursor spinner row parsed as '$got', not 59"
+
+  # The recorded Herdr layout puts that spinner above a variable task list.
+  # Twelve non-blank rows below it used to discard the live counter, even
+  # though all of those rows are inside the 40-line pane capture the watcher
+  # passes to this parser.
+  capture=' ⠘⠆ Running  59 tokens'
+  i=1
+  while [ "$i" -le 12 ]; do
+    capture="$capture
+herdr task row $i"
+    i=$(( i + 1 ))
+  done
+  got=$(fm_noprogress_pane_tokens "$capture")
+  [ "$got" = 59 ] \
+    || fail "a recorded Herdr counter above twelve task rows disappeared from the bounded footer capture ('$got', not 59)"
 
   # A footer can render more than one anchored counter. The FOOTER-MOST one is
   # the counter; which of them is per-turn does not matter, because
@@ -91,12 +106,18 @@ test_pane_token_parsing() {
     fail "an unrecorded uppercase-K counter was accepted"
   fi
 
-  # FOOTER REGION ONLY. Even an anchored match above the footer region is
+  # FOOTER REGION ONLY. Even an anchored match above the bounded capture is
   # scrollback, not a counter.
-  got=$(fm_noprogress_pane_tokens "$(printf '↓ 999999 tokens\n%s\n' \
-    "$(for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do printf 'running the suite\n'; done)") Running  59 tokens")
-  [ "$got" = 59 ] \
-    || fail "an anchored counter in scrollback was read as the counter ('$got', not 59)"
+  capture='↓ 999999 tokens'
+  i=1
+  while [ "$i" -le 40 ]; do
+    capture="$capture
+scrollback row $i"
+    i=$(( i + 1 ))
+  done
+  if fm_noprogress_pane_tokens "$capture" >/dev/null 2>&1; then
+    fail "a counter older than the 40-line capture bound was read from scrollback"
+  fi
   # And the compaction notice this repo has recorded live is prose about a past
   # total, so it falls out on the anchor alone - it needs no carve-out.
   if fm_noprogress_pane_tokens 'Compacted from 7,697 tokens' >/dev/null 2>&1; then
@@ -283,6 +304,15 @@ shipped_default() {  # <var>
   # shellcheck disable=SC2016
   env -u FM_NOPROGRESS_SPEND -u FM_NOPROGRESS_SECS bash -c \
     '. "$1"; printf "%s" "${!2}"' _ "$ROOT/bin/fm-noprogress-lib.sh" "$1"
+}
+
+# Gate values after the library has validated an operator's source-time
+# configuration.
+configured_gates() {  # <spend> <seconds>
+  # shellcheck disable=SC2016
+  env FM_NOPROGRESS_SPEND="$1" FM_NOPROGRESS_SECS="$2" bash -c \
+    '. "$1"; printf "%s:%s" "$FM_NOPROGRESS_SPEND" "$FM_NOPROGRESS_SECS"' \
+    _ "$ROOT/bin/fm-noprogress-lib.sh"
 }
 
 test_recorded_per_turn_footers_accumulate_across_turns() {
@@ -606,73 +636,81 @@ test_an_intermittently_readable_worktree_still_escalates() {
   pass "a head that flips between a sha and the placeholder is no evidence, so a burn behind a flaky mount still escalates"
 }
 
+# A WINDOW THAT OPENS WHILE HEAD IS UNREADABLE. With no known head to carry
+# forward, the first readable sha used to look like production and restart the
+# window once. That delays escalation by one full window after first sighting or
+# fm_noprogress_clear even though no known sha ever changed.
+test_initial_unreadable_head_recovery_preserves_window() {
+  local dir state verdict rec sha
+  dir=$(make_case initial-unreadable); state="$dir/state"
+  sha=0123456789012345678901234567890123456789
+  export FM_NOPROGRESS_SPEND=1000 FM_NOPROGRESS_SECS=100
+
+  fm_noprogress_observe "$state" t 100 '-:-:-' 1000 >/dev/null
+  fm_noprogress_observe "$state" t 600 "$sha:-:-" 1050 >/dev/null
+  verdict=$(fm_noprogress_observe "$state" t 1200 "$sha:-:-" 1100)
+  [ "$verdict" = 'escalate 1100 100' ] \
+    || fail "the first readable head restarted the window instead of preserving its spend and age: $verdict"
+  rec=$(fm_noprogress_record "$state" t)
+  [ "$(sed -n 's/^art=//p' "$rec")" = "$sha:-:-" ] \
+    || fail "the recovered real head was not adopted as the window baseline: $(cat "$rec")"
+
+  # The unknown head is the only component ignored. A report movement during
+  # the same transition is still production and must restart the window.
+  fm_noprogress_clear "$state" t
+  fm_noprogress_observe "$state" t 100 '-:-:-' 2000 >/dev/null
+  fm_noprogress_observe "$state" t 600 "$sha:1:-" 2100 >/dev/null
+  rec=$(fm_noprogress_record "$state" t)
+  [ "$(sed -n 's/^since=//p' "$rec")" = 2100 ] \
+    || fail "a moved report was hidden while the first readable head was adopted: $(cat "$rec")"
+  [ "$(sed -n 's/^spend=//p' "$rec")" = 0 ] \
+    || fail "spend survived real production during head recovery: $(cat "$rec")"
+
+  unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
+  pass "the first readable head becomes the existing window's baseline without hiding movement in the other artifact signals"
+}
+
 # A MISTYPED KNOB MUST NOT BECOME A WAKE STORM. docs/configuration.md invites
-# operators to retune both gates, and `${VAR:-default}` catches only unset and
-# empty. Unvalidated, `60k` makes `[ "$spend" -lt "60k" ]` error and return
-# false, which sails past BOTH gates and escalates on whatever trivial spend the
-# worker happened to have, quoting that figure to a human as a burn.
+# operators to retune both gates, and validation has to happen when the library
+# is sourced so the rest of the guard consumes one normalized value. Otherwise
+# `60k` reaches arithmetic and can turn trivial spend into an escalation.
 test_a_malformed_gate_knob_falls_back_to_its_default() {
-  local dir state verdict
+  local dir state verdict spend_default secs_default got bad
   dir=$(make_case bad-knob); state="$dir/state"
+  spend_default=$(shipped_default FM_NOPROGRESS_SPEND)
+  secs_default=$(shipped_default FM_NOPROGRESS_SECS)
 
-  # 200 tokens of spend against a window well past any sane age gate. Under the
-  # 60000 default this is nowhere near escalating; unvalidated it escalates.
-  export FM_NOPROGRESS_SPEND=60k FM_NOPROGRESS_SECS=1800
-  fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
-  fm_noprogress_observe "$state" t 200 sig-a 1100 >/dev/null
-  verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
-  [ "$verdict" = ok ] \
-    || fail "a malformed FM_NOPROGRESS_SPEND escalated on trivial spend: $verdict"
-
-  # The same for the age gate, and for the shapes a careless edit actually
-  # produces: a thousands separator and a trailing space.
-  for bad in '60,000' '60000 ' 'lots'; do
-    fm_noprogress_clear "$state" t
-    export FM_NOPROGRESS_SPEND="$bad" FM_NOPROGRESS_SECS="$bad"
-    fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
-    fm_noprogress_observe "$state" t 200 sig-a 1100 >/dev/null
-    verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
-    [ "$verdict" = ok ] \
-      || fail "the malformed knob value '$bad' escalated on trivial spend: $verdict"
+  # Exercise the actual source-time interface for the typo shapes an operator
+  # can put in the environment: suffix, thousands separator, trailing space,
+  # and prose. Both gates must be normalized to their shipped values once.
+  for bad in '60k' '60,000' '60000 ' 'lots'; do
+    got=$(configured_gates "$bad" "$bad")
+    [ "$got" = "$spend_default:$secs_default" ] \
+      || fail "the malformed source-time gates '$bad' normalized to '$got', not '$spend_default:$secs_default'"
   done
 
-  # A SPEND GATE OF ZERO IS REJECTED TOO, because re-escalation is paced in
-  # units of that same gate: at zero the pacing comparison can never hold, so
-  # every later poll with any spend at all escalates, and each escalation exits
-  # the watcher and restarts the whole single-threaded fleet poll loop. Taken
-  # literally, 200 tokens against a long-open window would escalate here.
-  fm_noprogress_clear "$state" t
-  export FM_NOPROGRESS_SPEND=0 FM_NOPROGRESS_SECS=100
-  fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
-  verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
-  [ "$verdict" = ok ] \
-    || fail "a spend gate of 0 escalated on 200 tokens instead of falling back to the default: $verdict"
+  # Zero is invalid for spend because it is also the re-escalation pacing unit,
+  # but remains a valid age gate because age has no second role.
+  got=$(configured_gates 0 0)
+  [ "$got" = "$spend_default:0" ] \
+    || fail "zero-valued source-time gates normalized to '$got', not '$spend_default:0'"
 
-  # ...and with the default in force, pacing does what it is there for: a burn
-  # that crosses the default still escalates once, and the very next poll's
-  # further spend is suppressed until another full threshold is spent.
-  verdict=$(fm_noprogress_observe "$state" t 60300 sig-a 9100)
-  case "$verdict" in
-    escalate\ *) ;;
-    *) fail "a spend gate of 0 did not escalate at the default threshold either, so the fallback muted the guard: $verdict" ;;
-  esac
-  verdict=$(fm_noprogress_observe "$state" t 61300 sig-a 9200)
-  [ "$verdict" = ok ] \
-    || fail "re-escalation was unpaced under a spend gate of 0: $verdict"
-
-  # ...and the fallback is a FALLBACK, not a mute: a well-formed low gate still
-  # escalates, so this test cannot pass by making the guard silent.
-  fm_noprogress_clear "$state" t
+  # A well-formed low configuration is preserved and remains live rather than
+  # the normalization muting every custom value.
+  got=$(configured_gates 150 100)
+  [ "$got" = '150:100' ] \
+    || fail "well-formed source-time gates were not preserved: $got"
   export FM_NOPROGRESS_SPEND=150 FM_NOPROGRESS_SECS=100
+  fm_noprogress_clear "$state" t
   fm_noprogress_observe "$state" t 100 sig-a 1000 >/dev/null
   verdict=$(fm_noprogress_observe "$state" t 300 sig-a 9000)
   case "$verdict" in
     escalate\ *) ;;
-    *) fail "a well-formed gate did not escalate, so the malformed cases prove nothing: $verdict" ;;
+    *) fail "a well-formed gate did not escalate, so normalization muted the guard: $verdict" ;;
   esac
 
   unset FM_NOPROGRESS_SPEND FM_NOPROGRESS_SECS
-  pass "a malformed or zero spend gate, and a malformed age gate, fall back to the default instead of escalating on trivial spend"
+  pass "gate knobs are normalized once at source time, preserving valid values and applying each shipped default consistently"
 }
 
 # EVERY TREEHOUSE WORKTREE IS A LINKED WORKTREE, so that is the normal case for
@@ -935,6 +973,7 @@ test_frozen_counter_gate_is_the_only_thing_keeping_this_silent
 test_artifact_fingerprint_tracks_each_signal
 test_a_hanging_worktree_cannot_stall_the_poll
 test_an_intermittently_readable_worktree_still_escalates
+test_initial_unreadable_head_recovery_preserves_window
 test_a_malformed_gate_knob_falls_back_to_its_default
 test_linked_worktree_and_detached_head_resolve
 test_climbing_tokens_without_artifact_escalate
