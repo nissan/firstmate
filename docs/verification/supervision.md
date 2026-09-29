@@ -382,7 +382,7 @@ FM_GROK_STOP_LIVE_E2E=1 FM_GROK_NATIVE_BIN="$native_grok" FM_GROK_LEGACY_BIN="$p
 ### Lock-unavailable Stop bound and lock-identity races, 2026-09-29
 
 The Issue #4, #6, and #8 follow-ups were verified with portable public-behavior suites on 2026-09-29.
-The Claude guard reached one separately marked attended fail-open after its ordinary block budget for missing, malformed, and stale fleet locks, resumed blocking after that single allowance, preserved the verified-owner requirement for the ordinary auto-arm failure proof, and cleared both alarm kinds only after positive supervision recovery.
+The Claude guard reached one separately marked attended fail-open after its ordinary block budget for missing, malformed, and stale fleet locks, resumed blocking after that single allowance, preserved the verified-owner requirement for the ordinary auto-arm failure proof, cleared both alarm kinds after positive supervision recovery, and also cleared the lock-unavailable alarm with its block budget when supervision need disappeared while no auto-arm failure notice was pending, so a later dispatch with the lock still missing earned its own bounded attended fail-open.
 Foreign-owner classification stayed bound to the first lock snapshot when a stale or foreign owner was replaced during classification.
 A deeply nested session start passed its exact successful acquisition identity to the supervision renderer, while direct renderer coverage rejected stale acquisition evidence after the live lock changed.
 
