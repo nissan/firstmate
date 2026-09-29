@@ -464,3 +464,6 @@ fi
 [ "$(sed -n 's/^exit_result=//p' "$HOME_DIR/state/hsmoke.control-relaunch" | tail -1)" = endpoint-gone ] \
   || fail "the relaunch transaction did not record the proven-gone endpoint"
 pass "real herdr: a gone endpoint relaunch preserves task identity and work, creates one flat replacement, rebinds metadata, and leaves unrelated endpoints untouched"
+
+cleanup_all || { printf 'not ok - %s\n' 'guarded Herdr lab teardown or default-session tripwire verification failed' >&2; exit 1; }
+trap - EXIT
