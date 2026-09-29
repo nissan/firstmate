@@ -1,0 +1,9 @@
+ok - unknown extension conformance section selectors fail before setup
+ok - inner result.silent crash recovery bounds a wedged terminal retry and reaps it
+ok - the section coordinator propagates ordered failures and bounded cleanup
+
+all coordinator tests passed
+
+real	0m19.791s
+user	0m4.208s
+sys	0m2.597s

@@ -1,0 +1,11 @@
+wedge run 1 (load x24): rc=1 adapter_pid=756316 adapter_alive=no diag=inner host crash during result.silent wedged its runner before result.terminal
+wedge run 2 (load x24): rc=1 adapter_pid=766142 adapter_alive=no diag=inner host crash during result.silent wedged its runner before result.terminal
+wedge run 3 (load x24): rc=1 adapter_pid=774153 adapter_alive=no diag=inner host crash during result.silent wedged its runner before result.terminal
+wedge run 4 (load x24): rc=1 adapter_pid=784186 adapter_alive=no diag=inner host crash during result.silent wedged its runner before result.terminal
+wedge run 5 (load x24): rc=1 adapter_pid=793920 adapter_alive=no diag=inner host crash during result.silent wedged its runner before result.terminal
+/usr/bin/bash: line 11: bc: command not found
+healthy run 1 (load): rc=0 elapsed=s ok - inner result.silent host crash releases the parent lifecycle lock before terminal retry
+/usr/bin/bash: line 11: bc: command not found
+healthy run 2 (load): rc=0 elapsed=s ok - inner result.silent host crash releases the parent lifecycle lock before terminal retry
+/usr/bin/bash: line 11: bc: command not found
+healthy run 3 (load): rc=0 elapsed=s ok - inner result.silent host crash releases the parent lifecycle lock before terminal retry

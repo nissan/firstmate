@@ -1,0 +1,3 @@
+MAX_POLLS=0 rc=1 -> crash-silent recovery poll bound must be a positive integer
+MAX_POLLS=abc rc=1 -> crash-silent recovery poll bound must be a positive integer
+leftover wedge adapters: 3
