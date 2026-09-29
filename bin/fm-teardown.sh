@@ -393,6 +393,34 @@ META="$STATE/$ID.meta"
 # layout and its plain state file establish that this is a pool slot; the exact
 # other record, claim, home, and project-lock identity are proved later under
 # the lock. Prints the canonical slot path on success.
+# A tmux record with no window and no other backend's identity names no
+# endpoint at all. Every other field must still validate once a placeholder
+# window stands in, so any broader malformation keeps refusing.
+teardown_windowless_shape() {  # <meta> <task-id>
+  local meta=$1 id=$2 window_count backend_count foreign_keys foreign_backend shape_meta rc=1
+  window_count=$(LC_ALL=C grep -c '^window=' "$meta" 2>/dev/null || true)
+  backend_count=$(LC_ALL=C grep -c '^backend=' "$meta" 2>/dev/null || true)
+  case "$window_count:$(fm_meta_get "$meta" window)" in
+    0:|1:) ;;
+    *) return 1 ;;
+  esac
+  case "$backend_count:$(fm_meta_get "$meta" backend)" in
+    0:|1:tmux) ;;
+    *) return 1 ;;
+  esac
+  foreign_keys='^terminal='
+  for foreign_backend in $FM_BACKEND_KNOWN; do
+    [ "$foreign_backend" = tmux ] || foreign_keys="$foreign_keys|^${foreign_backend}_"
+  done
+  ! LC_ALL=C grep -Eq "$foreign_keys" "$meta" 2>/dev/null || return 1
+  shape_meta=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-teardown-shape.XXXXXX") || return 1
+  { LC_ALL=C grep -v '^window=' "$meta" || true; printf 'window=leftover:fm-%s\n' "$id"; } \
+    > "$shape_meta"
+  fm_backend_validate_task_endpoint "$shape_meta" "$id" 2>/dev/null && rc=0
+  rm -f "$shape_meta"
+  return "$rc"
+}
+
 teardown_record_only_pool_slot() {  # <worktree>
   local worktree=$1 slot pool state
   [ -d "$worktree" ] || return 1
@@ -529,30 +557,7 @@ TEARDOWN_BACKLOG_APPLIES=0
 TEARDOWN_BACKLOG_SKIP_REASON=
 TEARDOWN_WINDOWLESS=0
 TEARDOWN_WINDOWLESS_SHAPE=0
-TEARDOWN_WINDOW_COUNT=$(LC_ALL=C grep -c '^window=' "$META" 2>/dev/null || true)
-TEARDOWN_BACKEND_COUNT=$(LC_ALL=C grep -c '^backend=' "$META" 2>/dev/null || true)
-case "$TEARDOWN_WINDOW_COUNT:$(fm_meta_get "$META" window)" in
-  0:|1:)
-    case "$TEARDOWN_BACKEND_COUNT:$(fm_meta_get "$META" backend)" in
-      0:|1:tmux)
-        TEARDOWN_FOREIGN_ENDPOINT_KEYS='^terminal='
-        for TEARDOWN_FOREIGN_BACKEND in $FM_BACKEND_KNOWN; do
-          [ "$TEARDOWN_FOREIGN_BACKEND" = tmux ] \
-            || TEARDOWN_FOREIGN_ENDPOINT_KEYS="$TEARDOWN_FOREIGN_ENDPOINT_KEYS|^${TEARDOWN_FOREIGN_BACKEND}_"
-        done
-        if ! LC_ALL=C grep -Eq "$TEARDOWN_FOREIGN_ENDPOINT_KEYS" "$META" 2>/dev/null; then
-          TEARDOWN_SHAPE_META=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-teardown-shape.XXXXXX") || exit 1
-          { LC_ALL=C grep -v '^window=' "$META" || true; printf 'window=leftover:fm-%s\n' "$ID"; } \
-            > "$TEARDOWN_SHAPE_META"
-          if fm_backend_validate_task_endpoint "$TEARDOWN_SHAPE_META" "$ID" 2>/dev/null; then
-            TEARDOWN_WINDOWLESS_SHAPE=1
-          fi
-          rm -f "$TEARDOWN_SHAPE_META"
-        fi
-        ;;
-    esac
-    ;;
-esac
+teardown_windowless_shape "$META" "$ID" && TEARDOWN_WINDOWLESS_SHAPE=1
 if [ "$TEARDOWN_CLEANUP_RECOVERY" != orca ]; then
   if fm_backlog_transition_applies "$CONFIG" "$DATA" "$TEARDOWN_META_KIND"; then
     TEARDOWN_BACKLOG_APPLIES=1
@@ -2462,7 +2467,16 @@ require_exclusive_task_worktree_slot() {
 # Classify one colliding record's exact endpoint without changing it.
 # Invalid endpoint metadata is unreadable evidence, never an agent-less record.
 record_only_endpoint_state() {  # <meta> <task-id>
-  local meta=$1 id=$2 backend target
+  local meta=$1 id=$2 backend target gen_count
+  if teardown_windowless_shape "$meta" "$id"; then
+    gen_count=$(LC_ALL=C awk -F= '$1 == "spawn_gen" { count++ } END { print count + 0 }' "$meta" 2>/dev/null || printf 'x\n')
+    case "$gen_count:$(fm_meta_get "$meta" spawn_gen)" in
+      0:|1:legacy-*)
+        printf 'missing\n'
+        return 0
+        ;;
+    esac
+  fi
   fm_backend_validate_task_endpoint "$meta" "$id" >/dev/null 2>&1 || {
     printf 'unreadable\n'
     return 0

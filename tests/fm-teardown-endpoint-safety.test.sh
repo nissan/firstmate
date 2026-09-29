@@ -886,6 +886,58 @@ test_record_only_reconciles_a_windowless_stale_record() {
   pass "fm-teardown: a windowless stale record reconciles through --record-only as a missing endpoint"
 }
 
+test_record_only_reconciles_multiple_windowless_stale_records() {
+  local dir owner=live-task stale1=stale-windowless-one stale2=stale-windowless-two
+  local stamped=stale-windowless-stamped id rc
+
+  dir=$(make_case record-only-multiple-windowless)
+  mark_case_as_treehouse_pool "$dir"
+  printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' \
+    > "$dir/home/data/backlog.md"
+  for id in "$stale1" "$stale2"; do
+    tasks-axi add "$id" "windowless fixture task" --kind scout \
+      --file "$dir/home/data/backlog.md" >/dev/null
+    tasks-axi start "$id" --file "$dir/home/data/backlog.md" >/dev/null
+  done
+  fm_write_meta "$dir/home/state/$stale1.meta" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$stale2.meta" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$stamped.meta" \
+    "spawn_gen=s1700000000.1.abc" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+
+  set +e
+  run_record_only_case "$dir" "$stale1" > "$dir/stdout-stamped" 2> "$dir/stderr-stamped"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "record-only reconciliation accepted a windowless sibling that carries a spawned incarnation"
+  assert_contains "$(cat "$dir/stderr-stamped")" "$stamped" \
+    "windowless sibling refusal did not identify the stamped record"
+  for id in "$stale1" "$stale2" "$stamped" "$owner"; do
+    assert_present "$dir/home/state/$id.meta" "stamped-sibling refusal removed task $id's record"
+  done
+  rm -f "$dir/home/state/$stamped.meta"
+
+  run_record_only_case "$dir" "$stale1" > "$dir/stdout-1" 2> "$dir/stderr-1" \
+    || fail "first windowless stale record did not reconcile past its windowless sibling: $(cat "$dir/stderr-1")"
+  assert_absent "$dir/home/state/$stale1.meta" "first windowless reconciliation left its stale record"
+  assert_present "$dir/home/state/$stale2.meta" "first windowless reconciliation removed its sibling record"
+  run_record_only_case "$dir" "$stale2" > "$dir/stdout-2" 2> "$dir/stderr-2" \
+    || fail "second windowless stale record did not reconcile: $(cat "$dir/stderr-2")"
+  assert_absent "$dir/home/state/$stale2.meta" "second windowless reconciliation left its stale record"
+  assert_present "$dir/home/state/$owner.meta" "windowless reconciliation removed the current owner's record"
+  assert_present "$dir/worktree/sentinel" "windowless reconciliation changed the current owner's slot"
+  ! grep -Fq "treehouse" "$dir/runtime.log" \
+    || fail "windowless reconciliation returned the current owner's slot: $(cat "$dir/runtime.log")"
+
+  pass "fm-teardown: windowless legacy siblings read as missing endpoints while a windowless sibling with a spawned incarnation still refuses"
+}
+
 test_record_only_multiple_stale_records_refuse_a_mixed_live_set() {
   local dir owner=live-task stale1=stale-one stale2=stale-two stale3=stale-three id rc
 
@@ -1791,6 +1843,7 @@ test_reused_pool_slot_refuses_before_touching_the_other_task
 test_record_only_reconciliation_requires_exact_positive_owner_evidence
 test_record_only_reconciles_multiple_proven_stale_records_individually
 test_record_only_reconciles_a_windowless_stale_record
+test_record_only_reconciles_multiple_windowless_stale_records
 test_record_only_multiple_stale_records_refuse_a_mixed_live_set
 test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
