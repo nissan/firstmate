@@ -91,7 +91,7 @@
 # read as unparseable and simply opens a fresh window, which is the same thing
 # every other corrupt-record path here does.
 #
-# Callers: bin/fm-watch.sh, bin/fm-teardown.sh.
+# Callers: bin/fm-watch.sh, bin/fm-supervise-daemon.sh, bin/fm-teardown.sh.
 set -u
 
 # fm_run_timed, the shared hard bound around the one thing this library touches
@@ -119,13 +119,15 @@ _FM_NOPROGRESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null
 # because a window that young is never eligible. A value that is not a positive
 # integer falls back to the default; zero is rejected because re-escalation is
 # paced in units of this same gate (see fm_noprogress_observe).
-FM_NOPROGRESS_SPEND=${FM_NOPROGRESS_SPEND:-60000}
+FM_NOPROGRESS_SPEND=${FM_NOPROGRESS_SPEND:-}
+case "$FM_NOPROGRESS_SPEND" in ''|*[!0-9]*|0) FM_NOPROGRESS_SPEND=60000 ;; esac
 
 # Seconds the artifact fingerprint must have been unchanged before the guard
 # escalates. Both gates must be crossed: a fast burst of spend that lands an
 # artifact minutes later is not the shape being caught. A value that is not a
 # non-negative integer falls back to the default.
-FM_NOPROGRESS_SECS=${FM_NOPROGRESS_SECS:-1800}
+FM_NOPROGRESS_SECS=${FM_NOPROGRESS_SECS:-}
+case "$FM_NOPROGRESS_SECS" in ''|*[!0-9]*) FM_NOPROGRESS_SECS=1800 ;; esac
 
 # The phrase every escalation this guard raises is built around, and the one
 # every consumer routes on. It lives here alone: the watcher queues the wake
@@ -143,10 +145,11 @@ FM_NOPROGRESS_REASON_PREFIX='spending without producing'
 # task - a far worse failure than the fork costs. The repo already bounds this
 # exact hazard for the same reason (FM_WORKTREE_WRITE_TIMEOUT, and
 # crew_worktree_written_since in bin/fm-classify-lib.sh). Hitting the bound
-# reads as an unreadable worktree, which contributes the fixed placeholder
-# fm_noprogress_artifact_sig defines and so leaves the escalation schedule
-# exactly as it was. A value that is not a positive integer falls back to the
-# default.
+# reads as an unreadable worktree; fm_noprogress_observe substitutes the last
+# known head before comparing fingerprints, and treats the first later readable
+# head as the window's baseline when no known head exists, so the escalation
+# schedule stays intact. A value that is not a positive integer falls back to
+# the default.
 FM_NOPROGRESS_TIMEOUT=${FM_NOPROGRESS_TIMEOUT:-5}
 
 # fm_noprogress_record: absolute path of a task's guard record.
@@ -230,12 +233,13 @@ _fm_noprogress_uint() {  # <value> <default>
 # footer is no observation at all, which costs only this guard's silence for that
 # harness, while a guess costs a false escalation.
 #
-# FOOTER REGION ONLY. The match is further narrowed to the last 12 non-blank
-# lines, the same TUI footer region every other rendered-string contract in this
-# repo reads (fm_busy_grok_tail_busy and fm_busy_rovo_tail_busy in
-# bin/fm-busy-lib.sh, and window_is_busy's narrowing in bin/fm-watch.sh), because
-# scrollback is content a worker prints and a counter grammar applied to content
-# is a grammar an agent can forge.
+# FOOTER REGION ONLY. The match is narrowed to the last 40 non-blank lines,
+# matching the complete bounded pane capture bin/fm-watch.sh already takes for
+# this check. The recorded Herdr footer puts its counter above a variable task
+# list, so the narrower 12-line regions used by other rendered-string contracts
+# can discard a live counter as that list grows. The bound still excludes older
+# scrollback, which is content a worker prints and a counter grammar applied to
+# content is a grammar an agent can forge.
 #
 # The FOOTER-MOST remaining match wins. No recorded shape renders a second
 # anchored match below its counter, so the last one is the counter in every
@@ -266,7 +270,7 @@ fm_noprogress_pane_tokens() {  # <pane-capture>
   done <<EOF
 $(printf '%s\n' "$capture" \
   | grep -v '^[[:space:]]*$' \
-  | tail -12 \
+  | tail -40 \
   | grep -oE '(↓|Running)[[:space:]]+[0-9]+(\.[0-9])?k?[[:space:]]+tokens' \
   | sed -E 's/^(↓|Running)[[:space:]]+//; s/[[:space:]]+tokens$//')
 EOF
@@ -372,16 +376,20 @@ fm_noprogress_observe() {  # <state> <task> <tokens> <artifact-sig> <now>
   # resets to 0 and since resets to now, on every other poll. Accumulated spend
   # could then never reach the gate, so the guard would go permanently silent
   # for precisely the task whose worktree is sick - while docs/architecture.md
-  # still said the shape was covered. So a '-' head carries the LAST KNOWN head
-  # forward instead of overwriting it. Nothing new is stored for this: the
-  # carried value goes into the same art= field the record already has. Only a
-  # real sha-to-different-sha transition is production, which also means a
-  # commit that lands DURING an outage is still seen the moment the read
-  # recovers, rather than being swallowed as "no evidence".
+  # still said the shape was covered. Compare with whichever real head is
+  # available: a current '-' carries the last known head forward, while a first
+  # readable head replaces a previous '-' baseline without restarting the
+  # window. Nothing new is stored for this: the real value goes into the same
+  # art= field the record already has. Only a known sha-to-different-sha
+  # transition is production; after any known head, a commit that lands during
+  # an outage is still seen when the read recovers.
   case "${sig%%:*}" in
     -) case "$prev_sig" in
          ''|-:*) ;;
          *) sig="${prev_sig%%:*}:${sig#*:}" ;;
+       esac ;;
+    *) case "$prev_sig" in
+         -:*) prev_sig="${sig%%:*}:${prev_sig#*:}" ;;
        esac ;;
   esac
 
@@ -414,23 +422,13 @@ fm_noprogress_observe() {  # <state> <task> <tokens> <artifact-sig> <now>
   # the wait runs and however much was spent before it began.
   [ "$delta" -gt 0 ] || { printf 'ok\n'; return 0; }
 
-  # Both gates go through the same fall-back-to-default contract every other
-  # number this library reads gets, because `${VAR:-default}` catches only unset
-  # and empty - not a typo. docs/configuration.md invites operators to retune
-  # exactly these two, and an unvalidated `60k` makes `[ -lt ]` error and return
-  # false, which sails past BOTH gates and escalates on whatever trivial spend
-  # the worker happened to have: a per-poll wake storm quoting a fabricated
-  # figure, which is the false-alarm shape this guard exists to avoid.
-  #
-  # The spend gate rejects zero as well, exactly as the timeout does, because
-  # re-escalation below is paced in units of THIS gate: at zero the pacing
-  # comparison can never hold, so every subsequent poll with any spend at all
-  # escalates and each escalation exits the watcher, restarting the whole
-  # single-threaded fleet poll loop once per FM_POLL for as long as the burn
-  # runs. The age gate has no such second role, so zero remains legal there.
-  spend_gate=${FM_NOPROGRESS_SPEND:-}
-  case "$spend_gate" in ''|*[!0-9]*|0) spend_gate=60000 ;; esac
-  secs_gate=$(_fm_noprogress_uint "${FM_NOPROGRESS_SECS:-}" 1800)
+  # Both gates were validated once when this library was sourced. That catches
+  # a typo before arithmetic can treat it as a crossed gate and turn trivial
+  # spend into a wake storm. The spend gate rejects zero because re-escalation
+  # below is paced in units of this gate; the age gate has no such second role,
+  # so zero remains legal there.
+  spend_gate=$FM_NOPROGRESS_SPEND
+  secs_gate=$FM_NOPROGRESS_SECS
 
   age=$(( now - since ))
   [ "$age" -ge 0 ] || age=0
