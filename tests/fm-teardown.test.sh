@@ -2540,7 +2540,7 @@ test_herdr_flat_teardown_refuses_records_on_unparseable_presence() {
 }
 
 assert_herdr_teardown_preflight_refuses_before_changes() {
-  local mode=$1 case_dir log closed rc thlog teardown_bin
+  local mode=$1 case_dir log closed rc thlog teardown_bin teardown_root
   case_dir=$(make_case "herdr-preflight-$mode")
   write_meta "$case_dir" local-only ship
   configure_flat_herdr_teardown_case "$case_dir"
@@ -2557,6 +2557,7 @@ SH
   chmod +x "$case_dir/fakebin/treehouse"
 
   teardown_bin=$TEARDOWN
+  teardown_root=$ROOT
   case "$mode" in
     missing-adapter|missing-parser|missing-explicit-close-helper)
       mkdir -p "$case_dir/test-root"
@@ -2573,10 +2574,15 @@ SH
         rm -f "$case_dir/test-root/bin/backends/herdr.sh.bak"
       fi
       teardown_bin="$case_dir/test-root/bin/fm-teardown.sh"
+      teardown_root="$case_dir/test-root"
       ;;
   esac
+  if [ "$mode" = missing-adapter ]; then
+    [ ! -e "$teardown_root/bin/backends/herdr.sh" ] \
+      || fail "herdr-preflight-missing-adapter: copied test root still contains the Herdr adapter"
+  fi
   rc=0
-  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" FM_DATA_OVERRIDE="$case_dir/data" \
+  FM_ROOT_OVERRIDE="$teardown_root" FM_STATE_OVERRIDE="$case_dir/state" FM_DATA_OVERRIDE="$case_dir/data" \
     FM_CONFIG_OVERRIDE="$case_dir/config" FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_CLOSED="$closed" \
     FM_FAKE_HERDR_SESSION_LIST_GARBAGE="$([ "$mode" = unresolvable-lock ] && printf 1 || printf 0)" \
     PATH="$case_dir/fakebin:$PATH" \
@@ -2584,6 +2590,12 @@ SH
   [ "$rc" -ne 0 ] || fail "herdr-preflight-$mode: teardown continued without its required preflight"
   assert_grep "nothing was changed" "$case_dir/stderr" \
     "herdr-preflight-$mode: the retryable pre-return refusal was not explained visibly"
+  if [ "$mode" = missing-adapter ]; then
+    assert_grep "herdr teardown prerequisites are unavailable" "$case_dir/stderr" \
+      "herdr-preflight-missing-adapter: teardown did not exercise the absent adapter path"
+    [ ! -e "$teardown_root/bin/backends/herdr.sh" ] \
+      || fail "herdr-preflight-missing-adapter: teardown unexpectedly restored the absent adapter"
+  fi
   [ -d "$case_dir/wt" ] || fail "herdr-preflight-$mode: refusal removed the isolated copy"
   [ "$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "fm/task-x1" ] \
     || fail "herdr-preflight-$mode: refusal dropped the task branch"
