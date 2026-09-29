@@ -1,0 +1,12 @@
+== Scenario C: retire the three stale records one at a time
+
+$ fm-teardown.sh brain-a --record-only --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+REFUSED: --record-only found 3 other task record(s) naming /tmp/fm-4rec.LYsd/pool/1/project, but the slot claim for task live-owner in home /tmp/fm-4rec.LYsd/home must match exactly one; ownership is missing, ambiguous, or contradictory and nothing was changed
+exit=1
+records: brain-a.meta brain-b.meta brain-c.meta live-owner.meta 
+
+$ fm-teardown.sh brain-b --record-only --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+REFUSED: --record-only found 3 other task record(s) naming /tmp/fm-4rec.LYsd/pool/1/project, but the slot claim for task live-owner in home /tmp/fm-4rec.LYsd/home must match exactly one; ownership is missing, ambiguous, or contradictory and nothing was changed
+exit=1

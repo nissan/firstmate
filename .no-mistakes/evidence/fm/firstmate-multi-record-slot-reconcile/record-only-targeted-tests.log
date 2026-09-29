@@ -1,0 +1,10 @@
+ok - fm-teardown: missing, empty, malformed, ambiguous, and task-mismatched endpoints refuse before every mutation or runtime call
+ok - fm-teardown: a pool slot named by a second task record is never returned, killed, or reset
+ok - fm-teardown: record-only reconciliation requires one exact readable slot owner and refuses every missing, ambiguous, or contradictory ownership shape
+ok - fm-teardown: three independently proven stale records reconcile one at a time while the current owner stays untouched
+ok - fm-teardown: a windowless stale record reconciles through --record-only as a missing endpoint
+ok - fm-teardown: windowless legacy siblings read as missing endpoints while a windowless sibling with a spawned incarnation still refuses
+ok - fm-teardown: a mixed-live multi-record collision refuses before retiring any record
+ok - fm-teardown: a pool slot held by another firstmate home is never returned
+ok - fm-teardown: a task that solely holds its slot still returns it
+ok - fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes

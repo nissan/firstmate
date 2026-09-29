@@ -1,0 +1,57 @@
+== Scenario A: plain teardown of a stale record still refuses (slot reassigned)
+
+$ fm-teardown.sh brain-a --force
+REFUSED: task brain-a's recorded worktree /tmp/fm-4rec.YQsp/pool/1/project is also task brain-b's recorded worktree.
+Returning that pool slot would kill brain-b's processes and reset its copy, so nothing was changed - not even with --force.
+Reconcile whichever record is wrong (bin/fm-crew-state.sh brain-a; bin/fm-crew-state.sh brain-b). If the slot claim proves brain-a is stale, re-run with --record-only.
+exit=1
+records: brain-a.meta brain-b.meta brain-c.meta live-owner.meta 
+== Scenario B: brain-b rewritten after claim (ambiguous chronology) blocks brain-a
+
+$ fm-teardown.sh brain-a --record-only --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+REFUSED: --record-only cannot prove task brain-b's record predates the current Treehouse slot claim; ownership timing is ambiguous and nothing was changed
+exit=1
+records: brain-a.meta brain-b.meta brain-c.meta live-owner.meta 
+== Scenario C: retire the three stale records one at a time
+
+$ fm-teardown.sh brain-a --record-only --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: --record-only proved task brain-a's recorded Treehouse slot was reassigned to task live-owner in home /tmp/fm-4rec.YQsp/home; the claimed slot is left untouched and only brain-a's ordinary cleanup runs.
+NOTICE: FORCED teardown of scout task brain-a with NO report at /tmp/fm-4rec.YQsp/home/data/brain-a/report.md - its investigation is being discarded and cannot be recovered.
+teardown brain-a complete (window firstmate:fm-brain-a; pool slot /tmp/fm-4rec.YQsp/worktree left to task live-owner (home /tmp/fm-4rec.YQsp/home), which it was reassigned to)
+Backlog: brain-a just finished (this home keeps no markdown backlog at /tmp/fm-4rec.YQsp/home/data/backlog.md). Update /tmp/fm-4rec.YQsp/home/data/backlog.md - move brain-a to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+exit=0
+records: brain-b.meta brain-c.meta live-owner.meta 
+
+$ fm-teardown.sh brain-b --record-only --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: --record-only proved task brain-b's recorded Treehouse slot was reassigned to task live-owner in home /tmp/fm-4rec.YQsp/home; the claimed slot is left untouched and only brain-b's ordinary cleanup runs.
+NOTICE: FORCED teardown of scout task brain-b with NO report at /tmp/fm-4rec.YQsp/home/data/brain-b/report.md - its investigation is being discarded and cannot be recovered.
+teardown brain-b complete (window firstmate:fm-brain-b; pool slot /tmp/fm-4rec.YQsp/worktree left to task live-owner (home /tmp/fm-4rec.YQsp/home), which it was reassigned to)
+Backlog: brain-b just finished (this home keeps no markdown backlog at /tmp/fm-4rec.YQsp/home/data/backlog.md). Update /tmp/fm-4rec.YQsp/home/data/backlog.md - move brain-b to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+exit=0
+records: brain-c.meta live-owner.meta 
+
+$ fm-teardown.sh brain-c --record-only --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: --record-only proved task brain-c's recorded Treehouse slot was reassigned to task live-owner in home /tmp/fm-4rec.YQsp/home; the claimed slot is left untouched and only brain-c's ordinary cleanup runs.
+NOTICE: FORCED teardown of scout task brain-c with NO report at /tmp/fm-4rec.YQsp/home/data/brain-c/report.md - its investigation is being discarded and cannot be recovered.
+teardown brain-c complete (window firstmate:fm-brain-c; pool slot /tmp/fm-4rec.YQsp/worktree left to task live-owner (home /tmp/fm-4rec.YQsp/home), which it was reassigned to)
+Backlog: brain-c just finished (this home keeps no markdown backlog at /tmp/fm-4rec.YQsp/home/data/backlog.md). Update /tmp/fm-4rec.YQsp/home/data/backlog.md - move brain-c to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+exit=0
+records: live-owner.meta 
+== Scenario D: record-only on the live owner itself refuses
+
+$ fm-teardown.sh live-owner --record-only --force
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+REFUSED: --record-only cannot retire task live-owner because the Treehouse slot claim still names that task; nothing was changed
+exit=1
+records: live-owner.meta 
+
+claim: task=live-owner home=/tmp/fm-4rec.YQsp/home 
+sentinel present: yes
+runtime.log (tmux/treehouse calls):
+tmux kill-window -t =firstmate:=fm-brain-a
+tmux kill-window -t =firstmate:=fm-brain-b
+tmux kill-window -t =firstmate:=fm-brain-c
