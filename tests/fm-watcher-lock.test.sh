@@ -437,6 +437,40 @@ test_lock_uncreatable_path_fails_without_steal_recursion() {
   pass "lock acquisition under a missing parent fails without steal recursion"
 }
 
+test_lock_released_during_acquire_is_taken() {
+  local dir state lockdir out
+  dir=$(make_case lock-release-race)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$$" > "$lockdir/pid"
+  # The live holder releases right after the acquirer's first create attempt
+  # observed its lock, so the acquirer finds no lock on disk and must take it.
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    eval "held_$(declare -f fm_lock_try_create)"
+    fm_lock_try_create() {
+      if [ -z "${released:-}" ]; then
+        released=1
+        held_fm_lock_try_create "$@" && return 0
+        rm -rf "$1"
+        return 1
+      fi
+      held_fm_lock_try_create "$@"
+    }
+    if fm_lock_try_acquire "$2"; then rc=0; else rc=1; fi
+    printf "rc=%s pid=%s\n" "$rc" "$(cat "$2/pid" 2>/dev/null)"
+    [ "$rc" -ne 0 ] || fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir" 2>&1)
+  case "$out" in
+    "rc=0 pid="[0-9]*) ;;
+    *) fail "lock released during acquisition was not taken: $out" ;;
+  esac
+  [ "$out" != "rc=0 pid=$$" ] || fail "acquirer reported the released holder's pid: $out"
+  [ ! -e "$lockdir" ] || fail "acquired lock was not released"
+  pass "lock released during acquisition is taken by the acquirer"
+}
+
 test_lock_late_claim_loses_after_recreate() {
   local dir state lockdir out
   dir=$(make_case lock-late-claim)
@@ -1239,6 +1273,7 @@ test_lock_live_steal_mutex_is_not_reclaimed
 test_lock_does_not_steal_live_lock
 test_lock_empty_pid_uses_minimum_grace
 test_lock_uncreatable_path_fails_without_steal_recursion
+test_lock_released_during_acquire_is_taken
 test_lock_late_claim_loses_after_recreate
 test_lock_paused_mid_acquire_claim_fails_during_steal
 test_watch_restart_rejects_reused_pid
