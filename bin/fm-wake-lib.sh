@@ -939,6 +939,16 @@ fm_lock_try_acquire() {
   if fm_lock_try_create "$lockdir"; then
     return 0
   fi
+  # With no lock on disk there is no holder to reclaim: either the holder just
+  # released it, or creation itself failed (missing or unwritable parent, no
+  # space). Retry creation once instead of stealing, which would recurse through
+  # an endless .steal.steal... chain that fails the same way until Bash
+  # overflows its native stack.
+  if [ ! -e "$lockdir" ] && [ ! -L "$lockdir" ]; then
+    fm_lock_try_create "$lockdir" && return 0
+    FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
+    return 1
+  fi
 
   fm_current_pid current || return 1
   pid=$(cat "$lockdir/pid" 2>/dev/null || true)
