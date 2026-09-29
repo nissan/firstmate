@@ -1,0 +1,10 @@
+# Real Herdr lab pane (fm-lab-noprog-3942699-9825 w1:p1), read via fm-herdr-lab.sh run pane read --source recent --lines 200 | tail -n 40 (the fm_backend_herdr_capture shape fm-watch passes as tail40)
+# non-blank rows below the counter: 14
+# scrollback '↓ 999999 tokens' row present in the 40-line capture? 0
+TARGET ccbd8bd fm_noprogress_pane_tokens -> 59 rc=0
+BASE   387c5cc fm_noprogress_pane_tokens ->  rc=1
+# adversarial: full 61-line raw read (scrollback counter 60 rows up) fed directly, bypassing the 40-line bound
+TARGET on raw read (counter row at footer, stale row far above) -> 59 rc=0
+# Real Herdr lab pane (fm-lab-noprog-3942699-9825 w1:p2): only counter is '↓ 999999 tokens' printed 45 rows above the prompt (scrollback)
+# counter rows inside the 40-line capture: 0
+TARGET fm_noprogress_pane_tokens -> [] rc=1 (no observation expected)

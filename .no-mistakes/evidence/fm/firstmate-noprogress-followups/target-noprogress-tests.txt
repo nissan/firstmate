@@ -1,0 +1,17 @@
+ok - the pane counter grammar reads both recorded harness signatures and refuses to guess
+ok - the live counter is the reading, so a constant beside it cannot pin the guard silent
+ok - an inline API error naming a token limit is never read as spend
+ok - observe: the burn escalates; frozen counter, moved artifact, one gate alone, and an unreadable counter stay silent
+ok - escalations are paced by further spend, and a counter reset cannot launder a burn
+ok - the recorded per-turn footers accumulate across turn boundaries, so an all-day burn escalates while a frozen footer stays silent
+ok - a counter that freezes after the spend gate is a wait, and only the frozen-counter gate keeps it silent
+ok - the artifact fingerprint moves on a commit, a report write, and a status append, and is stable when unreadable
+ok - a worktree that never answers is bounded, reads as the stable placeholder, and leaves the escalation schedule intact
+ok - a head that flips between a sha and the placeholder is no evidence, so a burn behind a flaky mount still escalates
+ok - the first readable head becomes the existing window's baseline without hiding movement in the other artifact signals
+ok - gate knobs are normalized once at source time, preserving valid values and applying each shipped default consistently
+ok - the artifact fingerprint tracks HEAD in a linked worktree and on a detached HEAD
+ok - a churning pane spending tokens with no artifact escalates for a human
+ok - a frozen token counter is a wait, not a burn, and never escalates
+ok - a worker whose report file is growing is producing, and never escalates
+ok - a crew writing uncommitted files in its worktree is deferred, not escalated

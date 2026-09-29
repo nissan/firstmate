@@ -1,0 +1,14 @@
+--- unset
+normalized spend=60000 secs=1800 | 200 tokens over 8000s -> ok
+--- SPEND=60k SECS=30m
+normalized spend=60000 secs=1800 | 200 tokens over 8000s -> ok
+--- SPEND='60,000' SECS='1800 '
+normalized spend=60000 secs=1800 | 200 tokens over 8000s -> ok
+--- SPEND=0 SECS=0
+normalized spend=60000 secs=0 | 200 tokens over 8000s -> ok
+--- SPEND=150 SECS=100 (valid)
+normalized spend=150 secs=100 | 200 tokens over 8000s -> escalate 200 8000
+--- SPEND=150 SECS=lots
+normalized spend=150 secs=1800 | 200 tokens over 8000s -> escalate 200 8000
+--- SPEND='' SECS=''
+normalized spend=60000 secs=1800 | 200 tokens over 8000s -> ok

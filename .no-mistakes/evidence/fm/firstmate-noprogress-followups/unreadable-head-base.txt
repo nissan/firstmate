@@ -1,0 +1,9 @@
+# worktree dir exists but is not a git repo -> HEAD unreadable
+now=1000 tokens=100 sig=-:-:- verdict=[ok] record: tokens=100 spend=0 art=-:-:- since=1000 flagged=0 
+# first commit lands; HEAD becomes readable
+now=1050 tokens=600 sig=9b34058dbef4d319aea1d95482891b0055eacd50:-:- verdict=[ok] record: tokens=600 spend=0 art=9b34058dbef4d319aea1d95482891b0055eacd50:-:- since=1050 flagged=0 
+now=1100 tokens=1200 sig=9b34058dbef4d319aea1d95482891b0055eacd50:-:- verdict=[ok] record: tokens=1200 spend=600 art=9b34058dbef4d319aea1d95482891b0055eacd50:-:- since=1050 flagged=0 
+# a later real commit (known sha -> different sha) is still production
+now=1200 tokens=1300 sig=4372913e26823e146ab9b2eaca4826a639348994:-:- verdict=[ok] record: tokens=1300 spend=0 art=4372913e26823e146ab9b2eaca4826a639348994:-:- since=1200 flagged=0 
+# HEAD read hangs (FM_NOPROGRESS_TIMEOUT=1, slow git on PATH) -> carries last known head
+now=1250 tokens=1400 sig=-:-:- verdict=[ok] record: tokens=1400 spend=100 art=4372913e26823e146ab9b2eaca4826a639348994:-:- since=1200 flagged=0 

@@ -1,0 +1,1 @@
+not ok - a recorded Herdr counter above twelve task rows disappeared from the bounded footer capture ('', not 59)
