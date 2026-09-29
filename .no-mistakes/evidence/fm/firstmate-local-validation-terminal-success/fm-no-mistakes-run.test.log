@@ -1,0 +1,4 @@
+ok - canonical local-validation repositories finish after required local evidence
+ok - repositories outside the canonical allowlist retain hosted-check waiting
+ok - repository policy follows the initialized gate target, not mutable checkout origin
+ok - the canonical CI omission composes with an existing no-mistakes skip

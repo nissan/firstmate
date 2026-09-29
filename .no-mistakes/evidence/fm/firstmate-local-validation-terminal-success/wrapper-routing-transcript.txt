@@ -1,0 +1,47 @@
+## firstmate-https (gate target: https://github.com/nissan/firstmate.git) args: --intent x
+no-mistakes invoked with: [axi] [run] [--intent] [x] [--skip] [ci]
+rc=0
+
+## work-ssh (gate target: git@github.com:nissan/Work.git) args: --intent x
+no-mistakes invoked with: [axi] [run] [--intent] [x] [--skip] [ci]
+rc=0
+
+## mixedcase-trailing (gate target: https://github.com/NISSAN/FirstMate/) args: --intent x
+no-mistakes invoked with: [axi] [run] [--intent] [x] [--skip] [ci]
+rc=0
+
+## file-url-gate (gate target: https://github.com/nissan/firstmate.git) args: --intent x
+no-mistakes invoked with: [axi] [run] [--intent] [x] [--skip] [ci]
+rc=0
+
+## existing-skip-eq (gate target: https://github.com/nissan/firstmate.git) args: --skip=review --intent x
+no-mistakes invoked with: [axi] [run] [--skip=review,ci] [--intent] [x]
+rc=0
+
+## existing-skip-ci (gate target: https://github.com/nissan/firstmate.git) args: --skip review,ci
+no-mistakes invoked with: [axi] [run] [--skip] [review,ci]
+rc=0
+
+=== adversarial (must NOT add --skip ci) ===
+## hosted (gate target: https://github.com/example/hosted.git) args: --intent x
+no-mistakes invoked with: [axi] [run] [--intent] [x]
+rc=0
+
+## lookalike (gate target: https://github.com/nissan/firstmate-fork.git) args: --intent x
+no-mistakes invoked with: [axi] [run] [--intent] [x]
+rc=0
+
+## other-host (gate target: https://gitlab.com/nissan/firstmate.git) args: --intent x
+no-mistakes invoked with: [axi] [run] [--intent] [x]
+rc=0
+
+## uninitialized-gate (gate target: https://github.com/nissan/firstmate.git) args: --intent x
+no-mistakes invoked with: [axi] [run] [--intent] [x]
+rc=0
+
+## forged checkout origin=nissan/firstmate, gate target example/hosted
+no-mistakes invoked with: [axi] [run] [--intent] [x]
+rc=0
+## --skip without value
+error: --skip requires a comma-separated value
+rc=2

@@ -1,0 +1,12 @@
+$ FM_HOME=<tmp> bin/fm-brief.sh live-nm-b1 firstmate --mode no-mistakes
+scaffolded: /tmp/tmp.sXeo76CwDZ/home/data/live-nm-b1/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+rc=0
+--- rendered DoD excerpt (generated brief = worker contract) ---
+91:Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and `no-mistakes axi run --help` plus the `help` lines in each `axi` response are authoritative and version-matched to the installed binary.
+92:Use `/home/nissan/.no-mistakes/worktrees/17d09ac59434/01M3N8MWWVRYTWGF1B24Q46RH2/bin/fm-no-mistakes-run.sh` in place of `no-mistakes axi run` when starting or reattaching; that helper's header owns repository-specific hosted-check routing.
+113:- NEVER pass `--yes` (or `-y`) to `no-mistakes axi run` or `no-mistakes axi respond`. It is banned fleet-wide.
+116:After /no-mistakes reports delivery ready (CI green for a hosted-check repository, or terminal success after PR publication for a canonical local-validation repository), read the PR back from the forge and confirm it is not a draft (`gh pr view <url> --json isDraft` must print false); if it is a draft, mark it ready with `gh-axi pr ready`.
+
+$ adversarial: fm_dod_block no-mistakes id   (helper omitted)
+error: fm_dod_block: missing no-mistakes run helper
+rc=1
