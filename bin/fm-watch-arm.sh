@@ -60,6 +60,21 @@
 # (secondmate homes run the same script) and would kill siblings.
 set -u
 
+# A long-lived arm can be launched from inside one or more command substitutions.
+# Bash implements those substitutions in forked children, so a watcher started
+# there inherits the launcher's already-deep native parser/executor stack. When
+# successive watcher generations repeat that pattern, the inherited stack grows
+# until Bash itself segfaults in yyparse/command_substitute. Re-exec once at the
+# process boundary to keep the PID and descriptors while starting with a clean C
+# stack. The PID-qualified guard is inherited safely: a later arm process has a
+# different PID and therefore resets its own stack too.
+_arm_stack_token="$$:${BASHPID:-$$}"
+if [ "${FM_WATCH_ARM_STACK_RESET:-}" != "$_arm_stack_token" ]; then
+  export FM_WATCH_ARM_STACK_RESET=$_arm_stack_token
+  exec "${BASH:-bash}" "$0" "$@"
+fi
+unset _arm_stack_token
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
