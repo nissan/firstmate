@@ -367,6 +367,10 @@ test_no_mistakes_dod_wording() {
   assert_grep '[captain]' "$brief" "rendered intent contract must explain the neutral legacy provenance marker"
   assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
     "no-mistakes DOD lost its guidance-reference sentence"
+  assert_grep "$ROOT/bin/fm-no-mistakes-run.sh" "$brief" \
+    "no-mistakes DOD did not route runs through Firstmate's repository-policy entrypoint"
+  assert_grep "terminal success after PR publication for a canonical local-validation repository" "$brief" \
+    "no-mistakes DOD still requires a hosted-check return from local-validation repositories"
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep '`no-mistakes axi run --help`' "$brief" \
     "no-mistakes DOD must render literal backticks around the help command"
@@ -402,6 +406,25 @@ test_no_mistakes_dod_wording() {
   assert_no_grep "no-mistakes refuses" "$brief" \
     "no-mistakes DOD must not claim the tool itself refuses --yes"
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright"
+}
+
+# The run helper is a required argument: rendering a DOD without it must be
+# refused rather than naming bare `no-mistakes axi run` as its own substitute.
+test_dod_block_requires_run_helper() {
+  local mode out err code
+  for mode in no-mistakes direct-PR local-only; do
+    code=0
+    out=$(bash -c '. "$1/bin/fm-dod-lib.sh"; fm_dod_block "$2" dod-helper-b1' _ "$ROOT" "$mode" 2>"$TMP_ROOT/dod-helper.err") || code=$?
+    err=$(cat "$TMP_ROOT/dod-helper.err")
+    expect_code 1 "$code" "$mode: fm_dod_block without a run helper"
+    assert_equals "" "$out" "$mode: fm_dod_block rendered a DOD without a run helper"
+    assert_contains "$err" "missing no-mistakes run helper" "$mode: missing helper was not named"
+  done
+  out=$(bash -c '. "$1/bin/fm-dod-lib.sh"; fm_dod_block no-mistakes dod-helper-b1 /opt/fm/bin/fm-no-mistakes-run.sh' _ "$ROOT") \
+    || fail "fm_dod_block refused an explicit run helper"
+  assert_contains "$out" "Use \`/opt/fm/bin/fm-no-mistakes-run.sh\` in place of \`no-mistakes axi run\`" \
+    "no-mistakes DOD did not name the supplied run helper"
+  pass "fm-dod-lib.sh: fm_dod_block requires the no-mistakes run helper"
 }
 
 test_ask_user_escalation_format() {
@@ -1108,6 +1131,7 @@ test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_dod_block_requires_run_helper
 test_pr_based_dod_requires_non_draft
 test_ask_user_escalation_format
 test_ship_project_memory_wording

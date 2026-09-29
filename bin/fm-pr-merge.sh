@@ -136,6 +136,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# shellcheck source=bin/fm-local-validation-lib.sh
+. "$SCRIPT_DIR/fm-local-validation-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -158,9 +160,9 @@ PR_NUMBER=$FM_PR_NUMBER
 # rebuilt from the parsed identity rather than read from any ambient default.
 PROJECT_URL="https://$FM_PR_HOST/$FM_PR_PATH"
 LOCAL_VALIDATION_REPO=false
-case "$PROVIDER:$(printf '%s/%s' "$PR_HOST" "$PR_PATH" | tr '[:upper:]' '[:lower:]')" in
-  github:github.com/nissan/firstmate|github:github.com/nissan/work) LOCAL_VALIDATION_REPO=true ;;
-esac
+if fm_local_validation_repo_identity "$PROVIDER" "$PR_HOST" "$PR_PATH"; then
+  LOCAL_VALIDATION_REPO=true
+fi
 shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
