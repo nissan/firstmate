@@ -57,6 +57,23 @@ crash_cleanup_group_pid=
 crash_cleanup_release=
 crash_silent_start_pid=
 crash_silent_runner_pid=
+terminate_crash_silent_test() {
+  local attempt
+  [ -z "$crash_silent_start_pid" ] || kill -TERM "$crash_silent_start_pid" 2>/dev/null || true
+  [ -z "$crash_silent_runner_pid" ] || kill -TERM -"$crash_silent_runner_pid" 2>/dev/null || true
+  for ((attempt = 0; attempt < 100; attempt++)); do
+    if { [ -z "$crash_silent_start_pid" ] || ! kill -0 "$crash_silent_start_pid" 2>/dev/null; } &&
+      { [ -z "$crash_silent_runner_pid" ] || ! kill -0 -"$crash_silent_runner_pid" 2>/dev/null; }; then
+      break
+    fi
+    sleep 0.01
+  done
+  [ -z "$crash_silent_start_pid" ] || kill -KILL "$crash_silent_start_pid" 2>/dev/null || true
+  [ -z "$crash_silent_runner_pid" ] || kill -KILL -"$crash_silent_runner_pid" 2>/dev/null || true
+  [ -z "$crash_silent_start_pid" ] || wait "$crash_silent_start_pid" 2>/dev/null || true
+  crash_silent_start_pid=
+  crash_silent_runner_pid=
+}
 override_crash_start_pid=
 override_crash_runner_pid=
 section_coordinator_pid=
@@ -89,8 +106,7 @@ extension_test_cleanup() {
   [ -z "$crash_cleanup_host_pid" ] || kill -KILL "$crash_cleanup_host_pid" 2>/dev/null || true
   [ -z "$crash_cleanup_group_pid" ] || kill -KILL -"$crash_cleanup_group_pid" 2>/dev/null || true
   [ -z "$crash_cleanup_release" ] || touch "$crash_cleanup_release" 2>/dev/null || true
-  [ -z "$crash_silent_start_pid" ] || kill -TERM "$crash_silent_start_pid" 2>/dev/null || true
-  [ -z "$crash_silent_runner_pid" ] || kill -TERM -"$crash_silent_runner_pid" 2>/dev/null || true
+  terminate_crash_silent_test
   [ -z "$override_crash_start_pid" ] || kill -TERM "$override_crash_start_pid" 2>/dev/null || true
   [ -z "$override_crash_runner_pid" ] || kill -TERM -"$override_crash_runner_pid" 2>/dev/null || true
   [ -z "$handshake_orphan_pid" ] || kill -KILL "$handshake_orphan_pid" 2>/dev/null || true
@@ -250,11 +266,27 @@ elif mode.startswith("active-block|"):
     write_exclusive(block_marker, f"{os.getpid()}\n")
     while not os.path.exists(block_release): time.sleep(.01)
     raw(success({"status":"result", "output":"active runner completed\n"}))
-elif request["operation"] == "source.poll": raw(success({"status":"no-result" if mode == "no-result" else "result", "output":"" if mode == "no-result" else f"external evidence: {mode}\n"}))
+elif request["operation"] == "source.poll":
+    if mode.startswith("crash-silent-wedge|"):
+        _, marker = mode.split("|", 1)
+        os.makedirs(state, exist_ok=True)
+        with open(os.path.join(state, "crash-silent-wedge"), "w", encoding="utf-8") as output:
+            output.write(marker)
+            output.flush()
+            os.fsync(output.fileno())
+    raw(success({"status":"no-result" if mode == "no-result" else "result", "output":"" if mode == "no-result" else f"external evidence: {mode}\n"}))
 elif request["operation"] == "result.classify": raw(success({"classification":"external-ready"}))
-elif request["operation"] == "result.terminal": raw(success({"value":True}))
+elif request["operation"] == "result.terminal":
+    wedge_record = os.path.join(state, "crash-silent-wedge")
+    if os.path.exists(wedge_record):
+        marker = open(wedge_record, encoding="utf-8").read()
+        write_exclusive(marker, f"{os.getpid()}\n")
+        while True: time.sleep(1)
+    raw(success({"value":True}))
 elif request["operation"] == "result.silent":
     content = request.get("input", {}).get("content", "")
+    if content.startswith("external evidence: crash-silent-wedge|"):
+        os.kill(os.getpid(), signal.SIGKILL)
     if content == "external evidence: crash-silent\\n":
         os.kill(os.getpid(), signal.SIGKILL)
     elif content.startswith("external evidence: silent-block|"):
@@ -626,6 +658,20 @@ if [ "$extension_segment" = all ] || [ "$extension_segment" = coordinator ]; the
   if kill -0 "$(cat "$coordinator_pid")" 2>/dev/null; then
     fail "the coordinator left its deadline child alive"
   fi
+  crash_silent_wedge_marker="$coordinator_probe/crash-silent-wedge"
+  crash_silent_wedge_out=$(
+    FM_EXTENSION_BINDING_CRASH_SILENT_CONFIG_REF="crash-silent-wedge|$crash_silent_wedge_marker" \
+      FM_EXTENSION_BINDING_CRASH_SILENT_MAX_POLLS=1000 \
+      FM_EXTENSION_BINDING_SEGMENT=lifecycle-flow bash "$0" 2>&1
+  ) && fail "the crash-silent recovery seam accepted a wedged terminal retry"
+  assert_contains "$crash_silent_wedge_out" \
+    "inner host crash during result.silent wedged its runner before result.terminal" \
+    "the crash-silent recovery seam did not report its named bound"
+  assert_present "$crash_silent_wedge_marker" "the bounded crash-silent probe never reached its terminal retry"
+  if kill -0 "$(cat "$crash_silent_wedge_marker")" 2>/dev/null; then
+    fail "the bounded crash-silent probe left its terminal retry alive"
+  fi
+  pass "inner result.silent crash recovery bounds a wedged terminal retry and reaps it"
   pass "the section coordinator propagates ordered failures and bounded cleanup"
   if [ "$extension_segment" = coordinator ]; then
     printf '\nall coordinator tests passed\n'
@@ -1061,22 +1107,35 @@ assert_not_contains "$classification" "wrong-built-in-owner" "a later same-name 
 assert_absent "$H_FLOW/state/procevent/flow-source.source" "terminal external source stayed registered"
 FM_HOME="$H_FLOW" "$PROCEVENT" retire flow-source --if-owner "$owner_one" >/dev/null
 pass "one external adapter registers, invokes, captures unhandled evidence, classifies, and terminally retires end to end"
-FM_HOME="$H_FLOW" "$PROCEVENT" register-extension ext-flow crash-silent-source --config-ref crash-silent >/dev/null
+crash_silent_config_ref=${FM_EXTENSION_BINDING_CRASH_SILENT_CONFIG_REF:-crash-silent}
+crash_silent_max_polls=${FM_EXTENSION_BINDING_CRASH_SILENT_MAX_POLLS:-3000}
+case "$crash_silent_max_polls" in
+  ''|*[!0-9]*|0) fail "crash-silent recovery poll bound must be a positive integer" ;;
+esac
+FM_HOME="$H_FLOW" "$PROCEVENT" register-extension ext-flow crash-silent-source \
+  --config-ref "$crash_silent_config_ref" >/dev/null
 FM_HOME="$H_FLOW" "$PROCEVENT" start crash-silent-source > "$TMP_ROOT/crash-silent-start.out" 2>&1 &
 crash_silent_start_pid=$!
-# This poll only keeps the runner's group PID fresh for the cleanup trap; the
-# recovery itself is proven by the wait below and the records it must leave.
-# A poll ceiling here would only re-time the crash-recovery path's own healthy
-# wall clock, so a genuine wedge is left to the outer lane/job hang tripwire.
-while :; do
+# This iteration bound is local to the crash-recovery seam. Its default leaves
+# broad headroom over healthy recovery, and scheduler delay stretches it under
+# load instead of turning it into a short wall-clock ceiling.
+for ((crash_silent_poll = 0; crash_silent_poll < crash_silent_max_polls; crash_silent_poll++)); do
   if [ -f "$TMP_ROOT/claims/crash-silent-source.claim" ]; then
     # The successful crash-recovery path may release this durable claim between
     # the observation above and this best-effort cleanup PID read.
-    crash_silent_runner_pid=$(sed -n '2p' "$TMP_ROOT/claims/crash-silent-source.claim" 2>/dev/null || true)
+    crash_silent_candidate_pid=$(sed -n '2p' "$TMP_ROOT/claims/crash-silent-source.claim" 2>/dev/null || true)
+    case "$crash_silent_candidate_pid" in
+      ''|*[!0-9]*) ;;
+      *) crash_silent_runner_pid=$crash_silent_candidate_pid ;;
+    esac
   fi
   kill -0 "$crash_silent_start_pid" 2>/dev/null || break
   sleep 0.01
 done
+if kill -0 "$crash_silent_start_pid" 2>/dev/null; then
+  terminate_crash_silent_test
+  fail "inner host crash during result.silent wedged its runner before result.terminal"
+fi
 wait "$crash_silent_start_pid" || fail "runner did not recover from inner result.silent crash"
 crash_silent_start_pid=
 crash_silent_runner_pid=
