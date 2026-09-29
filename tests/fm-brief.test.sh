@@ -367,6 +367,10 @@ test_no_mistakes_dod_wording() {
   assert_grep '[captain]' "$brief" "rendered intent contract must explain the neutral legacy provenance marker"
   assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
     "no-mistakes DOD lost its guidance-reference sentence"
+  assert_grep "$ROOT/bin/fm-no-mistakes-run.sh" "$brief" \
+    "no-mistakes DOD did not route runs through Firstmate's repository-policy entrypoint"
+  assert_grep "terminal success after PR publication for a canonical local-validation repository" "$brief" \
+    "no-mistakes DOD still requires a hosted-check return from local-validation repositories"
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep '`no-mistakes axi run --help`' "$brief" \
     "no-mistakes DOD must render literal backticks around the help command"
