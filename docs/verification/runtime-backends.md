@@ -1478,28 +1478,32 @@ Polling remained active and is covered as the fallback for capability, connect, 
 
 ### Agent lifecycle control
 
-Herdr is one of the two backends whose recovery-grade agent-state classifier the control plane may trust ([agent-control.md](../agent-control.md)), so its lifecycle gating is measured against the real binary; reverified 2026-08-08 on Herdr 0.8.0, and first measured 2026-08-02 on Herdr 0.7.5 with identical results:
+Herdr is one of the two backends whose recovery-grade agent-state classifier the control plane may trust ([agent-control.md](../agent-control.md)), so its lifecycle gating is measured against the real binary; reverified 2026-09-29 on Herdr 0.8.2, previously measured on Herdr 0.9.0 and 0.8.0, and first measured 2026-08-02 on Herdr 0.7.5.
 
 ```sh
-tests/fm-control-herdr-smoke.test.sh
+HERDR_LAB_HELPER=bin/fm-herdr-lab.sh tests/fm-control-herdr-smoke.test.sh
 ```
 
-Observed output, refreshed 2026-09-10 on Herdr 0.9.0 after the stale-registration fix (the two stale-registration lines are recorded under "Stale agent registration" below):
+Observed output on Herdr 0.8.2 (the two stale-registration lines are recorded under "Stale agent registration" below):
 
 ```text
 ok - real herdr: exit on a pane with no registered agent is idempotent success
-ok - real herdr 0.9.0: a gone session reads recoverable while a live pane and a malformed target do not
+ok - real herdr 0.8.2: a gone session reads recoverable while a live pane and a malformed target do not
 ok - real herdr: a drifted agent-free shell returns to its worktree and reuses the same endpoint
 ok - real herdr: interrupt refuses when herdr's own agent registry reports no agent
 ok - real herdr: interrupt delivers the harness's key and proves the agent survived it
 ok - real herdr: no control verb removed the endpoint or the task's local copy
-ok - real herdr 0.9.0: a registration Herdr keeps after its agent exits reads stale-agent and recovers as dead
+ok - real herdr 0.8.2: a registration Herdr keeps after its agent exits reads stale-agent and recovers as dead
 ok - real herdr: exit on a pane with a stale registration is idempotent success
 ok - real herdr: a stale registration no longer blocks relaunch, and the endpoint and local copy survive
-ok - real herdr: an agent that does not stop fails closed instead of being reported as stopped
+ok - real herdr: an agent behind an unproven composer fails closed instead of typing an exit command into it
+ok - real herdr: the stopped endpoint is positively gone before relaunch
+ok - real herdr: a gone endpoint relaunch preserves task identity and work, creates one flat replacement, rebinds metadata, and leaves unrelated endpoints untouched
 ```
 
 The registry read through `herdr pane report-agent` is the same source `fm_backend_herdr_agent_state` classifies, and since 2026-09-10 that registration counts as an agent only while `pane process-info` shows a harness process behind it, so the guard backs the registration with a real process named like a harness (a symlink to `sleep`) and then stops that process, with no real harness launched.
+The final pair first proves structured absence for the exact stopped pane, then drives `fm-control.sh relaunch` through the real adapter and verifies one fresh flat endpoint, consistent session/workspace/tab/pane metadata, the same task and local copy including uncommitted work, and an unchanged unrelated sentinel endpoint.
+The lab helper's default-session tripwire separately verifies that the shared endpoint namespace is unchanged after teardown.
 That command is the guard that refreshes this record; run it after every Herdr upgrade rather than trusting the version above.
 
 For Pi on Herdr 0.9.0, `herdr agent get` reflects whether the agent process remains live; its registration does not persist merely because the pane and parent shell do.
