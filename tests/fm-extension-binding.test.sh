@@ -62,7 +62,10 @@ terminate_crash_silent_test() {
   [ -z "$crash_silent_start_pid" ] || kill -TERM "$crash_silent_start_pid" 2>/dev/null || true
   [ -z "$crash_silent_runner_pid" ] || kill -TERM -"$crash_silent_runner_pid" 2>/dev/null || true
   for ((attempt = 0; attempt < 100; attempt++)); do
-    [ -z "$crash_silent_start_pid" ] || kill -0 "$crash_silent_start_pid" 2>/dev/null || break
+    if { [ -z "$crash_silent_start_pid" ] || ! kill -0 "$crash_silent_start_pid" 2>/dev/null; } &&
+      { [ -z "$crash_silent_runner_pid" ] || ! kill -0 -"$crash_silent_runner_pid" 2>/dev/null; }; then
+      break
+    fi
     sleep 0.01
   done
   [ -z "$crash_silent_start_pid" ] || kill -KILL "$crash_silent_start_pid" 2>/dev/null || true
