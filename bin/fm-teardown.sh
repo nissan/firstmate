@@ -388,11 +388,6 @@ fi
 fm_lease_guard "$ID" "teardown (fm-teardown)"
 
 META="$STATE/$ID.meta"
-# Record-only reconciliation must identify the claim beside a Treehouse slot
-# without asking Git to inspect the current owner's checkout. The managed pool
-# layout and its plain state file establish that this is a pool slot; the exact
-# other record, claim, home, and project-lock identity are proved later under
-# the lock. Prints the canonical slot path on success.
 # A tmux record with no window and no other backend's identity names no
 # endpoint at all. Every other field must still validate once a placeholder
 # window stands in, so any broader malformation keeps refusing.
@@ -421,6 +416,11 @@ teardown_windowless_shape() {  # <meta> <task-id>
   return "$rc"
 }
 
+# Record-only reconciliation must identify the claim beside a Treehouse slot
+# without asking Git to inspect the current owner's checkout. The managed pool
+# layout and its plain state file establish that this is a pool slot; the exact
+# other record, claim, home, and project-lock identity are proved later under
+# the lock. Prints the canonical slot path on success.
 teardown_record_only_pool_slot() {  # <worktree>
   local worktree=$1 slot pool state
   [ -d "$worktree" ] || return 1
