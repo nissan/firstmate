@@ -190,7 +190,7 @@ SESSION_ID=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // "unknown"' 2>/dev/nu
 budget_reset() {
   [ "$CLAUDE_MODE" -eq 1 ] || return 0
   fm_lock_try_acquire "$BUDGET_LOCK" || return 0
-  rm -f "$BUDGET_FILE" 2>/dev/null || true
+  rm -f "$BUDGET_FILE" "$LOCK_UNAVAILABLE_ALARM" 2>/dev/null || true
   fm_lock_release "$BUDGET_LOCK"
 }
 

@@ -1769,6 +1769,24 @@ test_hook_claude_mode_frozen_epoch_without_lock_reaches_separate_fail_open() {
   count=$(sed -n '2s/^count=//p' "$dir/state/.turnend-claude-blocks")
   [ "$count" -gt 3 ] 2>/dev/null || fail "the block budget did not remain exhausted after the missing-lock alarm: ${count:-absent}"
   assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "the separate missing-lock path consumed the auto-arm failure alarm"
+
+  # Supervision need disappearing ends the episode, so a later dispatch with the
+  # lock still missing earns its own bounded attended fail-open.
+  rm -f "$dir/state/task1.meta"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
+  expect_code 0 "$status" "a stop with no supervision need must be allowed"
+  assert_absent "$dir/state/.turnend-claude-lock-unavailable-alarmed" "losing supervision need left the missing-lock alarm"
+  assert_absent "$dir/state/.turnend-claude-blocks" "losing supervision need left the block budget"
+  : > "$dir/state/task2.meta"
+  for i in 1 2 3 4; do
+    out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
+    if [ "$i" -lt 4 ]; then
+      expect_code 2 "$status" "re-dispatched missing-lock stop $i must block within the budget"
+    else
+      expect_code 0 "$status" "a re-dispatched missing-lock episode must reach its own attended fail-open"
+      assert_contains "$out" 'CANNOT RECOVER WITHOUT A VERIFIED FLEET LOCK' "the re-dispatched missing-lock fail-open did not fire"
+    fi
+  done
   pass "fm-turnend-guard --claude: a missing lock gets one bounded attended fail-open without forging an auto-arm failure"
 }
 

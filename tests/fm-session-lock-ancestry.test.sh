@@ -615,7 +615,6 @@ CLAUDE_CODE_SESSION_ID=S1 CLAUDE_PID=$$ "$FM_HOME/bin/fm-lock.sh" > "$FM_HOME/st
 printf '%s\n' "$?" > "$FM_HOME/state/frontend-lock.rc"
 "$FM_FIXTURE_CLAUDE" "$FM_HOME/daemon.sh" &
 daemon_pid=$!
-disown
 reaped=0
 while [ ! -e "$FM_HOME/state/stop-frontend" ]; do
   if [ "$reaped" -eq 0 ] && [ -e "$FM_HOME/state/reap-daemon" ]; then
