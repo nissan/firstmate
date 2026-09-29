@@ -88,7 +88,11 @@
 #      against an epoch the auto-arm never advanced past the previous
 #      re-block (budget_account_current_epoch owns that rule), so an inert
 #      hook that leaves the ledger frozen cannot hold the guard in an
-#      unbounded re-block loop below that override.
+#      unbounded re-block loop below that override. After the same budget, a
+#      missing, malformed, stale, or otherwise unverifiable session lock gets
+#      one separate loud attended fail-open even though the identity-gated
+#      auto-arm cannot record its ordinary failure episode; a verified live
+#      lock owner never qualifies for that path.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -181,6 +185,7 @@ BUDGET_LOCK="$STATE/.turnend-claude-blocks.lock"
 OWNER_LOCK="$STATE/.claude-autoarm.lock"
 FAILURE_NOTICE="$STATE/.claude-autoarm-failure-notified"
 FAILURE_ALARM="$STATE/.claude-autoarm-failure-alarmed"
+LOCK_UNAVAILABLE_ALARM="$STATE/.turnend-claude-lock-unavailable-alarmed"
 SESSION_ID=$(printf '%s' "$PAYLOAD" | jq -r '.session_id // "unknown"' 2>/dev/null || printf 'unknown')
 budget_reset() {
   [ "$CLAUDE_MODE" -eq 1 ] || return 0
@@ -400,11 +405,44 @@ autoarm_owns_recovery() {
   return 1
 }
 
+# True only when the Stop auto-arm cannot establish session ownership from the
+# fleet lock. A verified live harness owner is never accepted here: a foreign
+# one already took the read-only exit above, while this session's own live lock
+# must use the ordinary auto-arm failure proof before any attended fail-open.
+session_lock_autoarm_unavailable() {
+  [ ! -e "$STATE/.afk" ] || return 1
+  fm_session_lock_inspect "$STATE"
+  [ "$FM_LOCK_INSPECT_STATE" != held ]
+}
+
+terminal_condition_verified() {  # <autoarm-failed|lock-unavailable>
+  case "$1" in
+    autoarm-failed)
+      failure_episode_verified \
+        && [ ! -e "$FAILURE_ALARM" ] && [ ! -e "$LOCK_UNAVAILABLE_ALARM" ]
+      ;;
+    lock-unavailable)
+      session_lock_autoarm_unavailable \
+        && [ ! -e "$LOCK_UNAVAILABLE_ALARM" ] && [ ! -e "$FAILURE_ALARM" ]
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# shellcheck disable=SC2034 # Output global, read by the caller's alarm wording.
+TERMINAL_FAIL_OPEN_REASON=
 terminal_fail_open() {
-  local pid role old_session old_count
+  local pid role old_session old_count reason marker
   [ "$COUNT" -gt "$BLOCK_BUDGET" ] || return 1
-  failure_episode_verified || return 1
-  [ ! -e "$FAILURE_ALARM" ] || return 1
+  if terminal_condition_verified autoarm-failed; then
+    reason=autoarm-failed
+    marker=$FAILURE_ALARM
+  elif terminal_condition_verified lock-unavailable; then
+    reason=lock-unavailable
+    marker=$LOCK_UNAVAILABLE_ALARM
+  else
+    return 1
+  fi
   # A live open generation claim is a concurrent recovery decision to step
   # aside for, exactly like the legacy live-owner case below.
   fm_autoarm_claim_open "$STATE" "$GRACE" && return 2
@@ -440,8 +478,8 @@ terminal_fail_open() {
   esac
   role=$(fm_lock_role "$OWNER_LOCK" 2>/dev/null || true)
   if [ "$role" != terminal-check ] || [ "$old_session" != "$SESSION_ID" ] \
-    || [ "$old_count" -le "$BLOCK_BUDGET" ] || ! failure_episode_verified \
-    || [ -e "$FAILURE_ALARM" ]; then
+    || [ "$old_count" -le "$BLOCK_BUDGET" ] \
+    || ! terminal_condition_verified "$reason"; then
     fm_lock_release "$BUDGET_LOCK"
     fm_lock_release "$OWNER_LOCK"
     return 1
@@ -465,13 +503,15 @@ terminal_fail_open() {
     fm_lock_release "$OWNER_LOCK"
     return 2
   fi
-  if ! (set -C; : > "$FAILURE_ALARM") 2>/dev/null; then
+  if ! (set -C; : > "$marker") 2>/dev/null; then
     fm_lock_release "$BUDGET_LOCK"
     fm_lock_release "$OWNER_LOCK"
     return 1
   fi
   fm_lock_release "$BUDGET_LOCK"
   fm_lock_release "$OWNER_LOCK"
+  # shellcheck disable=SC2034 # Output global, read by the caller's alarm wording.
+  TERMINAL_FAIL_OPEN_REASON=$reason
   return 0
 }
 
@@ -510,6 +550,10 @@ budget_account_current_epoch block || block_stop
 terminal_fail_open
 terminal_status=$?
 if [ "$terminal_status" -eq 0 ]; then
+  if [ "$TERMINAL_FAIL_OPEN_REASON" = lock-unavailable ]; then
+    printf '{"systemMessage":"FIRSTMATE SUPERVISION CANNOT RECOVER WITHOUT A VERIFIED FLEET LOCK: the Stop-owned auto-arm cannot claim this home because its session lock is missing, malformed, stale, or otherwise unverifiable, no watcher or automatic continuation exists, and the bounded block budget is exhausted. Allowing this one attended stop; reacquire or repair the fleet lock through session start before relying on unattended supervision."}\n'
+    exit 0
+  fi
   if [ "$FM_SUP_IN_FLIGHT" -gt 0 ]; then
     NEED_DESC="$FM_SUP_IN_FLIGHT task(s) in flight"
   elif [ "$FM_SUP_SOURCES" -gt 0 ]; then

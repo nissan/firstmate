@@ -631,6 +631,12 @@ subsection "LOCK"
 LOCK_OUT=$("$SCRIPT_DIR/fm-lock.sh" 2>&1)
 LOCK_RC=$?
 printf '%s\n' "$LOCK_OUT"
+ACQUIRED_LOCK_PID=
+if [ "$LOCK_RC" -eq 0 ]; then
+  ACQUIRED_LOCK_PID=$(printf '%s\n' "$LOCK_OUT" \
+    | sed -n 's/^lock acquired: harness pid \([0-9][0-9]*\)$/\1/p' \
+    | tail -1)
+fi
 READ_ONLY=0
 if [ "$LOCK_RC" -ne 0 ]; then
   READ_ONLY=1
@@ -787,12 +793,17 @@ if [ "$PRIMARY_HARNESS" = omp ]; then
     printf 'OMP_WATCH_EXTENSION: not loaded - restart omp with this home as its working directory so %s and %s auto-load from .omp/extensions/ for turn-end guard and background wake coverage; pass -e %s -e %s only when omp must start from another directory, never together with auto-discovery (omp loads a file named both ways twice)\n' "$OMP_TURNEND_EXT" "$OMP_EXT" "$OMP_TURNEND_EXT" "$OMP_EXT"
   fi
 fi
+SUPERVISION_LOCK_ARGS=()
+if [ -n "$ACQUIRED_LOCK_PID" ]; then
+  SUPERVISION_LOCK_ARGS=(--acquired-lock-pid "$ACQUIRED_LOCK_PID")
+fi
 "$SCRIPT_DIR/fm-supervision-instructions.sh" \
   --harness "$PRIMARY_HARNESS" \
   --read-only "$READ_ONLY" \
   --afk "$AFK_PRESENT" \
   --afk-mode "$AFK_MODE" \
-  --x-mode "$X_MODE_PRESENT"
+  --x-mode "$X_MODE_PRESENT" \
+  ${SUPERVISION_LOCK_ARGS[@]+"${SUPERVISION_LOCK_ARGS[@]}"}
 
 # --- 5. read-once contract -------------------------------------------------
 # Ahead of the two digests it governs, not after them: a truncated tail is

@@ -379,6 +379,32 @@ FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
 FM_GROK_STOP_LIVE_E2E=1 FM_GROK_NATIVE_BIN="$native_grok" FM_GROK_LEGACY_BIN="$pre_native_grok" tests/fm-grok-stop-live-e2e.test.sh
 ```
 
+### Lock-unavailable Stop bound and lock-identity races, 2026-09-29
+
+The Issue #4, #6, and #8 follow-ups were verified with portable public-behavior suites on 2026-09-29.
+The Claude guard reached one separately marked attended fail-open after its ordinary block budget for missing, malformed, and stale fleet locks, resumed blocking after that single allowance, preserved the verified-owner requirement for the ordinary auto-arm failure proof, and cleared both alarm kinds only after positive supervision recovery.
+Foreign-owner classification stayed bound to the first lock snapshot when a stale or foreign owner was replaced during classification.
+A deeply nested session start passed its exact successful acquisition identity to the supervision renderer, while direct renderer coverage rejected stale acquisition evidence after the live lock changed.
+
+Before the fixture correction, the unchanged recycled-helper coverage reproduced twice in isolation with `not ok - the pty-host was not reparented to init after the daemon ended`.
+The fixture now makes the owning front-end reap its terminated daemon explicitly and asserts that the PTY host survives with a different parent, without assuming PID 1 is the adopter on a host with a child subreaper or weakening the later ancestry and ownership assertions.
+
+```sh
+bin/fm-lint.sh
+bin/fm-doc-audience-check.sh
+bin/fm-test-run.sh tests/fm-turnend-guard.test.sh tests/fm-supervision-instructions.test.sh tests/fm-session-start.test.sh tests/fm-claude-stop-autoarm.test.sh tests/fm-session-lock-ancestry.test.sh
+```
+
+Observed output:
+
+```text
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-doc-audience-check: ok surfaces=103 local_links=459
+FM_TEST_SUMMARY total=5 failed=0 skipped_gate=0 duration_ms=211011
+```
+
+These paths classify real process ancestry and exercise the public hook scripts directly without depending on a vendor-emitted field, so the portable suites are the enforcing evidence for this correction; no new live-product claim is made.
+
 The Claude auto-arm false-failure, guard-predicate, and monotonic bounded fail-open correction was verified on 2026-08-02 with the installed ShellCheck 0.11.0 and isolated behavior suites.
 
 ```sh

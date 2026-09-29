@@ -23,7 +23,8 @@
 #     tmux and herdr both
 #   - composition: the script invokes the real fm-lock.sh/fm-bootstrap.sh/
 #     fm-wake-drain.sh (their real, distinctive output appears verbatim), it
-#     does not reimplement their logic
+#     does not reimplement their logic, and it carries the exact successfully
+#     acquired lock pid into the deeper supervision renderer
 #   - the deferred startup stage: slow network and inactive current-state reads
 #     do not delay the digest, the work still runs and lands durable findings, a
 #     network result surfaces exactly once (inline or as a wake, never both), a
@@ -2085,17 +2086,24 @@ exec "$@"
 SH
   chmod +x "$nest"
 
+  # Ten fixture shells plus session-start's runtime wrapper leave acquisition
+  # inside the shared ancestry bound while the later renderer's helper stack is
+  # deep enough that re-walking alone can fall short.
   # shellcheck disable=SC2016 # $$ must expand in the launched shell, not here.
   out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
     FM_HOME="$home" FM_ROOT_OVERRIDE="$root" PATH="$fakebin:$BASE_PATH" \
-    bash -c 'export FM_FAKE_HARNESS_PID=$$; exec "$1" 8 "$2"' _ "$nest" "$SESSION_START")
+    bash -c 'export FM_FAKE_HARNESS_PID=$$; exec "$1" 10 "$2"' _ "$nest" "$SESSION_START")
 
   assert_contains "$out" "lock acquired: harness pid" \
     "the runtime bound's wrapper processes pushed the harness out of the bounded ancestry walk"
   assert_not_contains "$out" "READ-ONLY SESSION" \
-    "a session start eight shells below its harness was wrongly refused the lock"
+    "a session start ten shells below its harness was wrongly refused the lock"
+  assert_contains "$out" "- Lock: held by this session" \
+    "the supervision renderer lost the exact owner pid the same session start acquired"
+  assert_not_contains "$out" "- Lock: held by another live session" \
+    "the renderer's deeper helper stack mislabeled the acquiring session as foreign"
 
-  pass "the runtime bound leaves enough ancestry headroom for a deeply nested session to take the lock"
+  pass "a deeply nested session carries its acquired lock identity into the supervision renderer"
 }
 
 # --- context re-emit (--reemit) ----------------------------------------------
