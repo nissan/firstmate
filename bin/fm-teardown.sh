@@ -2472,11 +2472,11 @@ record_only_endpoint_state() {  # <meta> <task-id>
   fm_backend_agent_state "$backend" "$target"
 }
 
-# Require positive evidence that one colliding record predates the current
-# claim and no longer has a harness agent. Equal mtimes are deliberately
-# ambiguous at whole-second filesystem resolution and refuse.
-require_record_only_stale_evidence() {  # <meta> <task-id> <claim-mtime>
-  local meta=$1 id=$2 claim_mtime=$3 record_mtime endpoint_state
+# Require positive evidence that one record predates the current claim.
+# Equal mtimes are deliberately ambiguous at whole-second filesystem
+# resolution and refuse.
+require_record_only_predates_claim() {  # <meta> <task-id> <claim-mtime>
+  local meta=$1 id=$2 claim_mtime=$3 record_mtime
   record_mtime=$(fm_path_mtime "$meta" 2>/dev/null || true)
   case "$record_mtime" in
     ''|*[!0-9]*)
@@ -2488,6 +2488,13 @@ require_record_only_stale_evidence() {  # <meta> <task-id> <claim-mtime>
     echo "REFUSED: --record-only cannot prove task $id's record predates the current Treehouse slot claim; ownership timing is ambiguous and nothing was changed" >&2
     return 1
   fi
+}
+
+# Require one colliding record to predate the claim and no longer have a
+# harness agent.
+require_record_only_stale_evidence() {  # <meta> <task-id> <claim-mtime>
+  local meta=$1 id=$2 claim_mtime=$3 endpoint_state
+  require_record_only_predates_claim "$meta" "$id" "$claim_mtime" || return 1
   endpoint_state=$(record_only_endpoint_state "$meta" "$id")
   case "$endpoint_state" in
     dead|missing) return 0 ;;
@@ -2623,7 +2630,7 @@ require_stale_record_only_reconciliation() {
     require_record_only_stale_evidence \
       "${stale_records[$record_matches]}" "${stale_ids[$record_matches]}" "$claim_mtime" || return 1
   done
-  require_record_only_stale_evidence "$META" "$ID" "$claim_mtime" || return 1
+  require_record_only_predates_claim "$META" "$ID" "$claim_mtime" || return 1
 
   TEARDOWN_SLOT_REASSIGNED=1
   TEARDOWN_SLOT_REASSIGNED_TO=$FM_TREEHOUSE_SLOT_OWNER_ID

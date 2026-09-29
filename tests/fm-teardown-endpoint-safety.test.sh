@@ -855,6 +855,37 @@ test_record_only_reconciles_multiple_proven_stale_records_individually() {
   pass "fm-teardown: three independently proven stale records reconcile one at a time while the current owner stays untouched"
 }
 
+test_record_only_reconciles_a_windowless_stale_record() {
+  local dir owner=live-task stale=stale-windowless rc
+
+  dir=$(make_case record-only-windowless)
+  mark_case_as_treehouse_pool "$dir"
+  printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' \
+    > "$dir/home/data/backlog.md"
+  tasks-axi add "$stale" "windowless fixture task" --kind scout \
+    --file "$dir/home/data/backlog.md" >/dev/null
+  tasks-axi start "$stale" --file "$dir/home/data/backlog.md" >/dev/null
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+
+  set +e
+  run_record_only_case "$dir" "$stale" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "record-only reconciliation refused a windowless stale record: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$stale.meta" "windowless record-only reconciliation left the stale record"
+  assert_present "$dir/home/state/$owner.meta" "windowless record-only reconciliation removed the current owner's record"
+  assert_present "$dir/worktree/sentinel" "windowless record-only reconciliation changed the current owner's slot"
+  ! grep -Fq "treehouse" "$dir/runtime.log" \
+    || fail "windowless record-only reconciliation returned the current owner's slot: $(cat "$dir/runtime.log")"
+
+  pass "fm-teardown: a windowless stale record reconciles through --record-only as a missing endpoint"
+}
+
 test_record_only_multiple_stale_records_refuse_a_mixed_live_set() {
   local dir owner=live-task stale1=stale-one stale2=stale-two stale3=stale-three id rc
 
@@ -1759,6 +1790,7 @@ test_bare_relative_origin_shares_project_lock_with_clone
 test_reused_pool_slot_refuses_before_touching_the_other_task
 test_record_only_reconciliation_requires_exact_positive_owner_evidence
 test_record_only_reconciles_multiple_proven_stale_records_individually
+test_record_only_reconciles_a_windowless_stale_record
 test_record_only_multiple_stale_records_refuse_a_mixed_live_set
 test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
