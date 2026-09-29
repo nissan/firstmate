@@ -1,0 +1,16 @@
+== S3: malformed lock ==
+-- stop 1: TURN WOULD END BLIND exit 2 
+-- stop 2: TURN WOULD END BLIND exit 2 
+-- stop 3: TURN WOULD END BLIND exit 2 
+-- stop 4: systemMessage":"FIRSTMATE SUPERVISION CANNOT RECOVER WITHOUT A VERIFIED FLEET LOCK exit 0 
+-- stop 5: TURN WOULD END BLIND exit 2 
+  lock unchanged: yes (not-a-pid)
+  markers: .turnend-claude-blocks .turnend-claude-lock-unavailable-alarmed 
+== S3: stale lock ==
+-- stop 1: TURN WOULD END BLIND exit 2 
+-- stop 2: TURN WOULD END BLIND exit 2 
+-- stop 3: TURN WOULD END BLIND exit 2 
+-- stop 4: systemMessage":"FIRSTMATE SUPERVISION CANNOT RECOVER WITHOUT A VERIFIED FLEET LOCK exit 0 
+-- stop 5: TURN WOULD END BLIND exit 2 
+  lock unchanged: yes (999999)
+  markers: .turnend-claude-blocks .turnend-claude-lock-unavailable-alarmed 

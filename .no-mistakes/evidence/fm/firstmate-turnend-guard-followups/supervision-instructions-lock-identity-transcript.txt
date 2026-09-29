@@ -1,0 +1,18 @@
+fm-lock status: lock: held by live harness pid 1418752
+== S6: --acquired-lock-pid equals live owner (1418752)
+- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+  (exit 0)
+== S7 adversarial: stale acquisition evidence (pid 12345 != live owner)
+- Lock: held by another live session (pid 1418752); that session owns supervision here - operate read-only and do not drain, arm, spawn, steer, merge, or repair fleet state.
+  (exit 0)
+== S7b: no acquisition evidence (renderer ancestry only)
+- Lock: held by another live session (pid 1418752); that session owns supervision here - operate read-only and do not drain, arm, spawn, steer, merge, or repair fleet state.
+  (exit 0)
+== S7c: non-numeric pid rejected
+error: --acquired-lock-pid requires a numeric pid
+  (exit 2)
+== S7d adversarial: --read-only 1 still wins over matching pid
+- Lock: read-only; do not drain, arm, spawn, steer, merge, or repair fleet state here.
+== S7e adversarial: owner now dead, same pid evidence
+- Lock: stale (pid 1418752 dead or not a harness); this session does not own supervision until bin/fm-lock.sh reclaims it.
+  (exit 0)
