@@ -18,12 +18,16 @@ AFK_MODE=away
 X_MODE=0
 REPAIR_LINE=0
 QUEUE_PENDING=0
+ACQUIRED_LOCK_PID=
 
 usage() {
   cat <<'EOF'
-Usage: fm-supervision-instructions.sh [--harness <name>] [--read-only 0|1] [--afk 0|1] [--afk-mode away|quiet] [--x-mode 0|1] [--repair-line] [--queue-pending 0|1]
+Usage: fm-supervision-instructions.sh [--harness <name>] [--read-only 0|1] [--afk 0|1] [--afk-mode away|quiet] [--x-mode 0|1] [--repair-line] [--queue-pending 0|1] [--acquired-lock-pid <pid>]
 
 Print the current primary harness's supervision operating instructions.
+--acquired-lock-pid carries the exact owner pid a successful fm-lock.sh call
+just returned to the composing session-start process; it is accepted as this
+session's identity only while live lock status still names that same pid.
 With --repair-line, print one concise repair instruction for guard and hook messages.
 --afk-mode only matters when --afk 1 (present); it selects the away-mode vs
 quiet-mode (kunchenguid/firstmate#2356) wording, and defaults to away.
@@ -75,6 +79,14 @@ while [ "$#" -gt 0 ]; do
     --repair-line)
       REPAIR_LINE=1
       shift
+      ;;
+    --acquired-lock-pid)
+      [ "$#" -gt 1 ] || { echo "error: --acquired-lock-pid requires a pid" >&2; exit 2; }
+      case "$2" in
+        ''|*[!0-9]*) echo "error: --acquired-lock-pid requires a numeric pid" >&2; exit 2 ;;
+        *) ACQUIRED_LOCK_PID=$2 ;;
+      esac
+      shift 2
       ;;
     -h|--help)
       usage
@@ -210,17 +222,20 @@ ordinary_wake_line() {
   esac
 }
 
-# The "Lock:" stanza reflects bin/fm-lock.sh status plus this process's own
-# harness ancestry, never the caller's assumption. --read-only 1 is the
-# session-start refusal and always wins; otherwise "held by this session" is
-# printed only when the recorded owner is a live harness pid in THIS process's
-# ancestry. A lock held by another live harness (the 2026-09-10 case: a Codex
+# The "Lock:" stanza reflects bin/fm-lock.sh status plus either the exact owner
+# pid returned to the composing session-start process by its successful lock
+# acquisition or this renderer process's own harness ancestry. --read-only 1 is
+# the session-start refusal and always wins. The explicit pid is accepted only
+# while live lock status still names it, so it cannot override a changed lock.
+# Without that acquisition evidence, "held by this session" is printed only
+# when the recorded owner is in THIS process's harness ancestry. A lock held by
+# another live harness (the 2026-09-10 case: a Codex
 # app-server owning the home a Claude session was started in) renders as
 # foreign, and a free or stale lock says so, because a session that reads
 # "held by this session" while it is not the owner will try to repair
 # supervision it cannot repair.
 lock_line() {
-  local status
+  local status lock_pid
   if [ "$READ_ONLY" -eq 1 ]; then
     printf '%s\n' '- Lock: read-only; do not drain, arm, spawn, steer, merge, or repair fleet state here.'
     return 0
@@ -232,8 +247,14 @@ lock_line() {
   fi
   case "$status" in
     'lock: held by live harness pid '*)
+      lock_pid=${status##* }
+      # The session-start caller's freshly acquired identity avoids re-walking
+      # from this renderer's deeper helper stack, while the status equality
+      # prevents stale evidence from claiming a lock that changed afterward.
       # shellcheck source=bin/fm-session-lock-lib.sh
-      if [ -f "$SCRIPT_DIR/fm-session-lock-lib.sh" ] && [ -f "$SCRIPT_DIR/fm-cursor-lib.sh" ] \
+      if [ -n "$ACQUIRED_LOCK_PID" ] && [ "$lock_pid" = "$ACQUIRED_LOCK_PID" ]; then
+        printf '%s\n' '- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.'
+      elif [ -f "$SCRIPT_DIR/fm-session-lock-lib.sh" ] && [ -f "$SCRIPT_DIR/fm-cursor-lib.sh" ] \
         && ( . "$SCRIPT_DIR/fm-session-lock-lib.sh" && fm_session_lock_owned_by_self "$STATE" ) 2>/dev/null; then
         printf '%s\n' '- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.'
       elif [ ! -f "$SCRIPT_DIR/fm-session-lock-lib.sh" ] || [ ! -f "$SCRIPT_DIR/fm-cursor-lib.sh" ]; then

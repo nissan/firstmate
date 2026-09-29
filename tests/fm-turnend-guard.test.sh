@@ -1207,6 +1207,19 @@ run_hook_claude_in_harness() {  # <dir> <session-id> <stop-active>
       "$dir/bin/fm-turnend-guard.sh" 2>&1
 }
 
+run_hook_claude_with_own_lock() {  # <dir> <stop-active>
+  local dir=$1 stop_active=$2 home
+  home=$(cd "$dir" && pwd)
+  ln -sf /bin/bash "$dir/fake-claude"
+  # shellcheck disable=SC2016 # The fake harness publishes its own pid before the child guard starts.
+  printf '{"stop_hook_active":%s,"session_id":"sess-claude-mode"}' "$stop_active" \
+    | CLAUDECODE=1 FM_HOME="$home" "$dir/fake-claude" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        "$FM_HOME/bin/fm-turnend-guard.sh" --claude; rc=$?
+        exit "$rc"
+      ' 2>&1
+}
+
 seed_claude_failure() {
   local dir=$1 outcome=${2:-failed-suppressed}
   : > "$dir/state/.claude-autoarm-failure-notified"
@@ -1728,26 +1741,53 @@ test_hook_claude_mode_frozen_epoch_reaches_bounded_fail_open() {
   pass "fm-turnend-guard --claude: an inert auto-arm's frozen epoch reaches one bounded fail-open and resets on recovery"
 }
 
-# The same frozen ledger without a verified failure episode: the budget must
-# still provably run out, and the verified-failure gate - not a stuck counter -
-# is what keeps the stop blocking after that.
-test_hook_claude_mode_frozen_epoch_without_verified_failure_spends_budget_and_keeps_blocking() {
+# A missing fleet lock makes the identity-gated auto-arm inert before it can
+# publish the ordinary failure marker. The frozen ledger must still spend the
+# budget, allow one separately marked attended stop, then return to blocking.
+test_hook_claude_mode_frozen_epoch_without_lock_reaches_separate_fail_open() {
   local dir out status i count
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-frozen-unverified")
   : > "$dir/state/task1.meta"
   printf 'epoch=7 owner_pid=999 outcome=clean updated_at=1\n' > "$dir/state/.claude-autoarm-epoch"
   touch -t 202001010000 "$dir/state/.claude-autoarm-epoch"
-  for i in 1 2 3 4 5; do
+  for i in 1 2 3 4; do
     out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
-    expect_code 2 "$status" "frozen unverified stop $i must keep blocking"
-    assert_not_contains "$out" 'systemMessage' "an unverified frozen epoch must never fail open"
+    if [ "$i" -lt 4 ]; then
+      expect_code 2 "$status" "missing-lock stop $i must block within the budget"
+      assert_not_contains "$out" 'systemMessage' "the missing-lock fail-open fired before the budget was spent"
+    else
+      expect_code 0 "$status" "a missing lock must reach one bounded attended fail-open"
+      assert_contains "$out" 'CANNOT RECOVER WITHOUT A VERIFIED FLEET LOCK' "the missing-lock fail-open did not name the ownership failure"
+      assert_present "$dir/state/.turnend-claude-lock-unavailable-alarmed" "the missing-lock fail-open did not consume its separate alarm"
+    fi
     [ "$(sed -n '1p' "$dir/state/.claude-autoarm-epoch")" = 'epoch=7 owner_pid=999 outcome=clean updated_at=1' ] \
       || fail "the guard rewrote the frozen ledger at stop $i"
   done
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
+  expect_code 2 "$status" "a later unhealthy stop after the missing-lock alarm must remain attended"
+  assert_not_contains "$out" 'CANNOT RECOVER WITHOUT A VERIFIED FLEET LOCK' "the missing-lock alarm repeated in one episode"
   count=$(sed -n '2s/^count=//p' "$dir/state/.turnend-claude-blocks")
-  [ "$count" -gt 3 ] 2>/dev/null || fail "the block budget must run out against a frozen epoch, but the recorded count is ${count:-absent}"
-  assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "an unverified frozen epoch recorded an attended alarm"
-  pass "fm-turnend-guard --claude: a frozen unverified epoch spends the budget yet still blocks"
+  [ "$count" -gt 3 ] 2>/dev/null || fail "the block budget did not remain exhausted after the missing-lock alarm: ${count:-absent}"
+  assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "the separate missing-lock path consumed the auto-arm failure alarm"
+
+  # Supervision need disappearing ends the episode, so a later dispatch with the
+  # lock still missing earns its own bounded attended fail-open.
+  rm -f "$dir/state/task1.meta"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
+  expect_code 0 "$status" "a stop with no supervision need must be allowed"
+  assert_absent "$dir/state/.turnend-claude-lock-unavailable-alarmed" "losing supervision need left the missing-lock alarm"
+  assert_absent "$dir/state/.turnend-claude-blocks" "losing supervision need left the block budget"
+  : > "$dir/state/task2.meta"
+  for i in 1 2 3 4; do
+    out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
+    if [ "$i" -lt 4 ]; then
+      expect_code 2 "$status" "re-dispatched missing-lock stop $i must block within the budget"
+    else
+      expect_code 0 "$status" "a re-dispatched missing-lock episode must reach its own attended fail-open"
+      assert_contains "$out" 'CANNOT RECOVER WITHOUT A VERIFIED FLEET LOCK' "the re-dispatched missing-lock fail-open did not fire"
+    fi
+  done
+  pass "fm-turnend-guard --claude: a missing lock gets one bounded attended fail-open without forging an auto-arm failure"
 }
 
 test_hook_claude_mode_recovery_contention_is_not_ordinary_allow() {
@@ -1832,18 +1872,42 @@ test_hook_claude_mode_stale_rewake_epoch_blocks() {
 }
 
 test_hook_claude_mode_budget_without_verified_failure_keeps_blocking() {
-  local dir out status i
+  local dir out status i count
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-budget")
   : > "$dir/state/task1.meta"
   for i in 1 2 3 4; do
-    out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
-    expect_code 2 "$status" "--claude block $i must exit 2 within the budget"
+    out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude_with_own_lock "$dir" false); status=$?
+    expect_code 2 "$status" "--claude owned-lock block $i must exit 2 without a verified auto-arm failure"
   done
   count=$(sed -n '2s/^count=//p' "$dir/state/.turnend-claude-blocks")
   [ "$count" -gt 3 ] 2>/dev/null || fail "four consecutive blocks must spend the budget, but the recorded count is ${count:-absent}"
-  assert_not_contains "$out" 'systemMessage' "budget exhaustion without verified auto-arm failure must not fail open"
+  assert_not_contains "$out" 'systemMessage' "an owned lock without verified auto-arm failure must not fail open"
   assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "unverified budget exhaustion recorded an attended alarm"
-  pass "fm-turnend-guard --claude: budget exhaustion alone cannot permit a blind stop"
+  assert_absent "$dir/state/.turnend-claude-lock-unavailable-alarmed" "a verified owned lock was misclassified as unavailable"
+  pass "fm-turnend-guard --claude: an owned lock still requires a verified auto-arm failure before fail-open"
+}
+
+test_hook_claude_mode_unavailable_lock_shapes_share_the_bounded_alarm() {
+  local shape dir out status stale
+  for shape in missing malformed stale; do
+    dir=$(make_primary_dir "$TMP_ROOT/hook-claude-unowned-$shape")
+    : > "$dir/state/task1.meta"
+    seed_claude_budget "$dir" 3
+    case "$shape" in
+      missing) rm -f "$dir/state/.lock" ;;
+      malformed) printf 'not-a-pid\n' > "$dir/state/.lock" ;;
+      stale)
+        stale=$(nonexistent_pid)
+        printf '%s\n' "$stale" > "$dir/state/.lock"
+        ;;
+    esac
+    out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status=$?
+    expect_code 0 "$status" "$shape lock state must reach the bounded attended ownership alarm"
+    assert_contains "$out" 'CANNOT RECOVER WITHOUT A VERIFIED FLEET LOCK' "$shape lock alarm did not name the recovery blocker"
+    assert_present "$dir/state/.turnend-claude-lock-unavailable-alarmed" "$shape lock state did not consume the ownership alarm"
+    assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "$shape lock state forged an ordinary auto-arm failure alarm"
+  done
+  pass "fm-turnend-guard --claude: missing, malformed, and stale locks share one bounded attended ownership alarm"
 }
 
 test_hook_claude_mode_verified_failure_alarm_is_loud_and_once() {
@@ -1872,15 +1936,15 @@ test_hook_claude_mode_fail_open_requires_notice_and_failure_epoch() {
   printf 'epoch=3 owner_pid=999 outcome=failed-suppressed updated_at=1\n' > "$no_notice/state/.claude-autoarm-epoch"
   touch -t 202001010000 "$no_notice/state/.claude-autoarm-epoch"
   seed_claude_budget "$no_notice" 3
-  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$no_notice" true); status=$?
-  expect_code 2 "$status" "an exhausted failure epoch without the consumed notice must remain blocking"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude_with_own_lock "$no_notice" true); status=$?
+  expect_code 2 "$status" "an exhausted failure epoch without the consumed notice must remain blocking while this session owns the lock"
 
   notice_only=$(make_primary_dir "$TMP_ROOT/hook-claude-alarm-no-epoch")
   : > "$notice_only/state/task1.meta"
   : > "$notice_only/state/.claude-autoarm-failure-notified"
   seed_claude_budget "$notice_only" 3
-  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$notice_only" true); status=$?
-  expect_code 2 "$status" "a consumed notice without an exhausted failure epoch must remain blocking"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude_with_own_lock "$notice_only" true); status=$?
+  expect_code 2 "$status" "a consumed notice without an exhausted failure epoch must remain blocking while this session owns the lock"
   pass "fm-turnend-guard --claude: fail-open requires both exhausted retries and consumed notice"
 }
 
@@ -1907,6 +1971,7 @@ test_hook_claude_mode_allow_resets_budget() {
   [ -f "$dir/state/.turnend-claude-blocks" ] || fail "--claude block must record the consecutive-block budget"
   : > "$dir/state/.claude-autoarm-failure-notified"
   : > "$dir/state/.claude-autoarm-failure-alarmed"
+  : > "$dir/state/.turnend-claude-lock-unavailable-alarmed"
   sleep 60 &
   pid=$!
   identity=$(watcher_identity "$dir" "$pid") || {
@@ -1924,6 +1989,7 @@ test_hook_claude_mode_allow_resets_budget() {
   [ ! -f "$dir/state/.turnend-claude-blocks" ] || fail "--claude allow must reset the consecutive-block budget"
   [ ! -f "$dir/state/.claude-autoarm-failure-notified" ] || fail "positive watcher recovery must reset the failure notice"
   [ ! -f "$dir/state/.claude-autoarm-failure-alarmed" ] || fail "positive watcher recovery must reset the attended alarm"
+  [ ! -f "$dir/state/.turnend-claude-lock-unavailable-alarmed" ] || fail "positive watcher recovery must reset the lock-unavailable alarm"
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
   expect_code 2 "$status" "a later unhealthy chain must re-block from a fresh budget"
   pass "fm-turnend-guard --claude: positive watcher recovery resets failure episode state"
@@ -2078,6 +2144,77 @@ test_hook_claude_mode_own_ancestry_lock_owner_is_not_foreign() {
   expect_code 2 "$status" "a lock held by this session's own harness ancestor must keep the cooperative re-block"
   assert_contains "$out" 'TURN WOULD END BLIND' "own-ancestry owner lost the block banner"
   pass "fm-turnend-guard --claude: a lock held by this session's own harness ancestor is never a foreign owner"
+}
+
+# The foreign-owner decision must stay bound to one lock-file snapshot. The
+# stale-reclaim race can replace a dead owner with this session's own live pid
+# immediately after that read; the guard must still classify the dead snapshot
+# as non-foreign and block. The inverse interleaving proves the test kills a
+# second-read mutation: a live foreign snapshot replaced by this session's pid
+# still takes the foreign-owner exit based on the value already read.
+test_hook_claude_mode_lock_owner_snapshot_is_read_once() {
+  local dir home fakebin dead foreign out status own
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-lock-snapshot")
+  home=$(cd "$dir" && pwd)
+  : > "$dir/state/task1.meta"
+  ln -sf /bin/bash "$dir/fake-claude"
+  fakebin=$(fm_fakebin "$dir/swap-bin")
+  cat > "$fakebin/cat" <<'SH'
+#!/usr/bin/env bash
+if [ "$#" -eq 1 ] && [ "$1" = "$FM_LOCK_SWAP_PATH" ] \
+  && (set -C; : > "$FM_LOCK_SWAP_ONCE") 2>/dev/null; then
+  old=$(/bin/cat "$1" 2>/dev/null || true)
+  printf '%s\n' "$FM_LOCK_SWAP_REPLACEMENT_PID" > "$1"
+  printf '%s\n' "$old"
+  exit 0
+fi
+exec /bin/cat "$@"
+SH
+  chmod +x "$fakebin/cat"
+
+  dead=$(nonexistent_pid)
+  printf '%s\n' "$dead" > "$dir/state/.lock"
+  rm -f "$dir/swap-once"
+  # shellcheck disable=SC2016 # The fake harness publishes its own pid for the swap shim.
+  out=$(printf '%s' '{"stop_hook_active":true,"session_id":"sess-claude-mode"}' \
+    | CLAUDECODE=1 FM_HOME="$home" FM_LOCK_SWAP_PATH="$dir/state/.lock" \
+      FM_LOCK_SWAP_ONCE="$dir/swap-once" FM_SWAP_BIN="$fakebin" \
+      "$dir/fake-claude" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/snapshot-own-pid"
+        PATH="$FM_SWAP_BIN:$PATH" FM_LOCK_SWAP_REPLACEMENT_PID=$$ \
+          "$FM_HOME/bin/fm-turnend-guard.sh" --claude
+        rc=$?
+        exit "$rc"
+      ' 2>&1); status=$?
+  own=$(tr -d '[:space:]' < "$dir/state/snapshot-own-pid")
+  expect_code 2 "$status" "a dead first snapshot must still block after stale reclaim publishes this session's pid"
+  [ "$(tr -d '[:space:]' < "$dir/state/.lock")" = "$own" ] \
+    || fail "the dead-snapshot fixture did not replace the lock with this session's pid"
+  assert_contains "$out" 'TURN WOULD END BLIND' "the stale-reclaim snapshot race lost the block banner"
+
+  foreign=$(start_fake_harness "$dir" fake-codex)
+  printf '%s\n' "$foreign" > "$dir/state/.lock"
+  rm -f "$dir/swap-once"
+  # shellcheck disable=SC2016 # The fake harness publishes its own pid for the swap shim.
+  out=$(printf '%s' '{"stop_hook_active":true,"session_id":"sess-claude-mode"}' \
+    | CLAUDECODE=1 FM_HOME="$home" FM_LOCK_SWAP_PATH="$dir/state/.lock" \
+      FM_LOCK_SWAP_ONCE="$dir/swap-once" FM_SWAP_BIN="$fakebin" \
+      "$dir/fake-claude" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/snapshot-own-pid"
+        PATH="$FM_SWAP_BIN:$PATH" FM_LOCK_SWAP_REPLACEMENT_PID=$$ \
+          "$FM_HOME/bin/fm-turnend-guard.sh" --claude
+        rc=$?
+        exit "$rc"
+      ' 2>&1); status=$?
+  kill "$foreign" 2>/dev/null || true
+  wait "$foreign" 2>/dev/null || true
+  own=$(tr -d '[:space:]' < "$dir/state/snapshot-own-pid")
+  expect_code 0 "$status" "a live foreign first snapshot must not be reclassified from a second lock read"
+  [ "$(tr -d '[:space:]' < "$dir/state/.lock")" = "$own" ] \
+    || fail "the foreign-snapshot fixture did not replace the lock with this session's pid"
+  assert_contains "$out" "OWNED BY ANOTHER LIVE SESSION" "the foreign first snapshot lost its read-once stand-down"
+  assert_contains "$out" "pid $foreign" "the read-once diagnostic did not retain the first owner pid"
+  pass "fm-turnend-guard --claude: foreign-owner classification stays bound to one lock snapshot across stale-reclaim races"
 }
 
 test_hook_claude_mode_dead_or_non_harness_lock_owner_still_blocks() {
@@ -2373,11 +2510,12 @@ test_hook_claude_mode_terminal_fail_open_clears_abandoned_claim
 test_hook_claude_mode_preserves_fresh_failed_progression
 test_hook_claude_mode_integrated_monotonic_fail_open
 test_hook_claude_mode_frozen_epoch_reaches_bounded_fail_open
-test_hook_claude_mode_frozen_epoch_without_verified_failure_spends_budget_and_keeps_blocking
+test_hook_claude_mode_frozen_epoch_without_lock_reaches_separate_fail_open
 test_hook_claude_mode_recovery_contention_is_not_ordinary_allow
 test_hook_claude_mode_concurrent_recovery_resets_are_idempotent
 test_hook_claude_mode_stale_rewake_epoch_blocks
 test_hook_claude_mode_budget_without_verified_failure_keeps_blocking
+test_hook_claude_mode_unavailable_lock_shapes_share_the_bounded_alarm
 test_hook_claude_mode_verified_failure_alarm_is_loud_and_once
 test_hook_claude_mode_fail_open_requires_notice_and_failure_epoch
 test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open
@@ -2387,6 +2525,7 @@ test_hook_claude_mode_secondmate_reblocks_like_primary
 test_hook_claude_mode_stands_down_for_live_foreign_lock_owner
 test_hook_claude_mode_dead_or_non_harness_lock_owner_still_blocks
 test_hook_claude_mode_own_ancestry_lock_owner_is_not_foreign
+test_hook_claude_mode_lock_owner_snapshot_is_read_once
 test_hook_away_daemon_allows_between_watcher_cycles
 test_hook_away_daemon_allows_over_dead_watcher_lock
 test_hook_away_mode_blocks_without_any_supervisor

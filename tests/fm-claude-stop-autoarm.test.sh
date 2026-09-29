@@ -546,6 +546,7 @@ test_benign_cycle_end_with_live_watcher_is_silent() {
   printf 'session=sess-autoarm\ncount=3\nepoch=9\n' > "$dir/state/.turnend-claude-blocks"
   : > "$dir/state/.claude-autoarm-failure-notified"
   : > "$dir/state/.claude-autoarm-failure-alarmed"
+  : > "$dir/state/.turnend-claude-lock-unavailable-alarmed"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   out2=$(run_autoarm "$dir" 2>/dev/null); status2=$?
   kill "$pid" 2>/dev/null || true
@@ -559,6 +560,7 @@ test_benign_cycle_end_with_live_watcher_is_silent() {
   [ ! -e "$dir/state/.turnend-claude-blocks" ] || fail "benign live cycle must clear the prior block budget"
   [ ! -e "$dir/state/.claude-autoarm-failure-notified" ] || fail "benign live cycle must not leave a failure-notice marker"
   [ ! -e "$dir/state/.claude-autoarm-failure-alarmed" ] || fail "benign live cycle must not leave an attended-alarm marker"
+  [ ! -e "$dir/state/.turnend-claude-lock-unavailable-alarmed" ] || fail "benign live cycle must not leave a lock-unavailable alarm marker"
   pass "auto-arm: benign cycle end with a live watcher and fresh beacon stays silent across the next cycle"
 }
 

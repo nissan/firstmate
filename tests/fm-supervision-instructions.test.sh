@@ -71,11 +71,17 @@ test_lock_stanza_reflects_lock_status() {
   pid=$!
   printf '%s\n' "$pid" > "$home/state/.lock"
   out=$(FM_HOME="$home" "$RENDER" --harness claude)
-  kill "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
   assert_contains "$out" "- Lock: held by another live session (pid $pid)" "live foreign harness owner not rendered as another session"
   assert_contains "$out" "operate read-only" "foreign-owner lock stanza did not direct read-only operation"
   assert_not_contains "$out" "held by this session" "foreign live owner claimed session ownership"
+
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --acquired-lock-pid "$pid")
+  assert_contains "$out" "- Lock: held by this session" "the exact pid returned by lock acquisition was not retained as this session's identity"
+  assert_not_contains "$out" "held by another live session" "fresh acquisition evidence was discarded by the renderer's deeper ancestry walk"
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --acquired-lock-pid 1)
+  assert_contains "$out" "- Lock: held by another live session (pid $pid)" "stale acquisition evidence overrode the live lock's changed pid"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
 
   ln -sf /bin/bash "$home/fake-claude"
   # The trailing `exit` keeps the renderer off the end of the -c script, so bash

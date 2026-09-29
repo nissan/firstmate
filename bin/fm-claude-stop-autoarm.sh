@@ -71,8 +71,9 @@
 # This hook never blocks the Stop decision itself and never prints to stdout:
 # exit 0 is always silent, and exit 2 carries the rewake banner on stderr.
 # On any uncertainty such as unresolvable ancestry, malformed lock state, or
-# lock contention, it exits 0 and leaves continuity to the synchronous guard and
-# the model.
+# lock contention, it exits 0 and leaves continuity to the synchronous guard.
+# That guard bounds a lock-unavailable episode separately because this hook
+# cannot safely claim the home or publish an ordinary auto-arm failure there.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -614,8 +614,16 @@ printf '%s\n' "$$" > "$FM_HOME/state/frontend-pid"
 CLAUDE_CODE_SESSION_ID=S1 CLAUDE_PID=$$ "$FM_HOME/bin/fm-lock.sh" > "$FM_HOME/state/frontend-lock.out" 2>&1
 printf '%s\n' "$?" > "$FM_HOME/state/frontend-lock.rc"
 "$FM_FIXTURE_CLAUDE" "$FM_HOME/daemon.sh" &
-disown
-while [ ! -e "$FM_HOME/state/stop-frontend" ]; do sleep 0.05; done
+daemon_pid=$!
+reaped=0
+while [ ! -e "$FM_HOME/state/stop-frontend" ]; do
+  if [ "$reaped" -eq 0 ] && [ -e "$FM_HOME/state/reap-daemon" ]; then
+    wait "$daemon_pid" 2>/dev/null || true
+    reaped=1
+    : > "$FM_HOME/state/daemon-reaped"
+  fi
+  sleep 0.05
+done
 exit 0
 SH
   cat > "$dir/daemon.sh" <<'SH'
@@ -757,15 +765,26 @@ test_e2e_background_session_keeps_its_lock_across_a_recycled_chain() {
   grep -qx "$frontend" "$dir/state/phase-1/ancestry" || fail "the healthy chain did not reach the front-end"
   expect_phase_owned "$dir" 1 1 "$frontend" "healthy chain"
 
-  # Recycle the bridge: the daemon ends, the pty-host is reparented to init, and
-  # the front-end that holds the lock stays alive.
+  # Recycle the bridge: the daemon ends and its owning front-end explicitly
+  # reaps it, so a zombie cannot keep kill -0 true while the pty-host has already
+  # been adopted elsewhere. PID 1 is not the only valid adopter on hosts that
+  # install a child subreaper; the load-bearing facts are that the daemon is
+  # reaped, the pty-host stays alive, and its parent is no longer that daemon.
   kill -TERM "$daemon"
+  : > "$dir/state/reap-daemon"
   i=0
-  while [ "$i" -lt 200 ] && { kill -0 "$daemon" 2>/dev/null || [ "$(ps -o ppid= -p "$ptyhost" 2>/dev/null | tr -d ' ')" != 1 ]; }; do
+  while [ "$i" -lt 200 ] && { [ ! -e "$dir/state/daemon-reaped" ] \
+    || [ "$(ps -o ppid= -p "$ptyhost" 2>/dev/null | tr -d ' ')" = "$daemon" ]; }; do
     sleep 0.05
     i=$((i + 1))
   done
-  [ "$(ps -o ppid= -p "$ptyhost" 2>/dev/null | tr -d ' ')" = 1 ] || fail "the pty-host was not reparented to init after the daemon ended"
+  [ -e "$dir/state/daemon-reaped" ] || fail "the front-end did not reap the recycled daemon"
+  if kill -0 "$daemon" 2>/dev/null; then
+    fail "the recycled daemon still exists after its owning front-end reported reaping it"
+  fi
+  kill -0 "$ptyhost" 2>/dev/null || fail "the pty-host died while its daemon bridge was recycled"
+  [ "$(ps -o ppid= -p "$ptyhost" 2>/dev/null | tr -d ' ')" != "$daemon" ] \
+    || fail "the live pty-host still names the recycled daemon as its parent"
   kill -0 "$frontend" 2>/dev/null || fail "the front-end died with the daemon, so the recycled case cannot be exercised"
 
   # Phase 2: the same session id over the broken chain - the reported drift.
