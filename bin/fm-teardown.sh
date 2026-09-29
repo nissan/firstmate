@@ -139,14 +139,16 @@
 # These refusals are not relaxed by --force: --force authorizes discarding THIS
 # task's unlanded work, never another task's live work. Nothing of this task's
 # own is removed by a refusal. `--record-only` is the sanctioned reconciliation
-# for the exact two-record collision: it proceeds only when the slot's readable
-# owner claim names the one other record and its canonical Firstmate home. It
-# then treats this record as stale and runs only its ordinary cleanup while
-# leaving the claimed slot untouched. A missing, unreadable, self-naming,
-# unmatched, multiply matched, or home-mismatched claim refuses, even with
-# --force. The ordinary report, unlanded-work, endpoint-identity,
-# backlog-transition, and cleanup gates remain in force; --record-only never
-# supplies discard authority.
+# for one or more stale records beside exactly one current owner record: it
+# proceeds only when the slot's readable owner claim names that record and its
+# canonical Firstmate home. Every other record naming the slot must predate the
+# claim and have a confidently dead or agent-less endpoint. Each invocation
+# retires only the named stale record through ordinary cleanup and leaves the
+# claimed slot untouched, so several stale records are reconciled individually.
+# A missing, unreadable, self-naming, unmatched, multiply matched, live,
+# time-ambiguous, or home-mismatched shape refuses, even with --force. The
+# ordinary report, unlanded-work, endpoint-identity, backlog-transition, and
+# cleanup gates remain in force; --record-only never supplies discard authority.
 # Orca is not a pool slot and proves its path through
 # require_orca_worktree_path_match instead.
 # Orca tasks use the same safety checks, then close the recorded terminal and
@@ -207,15 +209,15 @@
 #   landed-work checks. Every other windowless record, including one with a
 #   spawn_gen, a non-tmux backend, or an ambiguous field, still faces the
 #   validator and refuses.
-#   --record-only retires a stale task record without inspecting, resetting,
+#   --record-only retires one stale task record without inspecting, resetting,
 #   returning, reaping processes in, or otherwise changing the Treehouse slot
-#   now claimed by the one other task record. It requires the recorded worktree
-#   to remain a live Treehouse pool slot and requires its plain owner claim to
-#   identify that other record by both task id and canonical Firstmate home.
-#   The stale record's exact endpoint must also read as dead or missing.
-#   Every absent, unreadable, ambiguous, or contradictory ownership shape
-#   refuses without mutation. This flag does not imply --force and does not
-#   bypass any non-slot cleanup or backlog safety gate.
+#   now claimed by another task. It requires the recorded worktree to remain a
+#   live Treehouse pool slot, exactly one record matching the plain owner claim
+#   by task id and canonical Firstmate home, and every other colliding record to
+#   have an older mtime than the claim plus a dead or missing exact endpoint.
+#   Every absent, unreadable, live, time-ambiguous, or contradictory ownership
+#   shape refuses without mutation. This flag does not imply --force and does
+#   not bypass any non-slot cleanup or backlog safety gate.
 #
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
@@ -2457,16 +2459,57 @@ require_exclusive_task_worktree_slot() {
   require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot"
 }
 
+# Classify one colliding record's exact endpoint without changing it.
+# Invalid endpoint metadata is unreadable evidence, never an agent-less record.
+record_only_endpoint_state() {  # <meta> <task-id>
+  local meta=$1 id=$2 backend target
+  fm_backend_validate_task_endpoint "$meta" "$id" >/dev/null 2>&1 || {
+    printf 'unreadable\n'
+    return 0
+  }
+  backend=$FM_BACKEND_VALIDATED_BACKEND
+  target=$FM_BACKEND_VALIDATED_TARGET
+  fm_backend_agent_state "$backend" "$target"
+}
+
+# Require positive evidence that one colliding record predates the current
+# claim and no longer has a harness agent. Equal mtimes are deliberately
+# ambiguous at whole-second filesystem resolution and refuse.
+require_record_only_stale_evidence() {  # <meta> <task-id> <claim-mtime>
+  local meta=$1 id=$2 claim_mtime=$3 record_mtime endpoint_state
+  record_mtime=$(fm_path_mtime "$meta" 2>/dev/null || true)
+  case "$record_mtime" in
+    ''|*[!0-9]*)
+      echo "REFUSED: --record-only cannot read when task $id's record was published; positive stale-record evidence is required and nothing was changed" >&2
+      return 1
+      ;;
+  esac
+  if [ "$record_mtime" -ge "$claim_mtime" ]; then
+    echo "REFUSED: --record-only cannot prove task $id's record predates the current Treehouse slot claim; ownership timing is ambiguous and nothing was changed" >&2
+    return 1
+  fi
+  endpoint_state=$(record_only_endpoint_state "$meta" "$id")
+  case "$endpoint_state" in
+    dead|missing) return 0 ;;
+  esac
+  echo "REFUSED: --record-only found colliding task $id's endpoint reads '$endpoint_state', not confidently dead or agent-less; nothing was changed" >&2
+  return 1
+}
+
 # Authorize the narrow record-only collision repair. The slot claim is the
-# positive evidence: it must name exactly one other record which names this
+# positive owner evidence: it must name exactly one record which names this
 # same slot, and its home= must resolve to the home containing that record.
-# Project-lock acquisition happened before the task locks, so a normal spawn or
-# return cannot change the claim or publish another record during this proof.
-# Every mismatch refuses before any ordinary teardown cleanup begins.
+# Every remaining colliding record must independently carry older-than-claim
+# publication evidence and a dead or missing endpoint. Project-lock acquisition
+# happened before the task locks, so a normal spawn or return cannot change the
+# claim or publish another record during this proof. Every mismatch refuses
+# before any ordinary teardown cleanup begins, and one invocation retires only
+# the requested record through the ordinary transactional cleanup path.
 require_stale_record_only_reconciliation() {
-  local slot tasktmp_abs claim_home state_dir other other_id other_home other_project other_lock
+  local slot tasktmp_abs claim_home claim_marker claim_mtime state_dir other other_id other_home other_project other_lock
   local field other_path other_slot
   local collision_count=0 owner_match_count=0 record_matches
+  local -a stale_records=() stale_ids=()
 
   [ "$KIND" != secondmate ] || {
     echo "REFUSED: --record-only applies only to an ordinary task's stale Treehouse slot record; nothing was changed" >&2
@@ -2523,6 +2566,17 @@ require_stale_record_only_reconciliation() {
     echo "REFUSED: --record-only cannot resolve the claimed Firstmate home $FM_TREEHOUSE_SLOT_OWNER_HOME; nothing was changed" >&2
     return 1
   }
+  claim_marker=$(fm_treehouse_slot_owner_marker "$slot") || {
+    echo "REFUSED: --record-only cannot locate the current Treehouse slot claim; nothing was changed" >&2
+    return 1
+  }
+  claim_mtime=$(fm_path_mtime "$claim_marker" 2>/dev/null || true)
+  case "$claim_mtime" in
+    ''|*[!0-9]*)
+      echo "REFUSED: --record-only cannot read when the current Treehouse slot claim was published; positive stale-record evidence is required and nothing was changed" >&2
+      return 1
+      ;;
+  esac
 
   collect_local_firstmate_states "$STATE" || return 1
   for state_dir in "${TREEHOUSE_OWNER_STATES[@]}"; do
@@ -2552,15 +2606,24 @@ require_stale_record_only_reconciliation() {
           "$other_project" "$slot" 2>/dev/null || true)
         if [ -n "$other_lock" ] && [ "$other_lock" = "$TREEHOUSE_PROJECT_LOCK" ]; then
           owner_match_count=$((owner_match_count + 1))
+          continue
         fi
       fi
+      stale_records+=("$other")
+      stale_ids+=("$other_id")
     done
   done
 
-  if [ "$collision_count" -ne 1 ] || [ "$owner_match_count" -ne 1 ]; then
+  if [ "$collision_count" -lt 1 ] || [ "$owner_match_count" -ne 1 ]; then
     echo "REFUSED: --record-only found $collision_count other task record(s) naming $slot, but the slot claim for task $FM_TREEHOUSE_SLOT_OWNER_ID in home $claim_home must match exactly one; ownership is missing, ambiguous, or contradictory and nothing was changed" >&2
     return 1
   fi
+
+  for ((record_matches=0; record_matches<${#stale_records[@]}; record_matches++)); do
+    require_record_only_stale_evidence \
+      "${stale_records[$record_matches]}" "${stale_ids[$record_matches]}" "$claim_mtime" || return 1
+  done
+  require_record_only_stale_evidence "$META" "$ID" "$claim_mtime" || return 1
 
   TEARDOWN_SLOT_REASSIGNED=1
   TEARDOWN_SLOT_REASSIGNED_TO=$FM_TREEHOUSE_SLOT_OWNER_ID
