@@ -1,0 +1,9 @@
+== FIX test_lock_uncreatable_path_fails_without_steal_recursion
+ok - lock acquisition under a missing parent fails without steal recursion
+rc=0
+== FIX test_lock_released_during_acquire_is_taken
+ok - lock released during acquisition is taken by the acquirer
+rc=0
+== FIX test_attached_arm_signal_after_state_removal_exits_cleanly
+ok - attached arm signal after state removal exits without lock-steal recursion
+rc=0

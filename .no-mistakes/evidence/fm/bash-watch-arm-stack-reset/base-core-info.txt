@@ -1,0 +1,25 @@
+           PID: 1493528 (bash)
+           TID: 1493528 (bash)
+           UID: 1000 (nissan)
+           GID: 1000 (nissan)
+        Signal: 11 (SEGV) si_code: SI_KERNEL
+     Timestamp: Wed 2026-09-30 09:44:19 AEST (13s ago)
+  Command Line: bash /tmp/fm-base.vRYS/bin/fm-watch-arm.sh
+    Executable: /usr/bin/bash
+ Control Group: /user.slice/user-1000.slice/user@1000.service/app.slice/no-mistakes-daemon-574f4b05.service
+          Unit: user@1000.service
+     User Unit: no-mistakes-daemon-574f4b05.service
+         Slice: user-1000.slice
+     Owner UID: 1000 (nissan)
+       Boot ID: a7b2493e56fc4d2589c7d8f5bb18b487
+    Machine ID: 901a893771504a2eaf2e11d972a98124
+      Hostname: redguardian
+       Storage: /var/lib/systemd/coredump/core.bash.1000.a7b2493e56fc4d2589c7d8f5bb18b487.1493528.1790725459000000.zst (present)
+  Size on Disk: 8.2M
+       Message: Process 1493528 (bash) of user 1000 dumped core.
+                
+                Stack trace of thread 1493528:
+                #0  0x000070d222d11b99 read (libc.so.6 + 0x111b99)
+                #1  0x00005f34320bd1ce zread (bash + 0xe81ce)
+                #2  0x00005f3432046d19 n/a (bash + 0x71d19)
+                #3  0x00005f343204894c command_substitute (bash + 0x7394c)

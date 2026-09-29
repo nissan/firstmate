@@ -1,0 +1,8 @@
+  28565 execute_command_internal
+  24272 execute_command
+   2870 ??
+      2 read
+      1 zread
+      1 run_pending_traps
+      1 reader_loop
+      1 parse_and_execute

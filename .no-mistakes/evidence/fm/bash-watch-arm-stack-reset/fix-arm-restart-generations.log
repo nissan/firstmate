@@ -1,0 +1,8 @@
+gen1 arm (plain): watcher: started pid=1607271 (beacon fresh) | lock pid=1607271 alive=yes
+gen2 arm --restart: watcher: started pid=1612134 (beacon fresh) | lock pid= alive=no
+gen3 arm --restart: watcher: started pid=1613330 (beacon fresh) | lock pid= alive=no
+gen1 arm exited status=1 stdout: watcher: started pid=1607271 (beacon fresh) watcher: FAILED - watcher cycle exited 1 without an actionable reason 
+gen2 arm exited status=0 stdout: watcher: started pid=1612134 (beacon fresh) check: rearm-resurface 
+watcher: FAILED - watcher cycle exited 1 without an actionable reason
+cat: /tmp/fm-arm-restart.CHMD/drive/state/.watch.lock/pid: No such file or directory
+gen3 arm exited status=0 after watcher TERM

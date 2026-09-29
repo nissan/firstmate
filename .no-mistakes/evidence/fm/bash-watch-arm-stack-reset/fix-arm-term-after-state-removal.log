@@ -1,0 +1,4 @@
+[FIX] root=/home/nissan/.no-mistakes/worktrees/17d09ac59434/01M3QNBFGXX3CHDBXM43Z2K5FG
+[FIX] arm stdout before teardown: watcher: attached pid=1575825 (beacon 0s)
+[FIX] arm exit status=143 (TERM) after 0s
+[FIX] arm stderr (last 5 lines):

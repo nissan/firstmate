@@ -1,0 +1,13 @@
+== BASE test_lock_uncreatable_path_fails_without_steal_recursion
+/tmp/fm-base.vRYS/bin/fm-wake-lib.sh: line 599: fm_path_age: maximum function nesting level exceeded (64)
+/tmp/fm-base.vRYS/bin/fm-wake-lib.sh: line 599: [: : integer expected
+/tmp/fm-base.vRYS/bin/fm-wake-lib.sh: line 939: fm_lock_try_create: maximum function nesting level exceeded (64)
+rc=0
+== BASE test_lock_released_during_acquire_is_taken
+ok - lock released during acquisition is taken by the acquirer
+rc=0
+== BASE test_attached_arm_signal_after_state_removal_exits_cleanly
+/tmp/fm-base.vRYS/bin/fm-wake-lib.sh: line 939: fm_lock_try_create: maximum function nesting level exceeded (64)
+mktemp: failed to create file via template ‘/tmp/fm-watcher-lock-tests.T5ucAa/attached-arm-signal-state-gone/state/.watch-arm-output.XXXXXX’: No such file or directory
+not ok - arm recursed without bound while recording its interrupted cycle
+rc=0

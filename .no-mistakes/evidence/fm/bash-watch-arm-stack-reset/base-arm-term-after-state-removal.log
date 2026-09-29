@@ -1,0 +1,5 @@
+[BASE] root=/tmp/fm-base.vRYS
+[BASE] arm stdout before teardown: watcher: attached pid=1493181 (beacon 0s)
+./drive-arm-term-after-state-removal.sh: line 21: 1493528 Segmentation fault         (core dumped) PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT=30 "$ROOT/bin/fm-watch-arm.sh" > "$dir/arm.out" 2> "$dir/arm.err"
+[BASE] arm exit status=139 (SEGV) after 55s
+[BASE] arm stderr (last 5 lines):
