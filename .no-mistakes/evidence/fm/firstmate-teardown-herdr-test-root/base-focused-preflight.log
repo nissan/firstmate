@@ -1,0 +1,17 @@
+ok - local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed
+warning: lsof is unavailable; cannot resolve the tmux pane process group for task-x1
+ok - teardown closes its own backlog item before reporting success
+warning: lsof is unavailable; cannot resolve the tmux pane process group for task-x1
+ok - teardown honors config/backlog-backend=manual and still finishes cleanly
+ok - local-only worktree with truly unpushed work is refused (safety preserved)
+ok - local-only worktree with work merged into local main is torn down (no regression)
+ok - no-mistakes worktree with HEAD on origin is torn down (no regression)
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+ok - no-mistakes worktree pushed by a separate pipeline copy is torn down (stale local ref fix)
+ok - genuinely unlanded work still refuses once the remote is actually reachable and checked
+ok - an unreachable remote refuses rather than silently permitting teardown (fail-safe)
+ok - local-only worktree with unpushed work is torn down under --force (escape hatch)
+ok - fm-pr-check publishes the PR-ready line on a secondmate's parent channel once
+ok - herdr flat teardown preflight refuses before every destructive change
+RESULT: focused preflight test completed
+exit=0

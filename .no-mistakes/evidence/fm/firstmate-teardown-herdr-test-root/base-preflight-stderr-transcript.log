@@ -1,0 +1,12 @@
+--- mode=unresolvable-lock rc=1 adapter_in_copy=absent stderr:
+error: herdr session presentation lock could not be resolved for task-x1; nothing was changed - rerun teardown once the session is reachable and unambiguous
+--- mode=missing-adapter rc=1 adapter_in_copy=absent stderr:
+/tmp/fm-teardown-tests.o8TsEr/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh: line 630: /tmp/fm-teardown-tests.o8TsEr/herdr-preflight-missing-adapter/test-root/bin/backends/herdr.sh: No such file or directory
+error: herdr teardown prerequisites are unavailable for task-x1; nothing was changed - restore the adapter and rerun teardown
+--- mode=missing-parser rc=1 adapter_in_copy=present stderr:
+error: herdr teardown prerequisites are unavailable for task-x1; nothing was changed - restore the adapter and rerun teardown
+--- mode=missing-explicit-close-helper rc=1 adapter_in_copy=present stderr:
+error: herdr teardown prerequisites are unavailable for task-x1; nothing was changed - restore the adapter and rerun teardown
+ok - herdr flat teardown preflight refuses before every destructive change
+RESULT: focused preflight test completed
+exit=0

@@ -1,0 +1,9 @@
+630:        . "$FM_BACKEND_LIB_DIR/backends/herdr.sh" 2>/dev/null || . "$FM_ROOT/bin/backends/herdr.sh" || return 1
+--- mode=missing-adapter rc=1 adapter_in_copy=absent stderr:
+/tmp/fm-teardown-tests.H37Uwf/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh: line 630: /tmp/fm-teardown-tests.H37Uwf/herdr-preflight-missing-adapter/test-root/bin/backends/herdr.sh: No such file or directory
+error: herdr teardown prerequisites are unavailable for task-x1; nothing was changed - restore the adapter and rerun teardown
+--- mode=missing-parser rc=1 adapter_in_copy=present stderr:
+--
+ok - herdr flat teardown preflight refuses before every destructive change
+RESULT: focused preflight test completed
+exit=0
