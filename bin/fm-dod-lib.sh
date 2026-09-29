@@ -5,10 +5,10 @@
 # receives. Both paths must hand the worker the same contract: a promoted
 # no-mistakes worker that never received the ask-user escalation rule or the
 # `--yes` ban is the exact delivery hole this single owner exists to close.
-# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> [nm-run-helper]
-# prints the block on stdout with no trailing blank line. The optional helper is
-# required by current no-mistakes callers and routes only the canonical
-# local-validation repositories past hosted-check waiting.
+# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> <nm-run-helper>
+# prints the block on stdout with no trailing blank line. The required helper
+# routes only the canonical local-validation repositories past hosted-check
+# waiting; a missing helper is refused.
 # The caller validates the mode; an unknown
 # mode is refused rather than silently rendered as the pipeline contract.
 # The block opens with the fixed machine-readable "Delivery contract: mode=<mode>"
@@ -247,8 +247,12 @@ fm_ask_user_escalation_block() {  # <data-dir> <task-id>
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id> [nm-run-helper]
-  local mode=$1 id=$2 nm_run_helper=${3:-no-mistakes axi run}
+fm_dod_block() {  # <mode> <task-id> <nm-run-helper>
+  local mode=$1 id=$2 nm_run_helper=${3:-}
+  if [ -z "$nm_run_helper" ]; then
+    echo "error: fm_dod_block: missing no-mistakes run helper" >&2
+    return 1
+  fi
   case "$mode" in
     direct-PR)
       cat <<EOF
