@@ -60,6 +60,14 @@ claim_pool_slot() {  # <case> <task-id> [home]
   fm_touch_epoch 1700000010 "$dir/pool/1/.fm-slot-owner"
 }
 
+claim_pool_slot_modern() {  # <case> <task-id> [home] [generation]
+  local dir=$1 id=$2 home=${3:-$1/home} claim_gen=${4:-c1700000010.10.20}
+  printf 'task=%s\nhome=%s\nclaim_gen=%s\n' \
+    "$id" "$home" "$claim_gen" > "$dir/pool/1/.fm-slot-owner"
+  printf 'slot_claim_gen=%s\n' "$claim_gen" >> "$dir/home/state/$id.meta"
+  fm_touch_epoch 1700000030 "$dir/pool/1/.fm-slot-owner"
+}
+
 run_case() {  # <case> <id>
   local dir=$1 id=$2
   FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
@@ -813,6 +821,121 @@ SH
   assert_record_only_refused "$dir" "$stale" "$owner" "non-Treehouse path"
 
   pass "fm-teardown: record-only reconciliation requires one exact readable slot owner and refuses every missing, ambiguous, or contradictory ownership shape"
+}
+
+test_record_only_uses_immutable_generation_chronology() {
+  local dir stale=stale-task owner=live-task
+
+  # Historical claims have no generation of their own. A valid immutable spawn
+  # epoch still proves the stale record predates the independently published
+  # claim mtime after required completion bookkeeping updates the record mtime.
+  dir=$(make_case record-only-updated-meta-legacy-claim)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "spawn_gen=s1699999990.11.12"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner" "$dir/home"
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    "$ROOT/bin/fm-captain-hold.sh" complete "$stale" --none > "$dir/complete.out" \
+    || fail "completion bookkeeping could not update the stale metadata"
+  run_record_only_case "$dir" "$stale" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "immutable spawn chronology did not survive a post-reassignment metadata update: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$stale.meta" \
+    "immutable spawn chronology left the updated stale record behind"
+  assert_present "$dir/home/state/$owner.meta" \
+    "immutable spawn chronology removed the current owner's record"
+  assert_present "$dir/worktree/sentinel" \
+    "immutable spawn chronology changed the current owner's slot"
+
+  # Modern claims bind their immutable generation to the current owner record;
+  # neither the record nor claim mtime is the chronology authority.
+  dir=$(make_case record-only-updated-meta-modern-claim)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "spawn_gen=s1700000000.11.12" "slot_claim_gen=c1699999990.9.8"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot_modern "$dir" "$owner" "$dir/home" "c1700000010.10.20"
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    "$ROOT/bin/fm-captain-hold.sh" complete "$stale" --none > "$dir/complete.out" \
+    || fail "completion bookkeeping could not update the modern stale metadata"
+  run_record_only_case "$dir" "$stale" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "bound slot-claim generation did not survive mutable mtime updates: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$stale.meta" \
+    "bound slot-claim generation left the updated stale record behind"
+  assert_present "$dir/home/state/$owner.meta" \
+    "bound slot-claim generation removed the current owner's record"
+  assert_present "$dir/pool/1/.fm-slot-owner" \
+    "bound slot-claim generation removed the current owner's claim"
+
+  dir=$(make_case record-only-malformed-spawn-generation)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "spawn_gen=s1700000000.bad.12"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot_modern "$dir" "$owner" "$dir/home"
+  fm_touch_epoch 1699999990 "$dir/home/state/$stale.meta"
+  assert_record_only_refused "$dir" "$stale" "$owner" \
+    "record with malformed spawn generation"
+  assert_contains "$(cat "$dir/stderr")" "malformed" \
+    "malformed spawn-generation refusal did not name the evidence defect"
+
+  dir=$(make_case record-only-equal-generation)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "spawn_gen=s1700000010.11.12"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot_modern "$dir" "$owner" "$dir/home" "c1700000010.10.20"
+  assert_record_only_refused "$dir" "$stale" "$owner" \
+    "record whose spawn generation equals the claim epoch"
+
+  dir=$(make_case record-only-future-generation)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "spawn_gen=s9999999999.11.12"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot_modern "$dir" "$owner" "$dir/home"
+  assert_record_only_refused "$dir" "$stale" "$owner" \
+    "record with a future spawn generation"
+
+  dir=$(make_case record-only-contradictory-claim-binding)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "spawn_gen=s1700000000.11.12"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot_modern "$dir" "$owner" "$dir/home" "c1700000010.10.20"
+  awk '{ sub(/^slot_claim_gen=.*/, "slot_claim_gen=c1700000005.10.20"); print }' \
+    "$dir/home/state/$owner.meta" > "$dir/home/state/$owner.meta.tmp"
+  mv "$dir/home/state/$owner.meta.tmp" "$dir/home/state/$owner.meta"
+  assert_record_only_refused "$dir" "$stale" "$owner" \
+    "current owner with a contradictory slot-claim generation"
+  assert_contains "$(cat "$dir/stderr")" "contradicts" \
+    "contradictory claim-generation refusal did not name the mismatch"
+
+  pass "fm-teardown: immutable generations survive metadata updates while malformed, future, equal, and contradictory generations refuse"
 }
 
 test_record_only_reconciles_multiple_proven_stale_records_individually() {
@@ -1841,6 +1964,7 @@ test_already_gone_endpoint_still_completes_without_a_refusal
 test_bare_relative_origin_shares_project_lock_with_clone
 test_reused_pool_slot_refuses_before_touching_the_other_task
 test_record_only_reconciliation_requires_exact_positive_owner_evidence
+test_record_only_uses_immutable_generation_chronology
 test_record_only_reconciles_multiple_proven_stale_records_individually
 test_record_only_reconciles_a_windowless_stale_record
 test_record_only_reconciles_multiple_windowless_stale_records

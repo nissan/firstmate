@@ -694,7 +694,7 @@ lay_out_as_pool_slot() {
 # anything is published, and an abort while the allocation lock is still held
 # leaves no claim naming a task with no record.
 test_pool_slot_claim_follows_the_spawn_outcome() {
-  local rec id out status before
+  local rec id out status before claim_gen
 
   id='pool-slot-claim-r1'
   rec=$(make_case slot-claim "$id")
@@ -710,6 +710,11 @@ test_pool_slot_claim_follows_the_spawn_outcome() {
     || fail "the slot claim does not name the spawned task: $(cat "$SLOT_CLAIM")"
   grep -Fxq -- "home=$HOME_DIR" "$SLOT_CLAIM" \
     || fail "the slot claim does not name the spawning home: $(cat "$SLOT_CLAIM")"
+  claim_gen=$(awk -F= '$1 == "claim_gen" { print $2 }' "$SLOT_CLAIM")
+  [[ "$claim_gen" =~ ^c[1-9][0-9]*\.[1-9][0-9]*\.[0-9]+$ ]] \
+    || fail "the slot claim has no valid immutable generation: $(cat "$SLOT_CLAIM")"
+  grep -Fxq -- "slot_claim_gen=$claim_gen" "$HOME_DIR/state/$id.meta" \
+    || fail "the task record is not bound to its exact slot claim: $(cat "$HOME_DIR/state/$id.meta")"
 
   id='pool-slot-unclaimable-r1'
   rec=$(make_case slot-unclaimable "$id")

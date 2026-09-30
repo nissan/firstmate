@@ -1298,7 +1298,12 @@ fm_treehouse_pool_slot() {  # <project-dir> <worktree>
 # The claim lives at <pool>/<slot>/.fm-slot-owner - a sibling of the repo
 # checkout rather than a file inside it - so claiming a slot can never dirty the
 # copy teardown's landed-work checks inspect, and a returned slot carries no
-# untracked leftover from it.
+# untracked leftover from it. Each new claim also carries an immutable
+# claim_gen=c<epoch>.<pid>.<nonce> token. The matching slot_claim_gen= in the
+# owner's task record binds that record to this exact slot assignment, while the
+# epoch gives record-only reconciliation chronology that later metadata updates
+# cannot erase. Claims written before this field remain readable for the narrow
+# legacy mtime fallback owned by bin/fm-teardown.sh.
 fm_treehouse_slot_owner_marker() {  # <worktree>
   local worktree=$1 slot
   slot=$(CDPATH='' cd -- "$worktree" 2>/dev/null && pwd -P) || return 1
@@ -1311,6 +1316,7 @@ fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
   local worktree=$1 id=$2 home=$3 marker tmp
   [ -n "$id" ] || return 1
   marker=$(fm_treehouse_slot_owner_marker "$worktree") || return 1
+  FM_TREEHOUSE_SLOT_CLAIM_GEN="c$(date +%s).${BASHPID:-$$}.$RANDOM"
   # Only a plain claim file may be replaced: renaming onto a directory would
   # move the new claim inside it and leave the slot reading as unclaimable.
   if { [ -e "$marker" ] || [ -L "$marker" ]; } \
@@ -1322,6 +1328,7 @@ fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
   {
     printf 'task=%s\n' "$id"
     printf 'home=%s\n' "$home"
+    printf 'claim_gen=%s\n' "$FM_TREEHOUSE_SLOT_CLAIM_GEN"
   } > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$marker" 2>/dev/null || { rm -f "$tmp"; return 1; }
 }
@@ -1332,14 +1339,19 @@ fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
 #   other  - the claim names a different task, so the slot was reassigned
 #   absent - no claim: the slot was taken before claims existed, or returned since
 #   unsafe - a claim file exists but cannot be read as a claim
-# FM_TREEHOUSE_SLOT_OWNER_ID and FM_TREEHOUSE_SLOT_OWNER_HOME carry the recorded
-# claimant as evidence. The home is reported, never matched: a home that moved
-# must not turn a task's own slot into a refusal.
+# FM_TREEHOUSE_SLOT_OWNER_ID, FM_TREEHOUSE_SLOT_OWNER_HOME, and
+# FM_TREEHOUSE_SLOT_OWNER_CLAIM_GEN carry the recorded claimant as evidence.
+# A missing claim generation identifies a legacy claim; a present generation
+# must have the exact modern form or the whole claim is unsafe. The home is
+# reported, never matched: a home that moved must not turn a task's own slot
+# into a refusal.
 fm_treehouse_slot_owner_state() {  # <worktree> <task-id>
-  local worktree=$1 id=$2 marker line owner_id='' owner_home=''
+  local worktree=$1 id=$2 marker line owner_id='' owner_home='' claim_gen=''
+  local claim_gen_count=0
   FM_TREEHOUSE_SLOT_OWNER=unsafe
   FM_TREEHOUSE_SLOT_OWNER_ID=
   FM_TREEHOUSE_SLOT_OWNER_HOME=
+  FM_TREEHOUSE_SLOT_OWNER_CLAIM_GEN=
   marker=$(fm_treehouse_slot_owner_marker "$worktree") || return 0
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     FM_TREEHOUSE_SLOT_OWNER=absent
@@ -1350,13 +1362,20 @@ fm_treehouse_slot_owner_state() {  # <worktree> <task-id>
     case "$line" in
       task=*) owner_id=${line#task=} ;;
       home=*) owner_home=${line#home=} ;;
+      claim_gen=*) claim_gen=${line#claim_gen=}; claim_gen_count=$((claim_gen_count + 1)) ;;
     esac
   done < "$marker" || return 0
   [ -n "$owner_id" ] || return 0
+  [ "$claim_gen_count" -le 1 ] || return 0
+  if [ "$claim_gen_count" -eq 1 ]; then
+    [[ "$claim_gen" =~ ^c[1-9][0-9]*\.[1-9][0-9]*\.[0-9]+$ ]] || return 0
+  fi
   # shellcheck disable=SC2034 # Output globals, read by the sourcing caller.
   FM_TREEHOUSE_SLOT_OWNER_ID=$owner_id
   # shellcheck disable=SC2034 # Output globals, read by the sourcing caller.
   FM_TREEHOUSE_SLOT_OWNER_HOME=$owner_home
+  # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
+  FM_TREEHOUSE_SLOT_OWNER_CLAIM_GEN=$claim_gen
   if [ "$owner_id" = "$id" ]; then
     FM_TREEHOUSE_SLOT_OWNER=mine
   else
