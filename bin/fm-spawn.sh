@@ -417,6 +417,8 @@
 # success line and state/<id>.meta omit them.
 # Every fresh spawn or relaunch records a new spawn_gen= incarnation token so durable
 # consumers can distinguish a replacement worker that reuses the same task id.
+# A fresh Treehouse pool spawn also records slot_claim_gen= from the immutable
+# claim beside its slot. Relaunches preserve that assignment token unchanged.
 # When the home session's frozen trace-context decision is enabled (see
 # docs/configuration.md and bin/fm-trace-context-lib.sh), the meta also records
 # one W3C traceparent= carrier, the same value injected into the pane as
@@ -1156,6 +1158,7 @@ SPAWN_TASK_SET_LOCK_HELD=0
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
 SPAWN_SLOT_CLAIMED=0
+FM_TREEHOUSE_SLOT_CLAIM_GEN=
 RELAUNCH_REPLACEMENT_PENDING=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
@@ -4630,6 +4633,8 @@ preserve_relaunch_meta() {
   [ "$CLAUDE_REVIEW_ACTIVE" -ne 1 ] || echo "claude_review=on"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
+  [ -z "${FM_TREEHOUSE_SLOT_CLAIM_GEN:-}" ] \
+    || echo "slot_claim_gen=$FM_TREEHOUSE_SLOT_CLAIM_GEN"
   # Default-off writes no traceparent= line.
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;

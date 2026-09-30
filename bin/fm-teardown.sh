@@ -141,12 +141,17 @@
 # own is removed by a refusal. `--record-only` is the sanctioned reconciliation
 # for one or more stale records beside exactly one current owner record: it
 # proceeds only when the slot's readable owner claim names that record and its
-# canonical Firstmate home. Every other record naming the slot must predate the
-# claim and have a confidently dead or agent-less endpoint. Each invocation
-# retires only the named stale record through ordinary cleanup and leaves the
-# claimed slot untouched, so several stale records are reconciled individually.
-# A missing, unreadable, self-naming, unmatched, multiply matched, live,
-# time-ambiguous, or home-mismatched shape refuses, even with --force. The
+# canonical Firstmate home. A modern claim generation must match the owner's
+# recorded slot-claim generation exactly; older claims retain a conservative
+# claim-mtime fallback. Every other record naming the slot must predate the
+# claim and have a confidently dead or agent-less endpoint. A valid modern
+# spawn_gen=s<epoch>.<pid>.<nonce> is immutable chronology even if later
+# completion bookkeeping advances the metadata mtime; records without one fall
+# back to their mtime. Each invocation retires only the named stale record
+# through ordinary cleanup and leaves the claimed slot untouched, so several
+# stale records are reconciled individually. A missing, malformed, future,
+# equal, unreadable, self-naming, unmatched, multiply matched, mixed-generation,
+# live, time-ambiguous, or home-mismatched shape refuses, even with --force. The
 # ordinary report, unlanded-work, endpoint-identity, backlog-transition, and
 # cleanup gates remain in force; --record-only never supplies discard authority.
 # Orca is not a pool slot and proves its path through
@@ -213,10 +218,13 @@
 #   returning, reaping processes in, or otherwise changing the Treehouse slot
 #   now claimed by another task. It requires the recorded worktree to remain a
 #   live Treehouse pool slot, exactly one record matching the plain owner claim
-#   by task id and canonical Firstmate home, and every other colliding record to
-#   have an older mtime than the claim plus a dead or missing exact endpoint.
-#   Every absent, unreadable, live, time-ambiguous, or contradictory ownership
-#   shape refuses without mutation. This flag does not imply --force and does
+#   by task id, canonical Firstmate home, and (for modern claims) exact
+#   slot-claim generation, and every other colliding record to have a valid
+#   spawn-generation epoch older than the claim plus a dead or missing exact
+#   endpoint. Metadata mtime remains only the legacy chronology fallback.
+#   Every absent, malformed, future, equal, unreadable, live, time-ambiguous,
+#   mixed-generation, or contradictory ownership shape refuses without
+#   mutation. This flag does not imply --force and does
 #   not bypass any non-slot cleanup or backlog safety gate.
 #
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
@@ -2486,29 +2494,150 @@ record_only_endpoint_state() {  # <meta> <task-id>
   fm_backend_agent_state "$backend" "$target"
 }
 
-# Require positive evidence that one record predates the current claim.
-# Equal mtimes are deliberately ambiguous at whole-second filesystem
-# resolution and refuse.
-require_record_only_predates_claim() {  # <meta> <task-id> <claim-mtime>
-  local meta=$1 id=$2 claim_mtime=$3 record_mtime
-  record_mtime=$(fm_path_mtime "$meta" 2>/dev/null || true)
-  case "$record_mtime" in
-    ''|*[!0-9]*)
-      echo "REFUSED: --record-only cannot read when task $id's record was published; positive stale-record evidence is required and nothing was changed" >&2
+# Compare two canonical positive decimal epochs without exposing them to
+# leading-zero or oversized-integer arithmetic. Prints lt, eq, or gt.
+record_only_epoch_relation() {  # <left> <right>
+  local left=$1 right=$2
+  if [ "${#left}" -lt "${#right}" ]; then
+    printf 'lt\n'
+  elif [ "${#left}" -gt "${#right}" ]; then
+    printf 'gt\n'
+  elif [ "$left" = "$right" ]; then
+    printf 'eq\n'
+  elif [[ "$left" < "$right" ]]; then
+    printf 'lt\n'
+  else
+    printf 'gt\n'
+  fi
+}
+
+# Validate one generated chronology token and print its epoch. Spawn and claim
+# generations are intentionally distinct token classes, but share the exact
+# epoch.pid.nonce shape.
+record_only_generation_epoch() {  # <value> <prefix> <description>
+  local value=$1 prefix=$2 description=$3 epoch now relation
+  if [[ ! "$value" =~ ^${prefix}([1-9][0-9]*)\.[1-9][0-9]*\.[0-9]+$ ]]; then
+    echo "REFUSED: --record-only found malformed $description '$value'; positive generation evidence is required and nothing was changed" >&2
+    return 1
+  fi
+  epoch=${BASH_REMATCH[1]}
+  now=$(date +%s)
+  relation=$(record_only_epoch_relation "$epoch" "$now")
+  if [ "$relation" = gt ]; then
+    echo "REFUSED: --record-only found future $description '$value'; positive generation evidence is required and nothing was changed" >&2
+    return 1
+  fi
+  printf '%s\n' "$epoch"
+}
+
+# Bind a modern claim to the one current-owner record the task/home/project
+# proof selected. Legacy claims predate both fields and must have neither.
+require_record_only_claim_binding() {  # <owner-meta> <owner-id> <claim-generation>
+  local meta=$1 id=$2 claim_gen=$3 count value
+  count=$(LC_ALL=C awk -F= '$1 == "slot_claim_gen" { count++ } END { print count + 0 }' "$meta" 2>/dev/null || printf 'x\n')
+  case "$count" in ''|*[!0-9]*) count=-1 ;; esac
+  if [ -z "$claim_gen" ]; then
+    if [ "$count" -ne 0 ]; then
+      echo "REFUSED: --record-only found mixed legacy and modern slot-claim generations for current owner $id; ownership evidence is contradictory and nothing was changed" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if [ "$count" -ne 1 ]; then
+    echo "REFUSED: --record-only found $count slot-claim generations for current owner $id; exactly one matching generation is required and nothing was changed" >&2
+    return 1
+  fi
+  value=$(fm_meta_get "$meta" slot_claim_gen)
+  if [ "$value" != "$claim_gen" ]; then
+    echo "REFUSED: --record-only found current owner $id's slot-claim generation '$value' contradicts claim generation '$claim_gen'; nothing was changed" >&2
+    return 1
+  fi
+}
+
+# Require positive immutable evidence that one record predates the current
+# claim. A strict modern spawn generation wins even when later bookkeeping has
+# advanced the metadata mtime. Legacy records without such a generation retain
+# the conservative mtime proof. Equal whole-second evidence is ambiguous.
+require_record_only_predates_claim() {  # <meta> <task-id> <claim-epoch>
+  local meta=$1 id=$2 claim_epoch=$3 count spawn_gen spawn_epoch record_mtime now relation
+  local prior_claim_count prior_claim_gen prior_claim_epoch
+  count=$(LC_ALL=C awk -F= '$1 == "spawn_gen" { count++ } END { print count + 0 }' "$meta" 2>/dev/null || printf 'x\n')
+  case "$count" in ''|*[!0-9]*) count=-1 ;; esac
+  if [ "$count" -gt 1 ] || [ "$count" -lt 0 ]; then
+    echo "REFUSED: --record-only found $count spawn generations for task $id; exactly one modern generation or legacy fallback is required and nothing was changed" >&2
+    return 1
+  fi
+  spawn_gen=$(fm_meta_get "$meta" spawn_gen)
+  case "$count:$spawn_gen" in
+    0:|1:legacy-*) ;;
+    1:*)
+      spawn_epoch=$(record_only_generation_epoch "$spawn_gen" s "spawn generation for task $id") || return 1
+      relation=$(record_only_epoch_relation "$spawn_epoch" "$claim_epoch")
+      if [ "$relation" != lt ]; then
+        echo "REFUSED: --record-only cannot prove task $id's spawn generation predates the current Treehouse slot claim; ownership timing is equal, future, or contradictory and nothing was changed" >&2
+        return 1
+      fi
+      ;;
+    *)
+      echo "REFUSED: --record-only found malformed spawn-generation evidence for task $id; nothing was changed" >&2
       return 1
       ;;
   esac
-  if [ "$record_mtime" -ge "$claim_mtime" ]; then
-    echo "REFUSED: --record-only cannot prove task $id's record predates the current Treehouse slot claim; ownership timing is ambiguous and nothing was changed" >&2
+
+  prior_claim_count=$(LC_ALL=C awk -F= '$1 == "slot_claim_gen" { count++ } END { print count + 0 }' "$meta" 2>/dev/null || printf 'x\n')
+  case "$prior_claim_count" in ''|*[!0-9]*) prior_claim_count=-1 ;; esac
+  if [ "$prior_claim_count" -gt 1 ] || [ "$prior_claim_count" -lt 0 ]; then
+    echo "REFUSED: --record-only found $prior_claim_count prior slot-claim generations for task $id; ownership evidence is malformed and nothing was changed" >&2
+    return 1
+  fi
+  if [ "$prior_claim_count" -eq 1 ]; then
+    prior_claim_gen=$(fm_meta_get "$meta" slot_claim_gen)
+    prior_claim_epoch=$(record_only_generation_epoch "$prior_claim_gen" c "prior slot-claim generation for task $id") || return 1
+    relation=$(record_only_epoch_relation "$prior_claim_epoch" "$claim_epoch")
+    if [ "$relation" != lt ]; then
+      echo "REFUSED: --record-only found task $id's prior slot-claim generation does not predate the current claim; ownership evidence is equal or contradictory and nothing was changed" >&2
+      return 1
+    fi
+    if [ -z "$spawn_epoch" ]; then
+      echo "REFUSED: --record-only found a modern prior slot-claim generation but no modern spawn generation for task $id; ownership evidence is mixed and nothing was changed" >&2
+      return 1
+    fi
+    relation=$(record_only_epoch_relation "$prior_claim_epoch" "$spawn_epoch")
+    if [ "$relation" = gt ]; then
+      echo "REFUSED: --record-only found task $id's prior slot claim was generated after its spawn; ownership evidence is contradictory and nothing was changed" >&2
+      return 1
+    fi
+  fi
+
+  # A modern spawn token is sufficient by itself. Do not let mutable metadata
+  # mtime override it: completion bookkeeping legitimately updates that mtime.
+  case "$count:$spawn_gen" in 1:s*) return 0 ;; esac
+
+  record_mtime=$(fm_path_mtime "$meta" 2>/dev/null || true)
+  now=$(date +%s)
+  case "$record_mtime" in
+    ''|*[!0-9]*)
+      echo "REFUSED: --record-only cannot read when legacy task $id's record was published; positive stale-record evidence is required and nothing was changed" >&2
+      return 1
+      ;;
+  esac
+  relation=$(record_only_epoch_relation "$record_mtime" "$now")
+  if [ "$relation" = gt ]; then
+    echo "REFUSED: --record-only found a future publication time for legacy task $id; positive stale-record evidence is required and nothing was changed" >&2
+    return 1
+  fi
+  relation=$(record_only_epoch_relation "$record_mtime" "$claim_epoch")
+  if [ "$relation" != lt ]; then
+    echo "REFUSED: --record-only cannot prove legacy task $id's record predates the current Treehouse slot claim; ownership timing is ambiguous and nothing was changed" >&2
     return 1
   fi
 }
 
 # Require one colliding record to predate the claim and no longer have a
 # harness agent.
-require_record_only_stale_evidence() {  # <meta> <task-id> <claim-mtime>
-  local meta=$1 id=$2 claim_mtime=$3 endpoint_state
-  require_record_only_predates_claim "$meta" "$id" "$claim_mtime" || return 1
+require_record_only_stale_evidence() {  # <meta> <task-id> <claim-epoch>
+  local meta=$1 id=$2 claim_epoch=$3 endpoint_state
+  require_record_only_predates_claim "$meta" "$id" "$claim_epoch" || return 1
   endpoint_state=$(record_only_endpoint_state "$meta" "$id")
   case "$endpoint_state" in
     dead|missing) return 0 ;;
@@ -2527,7 +2656,8 @@ require_record_only_stale_evidence() {  # <meta> <task-id> <claim-mtime>
 # before any ordinary teardown cleanup begins, and one invocation retires only
 # the requested record through the ordinary transactional cleanup path.
 require_stale_record_only_reconciliation() {
-  local slot tasktmp_abs claim_home claim_marker claim_mtime state_dir other other_id other_home other_project other_lock
+  local slot tasktmp_abs claim_home claim_marker claim_mtime claim_gen claim_epoch now relation
+  local state_dir other other_id other_home other_project other_lock owner_record=''
   local field other_path other_slot
   local collision_count=0 owner_match_count=0 record_matches
   local -a stale_records=() stale_ids=()
@@ -2591,13 +2721,25 @@ require_stale_record_only_reconciliation() {
     echo "REFUSED: --record-only cannot locate the current Treehouse slot claim; nothing was changed" >&2
     return 1
   }
-  claim_mtime=$(fm_path_mtime "$claim_marker" 2>/dev/null || true)
-  case "$claim_mtime" in
-    ''|*[!0-9]*)
-      echo "REFUSED: --record-only cannot read when the current Treehouse slot claim was published; positive stale-record evidence is required and nothing was changed" >&2
+  claim_gen=$FM_TREEHOUSE_SLOT_OWNER_CLAIM_GEN
+  if [ -n "$claim_gen" ]; then
+    claim_epoch=$(record_only_generation_epoch "$claim_gen" c "current slot-claim generation") || return 1
+  else
+    claim_mtime=$(fm_path_mtime "$claim_marker" 2>/dev/null || true)
+    now=$(date +%s)
+    case "$claim_mtime" in
+      ''|*[!0-9]*)
+        echo "REFUSED: --record-only cannot read when the legacy current Treehouse slot claim was published; positive stale-record evidence is required and nothing was changed" >&2
+        return 1
+        ;;
+    esac
+    relation=$(record_only_epoch_relation "$claim_mtime" "$now")
+    if [ "$relation" = gt ]; then
+      echo "REFUSED: --record-only found a future publication time for the legacy current Treehouse slot claim; positive stale-record evidence is required and nothing was changed" >&2
       return 1
-      ;;
-  esac
+    fi
+    claim_epoch=$claim_mtime
+  fi
 
   collect_local_firstmate_states "$STATE" || return 1
   for state_dir in "${TREEHOUSE_OWNER_STATES[@]}"; do
@@ -2627,6 +2769,7 @@ require_stale_record_only_reconciliation() {
           "$other_project" "$slot" 2>/dev/null || true)
         if [ -n "$other_lock" ] && [ "$other_lock" = "$TREEHOUSE_PROJECT_LOCK" ]; then
           owner_match_count=$((owner_match_count + 1))
+          owner_record=$other
           continue
         fi
       fi
@@ -2639,12 +2782,14 @@ require_stale_record_only_reconciliation() {
     echo "REFUSED: --record-only found $collision_count other task record(s) naming $slot, but the slot claim for task $FM_TREEHOUSE_SLOT_OWNER_ID in home $claim_home must match exactly one; ownership is missing, ambiguous, or contradictory and nothing was changed" >&2
     return 1
   fi
+  require_record_only_claim_binding \
+    "$owner_record" "$FM_TREEHOUSE_SLOT_OWNER_ID" "$claim_gen" || return 1
 
   for ((record_matches=0; record_matches<${#stale_records[@]}; record_matches++)); do
     require_record_only_stale_evidence \
-      "${stale_records[$record_matches]}" "${stale_ids[$record_matches]}" "$claim_mtime" || return 1
+      "${stale_records[$record_matches]}" "${stale_ids[$record_matches]}" "$claim_epoch" || return 1
   done
-  require_record_only_predates_claim "$META" "$ID" "$claim_mtime" || return 1
+  require_record_only_predates_claim "$META" "$ID" "$claim_epoch" || return 1
 
   TEARDOWN_SLOT_REASSIGNED=1
   TEARDOWN_SLOT_REASSIGNED_TO=$FM_TREEHOUSE_SLOT_OWNER_ID
