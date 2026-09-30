@@ -1,0 +1,108 @@
+
+################ A-modern-stale-after-bookkeeping
+$ cat pool/1/.fm-slot-owner
+task=live-task
+home=<case>/home
+claim_gen=c1790728815.3592863.25986
+$ fm-captain-hold.sh complete stale-task --none   # completion bookkeeping
+complete: stale-task captain-call inventory reviewed
+stale meta mtime=1790728816  claim epoch=1790728815.3592863.25986  (now=1790728816)
+$ fm-teardown.sh stale-task --record-only --force
+warning: --record-only proved task stale-task's recorded Treehouse slot was reassigned to task live-task in home <case>/home; the claimed slot is left untouched and only stale-task's ordinary cleanup runs.
+NOTICE: FORCED teardown of scout task stale-task with NO report at <case>/home/data/stale-task/report.md - its investigation is being discarded and cannot be recovered.
+teardown stale-task complete (window firstmate:fm-stale-task; pool slot <case>/worktree left to task live-task (home <case>/home), which it was reassigned to)
+Backlog: stale-task just finished (this home keeps no markdown backlog at <case>/home/data/backlog.md). Update <case>/home/data/backlog.md - move stale-task to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+exit=0
+stale record: removed
+owner record: PRESENT
+slot claim:   task=live-task
+slot sentinel: PRESENT
+treehouse calls: 0
+
+################ B-no-discard-without-force
+$ cat pool/1/.fm-slot-owner
+task=live-task
+home=<case>/home
+claim_gen=c1790728817.3594056.6275
+$ fm-captain-hold.sh complete stale-task --none   # completion bookkeeping
+complete: stale-task captain-call inventory reviewed
+stale meta mtime=1790728818  claim epoch=1790728817.3594056.6275  (now=1790728818)
+$ fm-teardown.sh stale-task --record-only 
+warning: --record-only proved task stale-task's recorded Treehouse slot was reassigned to task live-task in home <case>/home; the claimed slot is left untouched and only stale-task's ordinary cleanup runs.
+REFUSED: scout task stale-task has no report at <case>/home/data/stale-task/report.md.
+The report is the work product. Have the crewmate write it, or use --force after explicit discard approval.
+exit=1
+stale record: PRESENT
+owner record: PRESENT
+slot claim:   task=live-task
+slot sentinel: PRESENT
+treehouse calls: 0
+
+################ C-spawn-gen-equals-claim-epoch
+stale spawn_gen=s1790728819.11.12 (same second as claim); stale meta mtime forced 500s before claim
+$ cat pool/1/.fm-slot-owner
+task=live-task
+home=<case>/home
+claim_gen=c1790728819.3594738.26686
+$ fm-captain-hold.sh complete stale-task --none   # completion bookkeeping
+complete: stale-task captain-call inventory reviewed
+stale meta mtime=1790728820  claim epoch=1790728819.3594738.26686  (now=1790728820)
+$ fm-teardown.sh stale-task --record-only --force
+REFUSED: --record-only cannot prove task stale-task's spawn generation predates the current Treehouse slot claim; ownership timing is equal, future, or contradictory and nothing was changed
+exit=1
+stale record: PRESENT
+owner record: PRESENT
+slot claim:   task=live-task
+slot sentinel: PRESENT
+treehouse calls: 0
+
+################ D-owner-claim-gen-contradicts
+$ cat pool/1/.fm-slot-owner
+task=live-task
+home=<case>/home
+claim_gen=c1790728820.3595414.20371
+$ fm-captain-hold.sh complete stale-task --none   # completion bookkeeping
+complete: stale-task captain-call inventory reviewed
+stale meta mtime=1790728821  claim epoch=1790728820.3595414.20371  (now=1790728821)
+$ fm-teardown.sh stale-task --record-only --force
+REFUSED: --record-only found current owner live-task's slot-claim generation 'c1790728765.1.1' contradicts claim generation 'c1790728820.3595414.20371'; nothing was changed
+exit=1
+stale record: PRESENT
+owner record: PRESENT
+slot claim:   task=live-task
+slot sentinel: PRESENT
+treehouse calls: 0
+
+################ E-malformed-spawn-gen
+$ cat pool/1/.fm-slot-owner
+task=live-task
+home=<case>/home
+claim_gen=c1790728822.3596081.2374
+$ fm-captain-hold.sh complete stale-task --none   # completion bookkeeping
+complete: stale-task captain-call inventory reviewed
+stale meta mtime=1790728823  claim epoch=1790728822.3596081.2374  (now=1790728823)
+$ fm-teardown.sh stale-task --record-only --force
+REFUSED: --record-only found malformed spawn generation for task stale-task 's1790728515.x.12'; positive generation evidence is required and nothing was changed
+exit=1
+stale record: PRESENT
+owner record: PRESENT
+slot claim:   task=live-task
+slot sentinel: PRESENT
+treehouse calls: 0
+
+################ F-future-spawn-gen
+$ cat pool/1/.fm-slot-owner
+task=live-task
+home=<case>/home
+claim_gen=c1790728824.3596746.12447
+$ fm-captain-hold.sh complete stale-task --none   # completion bookkeeping
+complete: stale-task captain-call inventory reviewed
+stale meta mtime=1790728825  claim epoch=1790728824.3596746.12447  (now=1790728825)
+$ fm-teardown.sh stale-task --record-only --force
+REFUSED: --record-only found future spawn generation for task stale-task 's1790828815.11.12'; positive generation evidence is required and nothing was changed
+exit=1
+stale record: PRESENT
+owner record: PRESENT
+slot claim:   task=live-task
+slot sentinel: PRESENT
+treehouse calls: 0
