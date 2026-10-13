@@ -54,13 +54,19 @@
 # requires every other required check to have reported and every check to be
 # green unless separately waived by --allow-red. It matches the required
 # context name even for an app-bound requirement, and never waives an unreadable
-# required source or producer read. Both are
-# refused while the away-posture record exists, and neither
-# applies on GitLab, where a merge already requires the head pipeline to have
-# succeeded, or on Forgejo, where a merge already requires the head's combined
-# commit status to have succeeded. After gh returns success, GitHub's live
-# state is read back and
-# accepted only when the pull request is merged or in the merge queue. gh's
+# required source or producer read. The attended --allow-unstarted-actions
+# migration option is narrower: it is GitHub-only, cannot be combined with
+# --allow-red, and requires a no-mistakes task with valid exact-head local
+# evidence. It waives failures only when every otherwise-red check is a
+# completed GitHub Actions job in this repository whose live record binds the
+# same run and head and shows that no runner was assigned and no step ran. A
+# real, pending, unreadable, or non-Actions check remains red. All three waiver
+# options are refused while the away-posture record exists. --allow-red and
+# --allow-missing do not apply on GitLab, where a merge already requires the
+# head pipeline to have succeeded, or on Forgejo, where a merge already
+# requires the head's combined commit status to have succeeded. After gh
+# returns success, GitHub's live state is read back and accepted only when the
+# pull request is merged or in the merge queue. gh's
 # GraphQL API supplies that queue-aware read; when that read fails, gh-axi's
 # own view still proves a landed merge, and every outcome it cannot prove
 # refuses, reporting the failed gh read and naming both failed reads when the
@@ -168,7 +174,7 @@
 # explicit captain instruction and never skips the live green check, the
 # away-record read, or a captain hold.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [-- <extra forge merge args>]
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--allow-unstarted-actions] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
