@@ -518,6 +518,7 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   add_ship_task "$dir" rl1 claude
   gen_before=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl1)
   printf 'busy_gen=%s\n' "$gen_before" >> "$dir/home/state/rl1.meta"
+  printf 'slot_claim_gen=c1700000000.12.34\n' >> "$dir/home/state/rl1.meta"
   out=$(run_control "$dir" rl1 relaunch --note "stopped mid-refactor"); rc=$?
   expect_code 0 "$rc" "a same-harness relaunch should succeed"$'\n'"$out"
   assert_contains "$out" "relaunched rl1 harness=claude from=claude" "the outcome should name the transition"
@@ -527,6 +528,10 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
     || fail "the worktree must be reused, not reallocated"
   [ "$(meta_field "$dir" rl1 kind)" = ship ] || fail "kind must survive the relaunch"
   [ "$(meta_field "$dir" rl1 project)" = "$dir/proj" ] || fail "project must survive the relaunch"
+  [ "$(meta_field "$dir" rl1 slot_claim_gen)" = c1700000000.12.34 ] \
+    || fail "the Treehouse slot assignment token must survive the relaunch"
+  [ "$(grep -c '^slot_claim_gen=' "$dir/home/state/rl1.meta")" -eq 1 ] \
+    || fail "the relaunch must preserve exactly one Treehouse slot assignment token"
   gen_after=$(meta_field "$dir" rl1 busy_gen)
   [ -n "$gen_after" ] && [ "$gen_after" != "$gen_before" ] \
     || fail "a relaunch must arm a fresh busy generation, got '$gen_after'"

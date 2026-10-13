@@ -4418,6 +4418,45 @@ test_allow_missing_follows_the_allow_red_rules() {
   pass "fm-pr-merge --allow-missing is single use, attended-only, and GitHub-only like --allow-red"
 }
 
+test_allow_unstarted_actions_option_validation() {
+  local case_dir rc
+
+  case_dir=$(make_gitlab_case gitlab-allow-unstarted-actions)
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" --allow-unstarted-actions \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "gitlab-allow-unstarted-actions: the GitHub-only override must be refused"
+  assert_grep '--allow-unstarted-actions applies only to GitHub' "$case_dir/stderr" \
+    "gitlab-allow-unstarted-actions: refusal did not identify the provider boundary"
+  [ ! -s "$case_dir/glab.log" ] || fail "gitlab-allow-unstarted-actions: glab ran despite the invalid override"
+
+  case_dir=$(make_forgejo_case forgejo-allow-unstarted-actions)
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$FJ_URL" --allow-unstarted-actions \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "forgejo-allow-unstarted-actions: the GitHub-only override must be refused"
+  assert_grep '--allow-unstarted-actions applies only to GitHub' "$case_dir/stderr" \
+    "forgejo-allow-unstarted-actions: refusal did not identify the provider boundary"
+  [ ! -s "$case_dir/tea.log" ] || fail "forgejo-allow-unstarted-actions: tea ran despite the invalid override"
+
+  case_dir=$(make_case github-incompatible-unstarted-actions)
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/121 \
+    --allow-unstarted-actions --allow-red ci \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "github-incompatible-unstarted-actions: incompatible overrides must be refused"
+  assert_grep '--allow-unstarted-actions and --allow-red cannot be combined' "$case_dir/stderr" \
+    "github-incompatible-unstarted-actions: refusal did not identify the incompatible overrides"
+  [ ! -s "$case_dir/gh.log" ] || fail "github-incompatible-unstarted-actions: gh ran despite incompatible overrides"
+  pass "fm-pr-merge validates the provider and compatibility of --allow-unstarted-actions"
+}
+
 test_allow_red_refused_on_forgejo() {
   local case_dir rc
   case_dir=$(make_forgejo_case forgejo-allow-red)
@@ -4502,5 +4541,6 @@ test_allow_missing_follows_the_allow_red_rules
 test_required_producer_identity
 test_app_bound_required_status_context_matches_by_name
 test_required_partial_reads_report_all_failures
+test_allow_unstarted_actions_option_validation
 test_allow_red_refused_on_forgejo
 test_allow_missing_refused_on_forgejo

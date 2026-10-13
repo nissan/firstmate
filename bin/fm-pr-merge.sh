@@ -309,6 +309,14 @@ if [ "${#ALLOW_MISSING[@]}" -gt 0 ]; then
       ;;
   esac
 fi
+if [ "$ALLOW_UNSTARTED_ACTIONS" = true ] && [ "$PROVIDER" != github ]; then
+  echo "error: --allow-unstarted-actions applies only to GitHub" >&2
+  exit 2
+fi
+if [ "$ALLOW_UNSTARTED_ACTIONS" = true ] && [ "${#ALLOW_RED[@]}" -gt 0 ]; then
+  echo "error: --allow-unstarted-actions and --allow-red cannot be combined" >&2
+  exit 2
+fi
 
 caller_has_merge_method() {
   local arg
