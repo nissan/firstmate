@@ -1,0 +1,15 @@
+
+### gitlab-provider
+$ ./bin/fm-pr-merge.sh task-x1 https://gitlab.example/group/project/-/merge_requests/7 --allow-unstarted-actions
+error: --allow-unstarted-actions applies only to GitHub
+exit=2
+
+### forgejo-provider
+$ ./bin/fm-pr-merge.sh task-x1 https://forgejo.example/group/project/pulls/9 --allow-unstarted-actions
+error: --allow-unstarted-actions applies only to GitHub
+exit=2
+
+### github-mutual-exclusion
+$ ./bin/fm-pr-merge.sh task-x1 https://github.com/example/project/pull/121 --allow-unstarted-actions --allow-red ci
+error: --allow-unstarted-actions and --allow-red cannot be combined
+exit=2

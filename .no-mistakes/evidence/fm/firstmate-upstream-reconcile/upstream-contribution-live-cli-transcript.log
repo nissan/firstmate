@@ -1,0 +1,8 @@
+$ ./bin/fm-role.sh report
+fm-role: user (default)
+$ ./bin/fm-role.sh check "$PWD"
+refused: this home runs as firstmate user/operator and holds no publication authority for github.com/nissan/firstmate
+exit=1
+$ ./bin/fm-role.sh check "$PWD" upstream-consent github.com/nissan/firstmate
+authorized: task consent for github.com/nissan/firstmate
+exit=0

@@ -1,0 +1,23 @@
+Fresh spawn and claim:
+ok - a Treehouse slot claim names the launched task, refuses when unclaimable, and is dropped by a locked abort
+Relaunch preservation:
+ok - fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree
+Reassignment reconciliation:
+ok - fm-teardown: record-only reconciliation requires one exact readable slot owner and refuses every missing, ambiguous, or contradictory ownership shape
+ok - fm-teardown: a stale record on a claimed slot retires, then the claimant tears down
+Merge override validation:
+ok - fm-pr-merge validates the provider and compatibility of --allow-unstarted-actions
+Upstream publication authority:
+ok - fm-role.sh check: the default user/operator home cannot publish to firstmate upstream
+ok - fm-role.sh check: recorded one-task consent authorizes its named repository only
+Live Herdr control:
+ok - real herdr: exit on a pane with no registered agent is idempotent success
+ok - real herdr 0.8.2: a gone session reads recoverable while a live pane and a malformed target do not
+ok - real herdr: a drifted agent-free shell returns to its worktree and reuses the same endpoint
+ok - real herdr: interrupt refuses when herdr's own agent registry reports no agent
+ok - real herdr: interrupt delivers the harness's key and proves the agent survived it
+ok - real herdr: no control verb removed the endpoint or the task's local copy
+ok - real herdr 0.8.2: a registration Herdr keeps after its agent exits reads stale-agent and recovers as dead
+ok - real herdr: exit on a pane with a stale registration is idempotent success
+ok - real herdr: a stale registration no longer blocks relaunch, and the endpoint and local copy survive
+ok - real herdr: exit refuses an unproven or pending composer without typing an exit command
