@@ -16,16 +16,8 @@
 # than one account). Schema 5 keeps its exact pre-schema-6 rules so an older
 # quota-axi keeps working unchanged. FM_QUOTA_ROW_JQ is the one join used to
 # bind a candidate to its row under either schema.
-#
-# It is also the single owner of the reading rules every consumer of a
-# quota-axi snapshot needs and must agree on: which provider family a firstmate
-# harness spends against, which account lane it binds to, and which
-# availability scopes apply to one harness/model tuple. bin/fm-quota-choose.sh
-# (worker-side candidate ranking) and bin/fm-runway-lib.sh (the spawn-side
-# runway gate) reach opposite kinds of verdict from the same evidence, so the
-# rules live here rather than in either of them.
 
-FM_QUOTA_AXI_MIN=0.1.29
+FM_QUOTA_AXI_MIN=0.1.51
 FM_QUOTA_PROVIDER_ID_RE='^[a-z0-9]+(-[a-z0-9]+)*\z'
 
 # The eligibility section of .agents/skills/quota-array-dispatch/SKILL.md
@@ -52,19 +44,13 @@ FM_QUOTA_ROW_JQ='
     end;
 '
 
-fm_quota_axi_compatible() {
-  local timeout=${1:-} output parts major minor patch extra
+# fm_quota_axi_version_compatible <version-output>
+# True when the printed `quota-axi --version` text meets FM_QUOTA_AXI_MIN.
+# Callers that already captured a bounded --version pass that text here so they
+# do not launch a second, unbounded version probe.
+fm_quota_axi_version_compatible() {
+  local output=${1-} parts major minor patch extra
   local min_major min_minor min_patch min_extra
-  command -v quota-axi >/dev/null 2>&1 || return 1
-  if [ -n "$timeout" ]; then
-    case "$timeout" in
-      ''|*[!0-9]*|0) return 1 ;;
-    esac
-    [ "$(type -t fm_run_timed)" = function ] || return 1
-    output=$(fm_run_timed "$timeout" quota-axi --version 2>/dev/null </dev/null) || return 1
-  else
-    output=$(quota-axi --version 2>/dev/null </dev/null) || return 1
-  fi
   parts=$(printf '%s\n' "$output" |
     sed -n 's/.*\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2 \3/p' |
     head -1)
@@ -80,6 +66,21 @@ fm_quota_axi_compatible() {
   [ "$minor" -gt "$min_minor" ] && return 0
   [ "$minor" -eq "$min_minor" ] || return 1
   [ "$patch" -ge "$min_patch" ]
+}
+
+fm_quota_axi_compatible() {
+  local timeout=${1:-} output
+  command -v quota-axi >/dev/null 2>&1 || return 1
+  if [ -n "$timeout" ]; then
+    case "$timeout" in
+      ''|*[!0-9]*|0) return 1 ;;
+    esac
+    [ "$(type -t fm_run_timed)" = function ] || return 1
+    output=$(fm_run_timed "$timeout" quota-axi --version 2>/dev/null </dev/null) || return 1
+  else
+    output=$(quota-axi --version 2>/dev/null </dev/null) || return 1
+  fi
+  fm_quota_axi_version_compatible "$output"
 }
 
 fm_quota_json_valid() {
@@ -153,30 +154,18 @@ fm_quota_single_provider_table() {
     'muse meta'
 }
 
+# Reads the whole table before answering: leaving the loop early closes the
+# pipe mid-write, and where SIGPIPE is ignored the writer prints a broken-pipe
+# error on stderr.
 fm_quota_single_provider_for_harness() {
-  local harness provider table
-  # Captured first for the same reason as fm_control_harness_supported: an early
-  # return from a pipe-fed loop can surface the writer's "Broken pipe" on stderr.
-  table=$(fm_quota_single_provider_table)
+  local harness provider found=''
   while read -r harness provider; do
-    if [ "$harness" = "$1" ]; then
-      printf '%s\n' "$provider"
-      return 0
-    fi
-  done <<< "$table"
-  return 1
+    [ -z "$found" ] && [ "$harness" = "$1" ] && found=$provider || :
+  done < <(fm_quota_single_provider_table)
+  [ -n "$found" ] || return 1
+  printf '%s\n' "$found"
 }
 
-# fm_quota_provider_for_harness <harness> [<model>]
-# Map a firstmate harness name to the quota-axi provider family it spends
-# against. Multi-provider harnesses (Pi, OpenCode) map to their PRIMARY family
-# only: a candidate whose established provider differs from that family is
-# checked against the wrong row. omp has no family of its own - it bridges to
-# another vendor - so it is keyed on the candidate model prefix instead, and any
-# other prefix has no known family. Authoritative multi-provider routing is
-# owned by AGENTS.md section 4 and the quota-array-dispatch skill, not by this
-# map. Returns 1 for a harness with no known family, which every caller must
-# treat as absent evidence rather than as bad news about the allowance.
 fm_quota_provider_for_harness() {
   case "$1" in
     omp)
@@ -198,12 +187,6 @@ fm_quota_provider_for_harness() {
   esac
 }
 
-# fm_quota_scope_model <harness> <model>
-# Print the model token to match quota-axi scopes against for that harness. Only
-# omp differs: its candidate models carry a routing prefix (`openai-codex/gpt-5`)
-# that quota-axi's own scopes never use, so the prefix is stripped and the
-# vendor's own model name is what gets matched. Every other harness names its
-# model the same way quota-axi does.
 fm_quota_scope_model() {
   case "$1" in
     omp) printf '%s\n' "${2#*/}" ;;
@@ -211,20 +194,11 @@ fm_quota_scope_model() {
   esac
 }
 
-# fm_quota_lane <harness> <model>
-# Print the schema 6 account key the candidate binds to (quota_lane in
-# FM_QUOTA_ROW_JQ), or an empty line when the contract identifies none.
 fm_quota_lane() {
   jq -rn --arg h "$1" --arg m "${2:-}" "$FM_QUOTA_ROW_JQ"'quota_lane($h; $m)'
 }
 
-# fm_quota_applicable_availability <provider> <model> [<lane>]
-# Reads one validated snapshot on stdin and prints the JSON array of
-# availability entries that BIND a spawn on that provider/model tuple: the
-# provider-wide scopes plus the exact model or product scope for that model. The
-# row is bound through quota_row, so <lane> matters only on a schema 6 snapshot.
-# A `default` or empty model matches the provider-wide scopes only, and an
-# unknown provider yields an empty array - absent evidence, not good news.
+# Print the validated availability entries that bind this provider/model/lane.
 fm_quota_applicable_availability() {
   local provider=$1 model=${2:-default} lane=${3:-}
   jq -c --arg provider "$provider" --arg model "$model" --arg lane "$lane" "$FM_QUOTA_ROW_JQ"'
