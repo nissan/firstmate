@@ -191,8 +191,12 @@ The bounded turn-end guard enforces recovery at Stop when no watcher is live and
 So a finished, hung, or identity-mismatched claim cannot suppress that recovery ([`turnend-guard.md`](turnend-guard.md#harness-integrations) owns that boundary).
 
 The recovery-episode contract below owns once-per-generation announcement.
-A handling successor does not re-announce.
+A handling successor does not re-announce its predecessor's recovery work.
 It enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
+Independent inbox arrivals remain notifyable after that handoff: each check-kind close covers only the queue sequences captured before its output, so a later inbox row can close the successor without repeating an accepted but unconsumed notification.
+Unrelated signal and heartbeat closes do not cover inbox notification because their attended branch recipient may be unable to consume inbox rows.
+Notification coverage never claims or acknowledges a row, and normal recovery still replays unacknowledged work after delivery loss or session restart.
+`bin/fm-wake-lib.sh` owns the inbox notification watermark and its queue-locked snapshot and observation mechanics.
 
 ### Manual recovery and other harnesses
 
@@ -466,6 +470,9 @@ They also prove that a legacy or handoff-phase watcher marker from an absent rep
 
 - The once-per-generation announcement bound with the real Pi extension against a refused handling handshake.
 - A handling successor that must surface a real crew event instead of going blind.
+- Independent inbox arrivals during successor startup and before predecessor acknowledgement, suppression while main is busy, subsequent arrivals on the same successor, and restart replay in attended, away, and quiet postures.
+
+`tests/fm-inbox.test.sh` additionally covers concurrent inbox arrivals, repeated announce, persisted notification coverage, unchanged durable rows, and malformed coverage refusal.
 
 `tests/fm-watch-triage.test.sh` proves TERM stops a watcher blocked inside a poll's pane capture and still releases its lock and records an acknowledgeable stop.
 It also exercises a single TERM with a live foreign downtime-marker lock holder, retained stale singleton and subsequent arm-style recovery, including decimal `08` and zero `00` cleanup bounds.

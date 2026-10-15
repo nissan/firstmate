@@ -2211,6 +2211,61 @@ fm_wake_append_locked() {
   return "$status"
 }
 
+# Inbox notification coverage is distinct from consumption. A check-kind
+# close covers the inbox rows captured BEFORE its output, under the append lock.
+# Successors may notify only later sequences; they never re-notify inherited
+# rows while a follow-up is accepted but unconsumed. Normal recovery still
+# replays unacknowledged work after a lost delivery or session restart.
+# Neither this watermark nor its reader grants actor claims or acknowledges rows.
+fm_wake_inbox_notification_snapshot() {
+  local through tmp status=0 marker="$STATE/.inbox-notified-through"
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
+  if [ -e "$FM_WAKE_QUEUE" ]; then
+    through=$(awk -F '\t' '$2 ~ /^[0-9]+$/ && $2 > max { max=$2 } END { print max+0 }' "$FM_WAKE_QUEUE") || status=1
+  else
+    through=0
+  fi
+  if [ "$status" -eq 0 ]; then
+    tmp=$(mktemp "$STATE/.inbox-notified.XXXXXX") || status=1
+    if [ "$status" -eq 0 ]; then
+      if ! printf '%s\n' "$through" > "$tmp" || ! chmod 600 "$tmp" \
+        || ! _fm_atomic_replace "$tmp" "$marker"; then
+        status=1
+      fi
+      rm -f -- "$tmp"
+    fi
+  fi
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  return "$status"
+}
+
+# 0 = new inbox rows, 1 = none, 2 = observation failed. A missing watermark
+# means no inherited coverage (including upgrade from an older watcher).
+fm_wake_inbox_notification_pending() {
+  local through=0 found status=0 marker="$STATE/.inbox-notified-through"
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 2
+  if [ -e "$marker" ]; then
+    through=$(cat "$marker") || status=2
+    case "$through" in ''|*[!0-9]*) status=2 ;; esac
+  fi
+  if [ "$status" -eq 0 ]; then
+    if [ ! -e "$FM_WAKE_QUEUE" ]; then
+      status=1
+    else
+      if found=$(awk -F '\t' -v through="$through" '
+        NF >= 5 && $2 ~ /^[0-9]+$/ && $2 > through && $3 == "check" && $4 ~ /^inbox:/ { found=1 }
+        END { print found+0 }
+      ' "$FM_WAKE_QUEUE"); then
+        [ "$found" = 1 ] || status=1
+      else
+        status=2
+      fi
+    fi
+  fi
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  return "$status"
+}
+
 # fm_wake_queued_keys <kind>
 # Print the distinct keys currently queued for <kind>, oldest first. Read under
 # the append lock so a concurrent append is never observed half-written. The

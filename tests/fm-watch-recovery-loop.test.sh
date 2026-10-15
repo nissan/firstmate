@@ -222,5 +222,72 @@ test_handling_successor_does_not_go_blind() {
   pass "a resurfacing handling successor stays alive and supervises instead of going blind"
 }
 
+# Use the actual inbox producer and shell watcher. Every path and process is
+# task-local; no primary session or backend endpoint is contacted.
+test_successor_notifies_independent_inbox_arrivals() {
+  local posture dir home state child out i generation
+  local -a fixture
+  for posture in attended away quiet; do
+    dir=$(make_case "inbox-$posture")
+    home="$dir/home"
+    state="$dir/state"
+    mkdir -p "$home" "$dir/config" "$dir/data" "$dir/tmp"
+    printf 'tmux\n' > "$dir/config/backend"
+    touch "$state/.last-check" "$state/.last-heartbeat" "$state/home-summary.json"
+    case "$posture" in
+      away) printf 'afk\n' > "$state/.afk" ;;
+      quiet) printf 'quiet\n' > "$state/.afk" ;;
+    esac
+    fixture=(env FM_HOME="$home" FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state"
+      FM_CONFIG_OVERRIDE="$dir/config" FM_DATA_OVERRIDE="$dir/data"
+      FM_WAKE_QUEUE="$state/.wake-queue" FM_WAKE_QUEUE_LOCK="$state/.wake-queue.lock"
+      TMPDIR="$dir/tmp" PATH="$dir/fakebin:$PATH" FM_POLL=0.1
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_HOME_SUMMARY_INTERVAL=999999
+      FM_WATCH_HANDLING_SUCCESSOR=1)
+    "${fixture[@]}" bash "$ROOT/bin/fm-inbox.sh" note --request-id predecessor --json 'synthetic predecessor' >/dev/null
+    # shellcheck disable=SC2016 # Expanded by the explicitly invoked fixture bash.
+    "${fixture[@]}" bash -c '. "$1"; fm_wake_inbox_notification_snapshot' _ "$ROOT/bin/fm-wake-lib.sh" \
+      || fail "predecessor snapshot failed"
+    # Arrives BEFORE successor startup and before predecessor acknowledgement.
+    "${fixture[@]}" bash "$ROOT/bin/fm-inbox.sh" note --request-id startup --json 'synthetic startup arrival' >/dev/null
+    out="$dir/watch.out"
+    "${fixture[@]}" bash "$WATCH" > "$out" 2>&1 &
+    child=$!
+    i=0
+    while [ "$i" -lt 100 ] && ! grep -q '^check: inbox-pending$' "$out"; do sleep 0.1; i=$((i+1)); done
+    grep -q '^check: inbox-pending$' "$out" || { kill -TERM "$child" 2>/dev/null || true; fail "startup request not notified ($posture): $(cat "$out")"; }
+    wait "$child" || fail "startup watcher failed"
+    assert_equals 2 "$(wc -l < "$state/.wake-queue" | tr -d ' ')" "close preserves both requests"
+    # Outstanding accepted delivery, not yet consumed: no repeat close.
+    : > "$out"
+    "${fixture[@]}" bash "$WATCH" > "$out" 2>&1 &
+    child=$!
+    i=0
+    while [ "$i" -lt 100 ] && [ ! -f "$state/.last-watcher-beat" ]; do sleep 0.1; i=$((i+1)); done
+    sleep 1
+    kill -0 "$child" 2>/dev/null || fail "successor repeated inherited notification ($posture): $(cat "$out")"
+    # A later independent arrival must still notify on this same live process.
+    "${fixture[@]}" bash "$ROOT/bin/fm-inbox.sh" note --request-id later --json 'synthetic later arrival' >/dev/null
+    i=0
+    while [ "$i" -lt 100 ] && ! grep -q '^check: inbox-pending$' "$out"; do sleep 0.1; i=$((i+1)); done
+    grep -q '^check: inbox-pending$' "$out" || { kill -TERM "$child" 2>/dev/null || true; fail "later request not notified ($posture): $(cat "$out")"; }
+    wait "$child" || fail "later watcher failed"
+    assert_equals 3 "$(wc -l < "$state/.wake-queue" | tr -d ' ')" "later close loses no requests"
+    # A real non-successor restart replays unacknowledged delivery via recovery,
+    # not another new-inbox notification. No new row is manufactured.
+    : > "$out"
+    "${fixture[@]}" FM_WATCH_HANDLING_SUCCESSOR=0 bash "$WATCH" > "$out" 2>&1 &
+    child=$!
+    i=0
+    while [ "$i" -lt 100 ] && ! grep -q '^check: rearm-resurface$' "$out"; do sleep 0.1; i=$((i+1)); done
+    grep -q '^check: rearm-resurface$' "$out" || { kill -TERM "$child" 2>/dev/null || true; fail "restart did not replay recovery ($posture): $(cat "$out")"; }
+    wait "$child" || fail "restart watcher failed"
+    generation=$(recovery_marker_generation "$state/.watcher-down")
+    [ -n "$generation" ] || fail "restart lost recovery generation"
+    pass "independent inbox notifications survive startup, busy main, later append and recovery ($posture)"
+  done
+}
+
+test_successor_notifies_independent_inbox_arrivals
 test_handling_successor_does_not_go_blind
 test_unacknowledged_recovery_is_announced_once_per_generation

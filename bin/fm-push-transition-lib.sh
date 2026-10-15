@@ -95,6 +95,14 @@ wake() {
     heartbeat*) echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak" ;;
     *) echo 0 > "$STATE/.heartbeat-streak" ;;
   esac
+  # Only check-kind closes own inbox notification: attended routing keeps
+  # checks on main, whereas an unrelated signal/heartbeat may go to a branch
+  # that cannot consume inbox rows. Capture before output so later appends
+  # belong to the successor, even during startup. Failure retains recovery.
+  # Keep ordinary stop handling while waiting for the append lock.
+  case "$1" in
+    check:*) fm_wake_inbox_notification_snapshot || exit 1 ;;
+  esac
   trap '' HUP INT TERM
   [ -z "$FM_WAKE_POST_OUTPUT_ACTION" ] || trap '' PIPE
   if echo "$1"; then

@@ -2842,6 +2842,17 @@ while :; do
   # generic recovery reason, so give that owner first refusal.
   resurface_after_downtime
 
+  # Independent inbox arrivals are not inherited recovery work. The close
+  # snapshot suppresses only rows already covered by an outstanding delivery,
+  # including while main is busy. Keep the successor recovery bypass intact.
+  inbox_notification_status=0
+  fm_wake_inbox_notification_pending || inbox_notification_status=$?
+  case "$inbox_notification_status" in
+    0) wake "check: inbox-pending" ;;
+    1) ;;
+    *) echo "watcher: inbox notification coverage could not be read safely" >&2; exit 1 ;;
+  esac
+
   # The existing poll loop also owns the bounded inactive-outcome cadence.
   # This is mechanical and silent unless a durable terminal-outcome obligation
   # was created, so quiet cycles never wake firstmate or consume model tokens.

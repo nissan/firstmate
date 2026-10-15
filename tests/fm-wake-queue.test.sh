@@ -1027,7 +1027,7 @@ test_secondmate_busy_and_unknown_panes_are_not_rung() {
     secondmate_stall_watch_leg "$dir" "busy" tick
   ! grep -F 'secondmate wake-loop stalled' "$dir/watch-busy.out" >/dev/null \
     || fail "a busy mate was escalated as a stalled wake loop: $(cat "$dir/watch-busy.out")"
-  [ ! -s "$state/.wake-queue" ] || fail "a busy mate published a durable stall notification"
+  [ ! -s "$state/.wake-queue" ] || fail "a busy mate published a durable stall notification: $(cat "$state/.wake-queue")"
   [ ! -e "$dir/sent-busy" ] || fail "a busy mate was rung"
   [ ! -e "$state/mate.inbox" ] || fail "a busy mate received a drain steer"
 
@@ -1435,6 +1435,18 @@ test_branch_actor_scoped_ack_never_swallows_a_main_owned_row() {
   # sequence numbers gate, independent of the Pi SDK.
   FM_STATE_OVERRIDE="$state" "$GRANT" activate "$$" actor-scope || fail "branch owner activation failed"
   FM_STATE_OVERRIDE="$state" "$GRANT" publish actor-scope 2 3 || fail "branch grant publication failed"
+  append_wake "$state" check inbox:actor-fixture 'check: synthetic inbox request' || fail "inbox append failed"
+  # An outstanding notification covers the inbox arrival, but grants no actor
+  # ownership and cannot let the branch acknowledge main's independent request.
+  # shellcheck disable=SC2016 # Expanded in the fixture bash, not the test shell.
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_wake_inbox_notification_pending || exit 1
+    fm_wake_inbox_notification_snapshot || exit 1
+    fm_wake_inbox_notification_pending && exit 1
+    [ "$(fm_wake_actor_pending_count main)" = 2 ] || exit 1
+    [ "$(fm_wake_actor_pending_count branch)" = 2 ]
+  ' _ "$ROOT/bin/fm-wake-lib.sh" || fail "notification coverage changed actor partitioning"
 
   out="$dir/branch-drain.out"
   err="$dir/branch-drain.err"
@@ -1466,7 +1478,8 @@ test_branch_actor_scoped_ack_never_swallows_a_main_owned_row() {
   err="$dir/main-drain.err"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" 2> "$err" || fail "main drain failed: $(cat "$err")"
   count=$(awk -F '\t' 'NF == 5 { count++ } END { print count + 0 }' "$out")
-  [ "$count" -eq 1 ] || fail "main's later drain should see exactly the one remaining main-owned row: $(cat "$out")"
+  [ "$count" -eq 2 ] || fail "main's later drain should see both remaining main-owned rows: $(cat "$out")"
+  grep -Fq "$(printf '\tcheck\tinbox:actor-fixture\t')" "$out" || fail "notification coverage lost the inbox request"
   grep -Fq "$(printf '\tcheck\tsome-poll.check.sh\t')" "$out" || fail "main's later drain lost the main-owned row"
   sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$err")
   generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
