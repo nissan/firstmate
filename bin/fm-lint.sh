@@ -43,8 +43,10 @@
 #
 # Lint defaults to two concurrency-limited workers over two stable logical
 # shards, and each worker runs ONE canonical root per ShellCheck process, so a
-# run holds at most JOBS concurrent ShellCheck processes. Diagnostics replay
-# in stable shard/root order. FM_LINT_JOBS=1 changes concurrency, not diagnostics
+# run holds at most JOBS concurrent ShellCheck processes. CI defaults to one
+# worker for the private runner, so concurrent graph memory stays bounded to a
+# single source graph; local callers may use two. Diagnostics replay
+# in stable shard/root order. FM_LINT_JOBS changes concurrency, not diagnostics
 # or exit selection.
 # --partition 1of2/2of2 splits the entire canonical inventory across
 # two CI runners, each with those same concurrency-limited workers.
@@ -714,7 +716,13 @@ fm_lint_run_backend_purity() {
   }
 }
 
-JOBS=${FM_LINT_JOBS:-2}
+if [ -n "${FM_LINT_JOBS:-}" ]; then
+  JOBS=$FM_LINT_JOBS
+elif [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; then
+  JOBS=1
+else
+  JOBS=2
+fi
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 FAST=0
 ANALYSIS_MODE=full

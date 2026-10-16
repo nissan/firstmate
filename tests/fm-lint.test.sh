@@ -215,8 +215,16 @@ test_canonical_partitions_preserve_full_lint() {
     fi
     [ "$(LC_ALL=C sort -u "$mode")" = on ] || fail "partition $part disabled full analysis"
     root_count=$(printf '%s\n' "$selected" | grep -c .)
+    # The invariant that bounds memory is one SOURCE-FOLLOWING process per root,
+    # since that is what builds one graph. The no-source exclusion guard adds one
+    # shallow pass per root on top, so each class is counted separately instead of
+    # asserting a bare total that cannot tell the two apart.
+    [ "$(grep -c '^external-sources=yes$' "$flags" || true)" -eq "$root_count" ] \
+      || fail "partition $part did not run exactly one source-aware ShellCheck call per root"
+    [ "$(grep -c '^external-sources=no$' "$flags" || true)" -eq "$root_count" ] \
+      || fail "partition $part did not run its no-source exclusion guard once per root"
     invocation_count=$(grep -c '^external-sources=' "$flags" || true)
-    [ "$invocation_count" -eq "$root_count" ] \
+    [ "$invocation_count" -eq "$((root_count * 2))" ] \
       || fail "partition $part used $invocation_count ShellCheck calls for $root_count roots"
     [ "$(grep -c '^fm-lint: begin ' "$tmp/$part.out" || true)" -eq "$root_count" ] \
       || fail "partition $part did not stream a begin record per root"

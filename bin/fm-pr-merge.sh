@@ -993,8 +993,11 @@ EOF
     [ -z "$unreported" ] || printf 'error: these required checks have not reported: %s\n' "$unreported" >&2
     return 1
   fi
+  # One sentence, so the attestation clause is additive rather than a second
+  # phrasing of the same verdict: the required-check wording is identical on
+  # both paths and only the local-evidence clause is appended.
   if [ "$attestation_ok" = true ]; then
-    printf 'verified: %s is open and mergeable, with local no-mistakes validation bound to head %s, every unwaived required check reported, and every unwaived check green\n' \
+    printf 'verified: %s is open and mergeable, with every unwaived required check reported and every unwaived check green at head %s, and local no-mistakes validation bound to that head\n' \
       "$URL" "$live_head" >&2
   else
     printf 'verified: %s is open and mergeable, with every unwaived required check reported and every unwaived check green at head %s\n' \
