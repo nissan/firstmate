@@ -312,6 +312,9 @@ test_no_missing_or_broken_signal_can_refuse() {
 # --- library: reading the tool itself ---------------------------------------
 
 # fake_quota_axi <dir> <version> <mode> [payload-file]
+# Compatible cases must report at or above bin/fm-quota-axi-lib.sh's
+# QUOTA_AXI_MIN, or they silently take the below-floor path instead of the
+# one they are named for.
 # A quota-axi that answers --version and --json separately, so a case can break
 # one without touching the other. Modes: json (print the payload), fail (exit
 # nonzero), garbage (print non-JSON), hang (outlive any sane bound).
@@ -345,7 +348,7 @@ test_reading_the_tool_refuses_only_on_real_evidence() {
 
   # Baseline: a real read of real evidence refuses, so the cases below are not
   # vacuous and the live read path is genuinely exercised.
-  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-ok" 0.1.35 json "$snap")
+  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-ok" 0.1.51 json "$snap")
   record=$(run_check claude default PATH="$fakebin:$PATH")
   [ "$(rc_of "$record")" = "$REFUSE_RC" ] \
     || fail "reading a spent allowance from the tool must refuse: $record"
@@ -356,12 +359,12 @@ test_reading_the_tool_refuses_only_on_real_evidence() {
   [ "$(rc_of "$record")" != "$REFUSE_RC" ] \
     || fail "a quota tool below the supported floor must not refuse: $record"
 
-  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-fail" 0.1.35 fail)
+  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-fail" 0.1.51 fail)
   record=$(run_check claude default PATH="$fakebin:$PATH")
   [ "$(rc_of "$record")" != "$REFUSE_RC" ] \
     || fail "a failing quota read must not refuse: $record"
 
-  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-garbage" 0.1.35 garbage)
+  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-garbage" 0.1.51 garbage)
   record=$(run_check claude default PATH="$fakebin:$PATH")
   [ "$(rc_of "$record")" != "$REFUSE_RC" ] \
     || fail "an unreadable quota read must not refuse: $record"
@@ -369,7 +372,7 @@ test_reading_the_tool_refuses_only_on_real_evidence() {
   # A wedged vendor CLI must not wedge the dispatch: the bound has to fire and
   # the answer has to be "proceed".
   local started elapsed
-  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-hang" 0.1.35 hang)
+  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-hang" 0.1.51 hang)
   started=$(date +%s)
   record=$(run_check claude default PATH="$fakebin:$PATH" FM_RUNWAY_READ_TIMEOUT=2)
   elapsed=$(( $(date +%s) - started ))
