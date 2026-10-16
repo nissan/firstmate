@@ -1443,6 +1443,23 @@ SH
       crash)
         printf 'kill -KILL "$$"\n'
         ;;
+      empty-failure)
+        printf 'exit 1\n'
+        ;;
+      empty-success)
+        ;;
+      crash-then-handback|empty-then-handback)
+        if [ "$kind" = crash-then-handback ]; then
+          printf '[ "$(wc -l < "$FM_HOME/state/host-ran")" -ne 1 ] || kill -KILL "$$"\n'
+        else
+          printf '[ "$(wc -l < "$FM_HOME/state/host-ran")" -ne 1 ] || exit 0\n'
+        fi
+        cat <<'SH'
+printf 'pending:downtime:fixture-generation\n' > "$FM_HOME/state/.watcher-down"
+touch "$FM_HOME/state/.last-watcher-beat"
+printf 'signal: recovered.status\n'
+SH
+        ;;
     esac
     printf 'exit 0\n'
   } > "$dir/bin/fm-supervision-host.sh"
@@ -1640,6 +1657,53 @@ test_host_lost_announced_handback_notifies_once_per_episode() {
   pass "auto-arm: a lost host hand-back on an announced marker notifies once per failure episode"
 }
 
+test_host_empty_failure_is_not_retried() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/host-empty-failure")
+  rm -f "$dir/config/supervision-host-off"
+  : > "$dir/state/task.meta"
+  write_host_fixture "$dir" empty-failure
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  expect_code 2 "$status" "an explicit empty-output failure must notify main"
+  [ "$(wc -l < "$dir/state/host-ran")" -eq 1 ] || fail "an explicit exit 1 was retried as a crash"
+  assert_contains "$out" "last one exited 1 without a wake" "the failure must retain the explicit exit status"
+  assert_contains "$out" "auto-arm FAILED" "the empty failure must deliver a failure notice"
+  assert_present "$dir/state/.claude-autoarm-failure-notified" "the failure notice was not recorded"
+  [ "$(epoch_outcome "$dir")" = failed ] || fail "the explicit failure was not committed"
+  pass "auto-arm: explicit exit 1 with empty output notifies without retry"
+}
+
+test_host_empty_success_is_bounded() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/host-empty-success")
+  rm -f "$dir/config/supervision-host-off"
+  : > "$dir/state/task.meta"
+  write_host_fixture "$dir" empty-success
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  expect_code 2 "$status" "exhausted silent returns must notify main"
+  [ "$(wc -l < "$dir/state/host-ran")" -eq 2 ] || fail "silent retries exceeded or missed the original attempt bound"
+  assert_contains "$out" "last one exited 0 without a wake" "silent exhaustion lost its exit status"
+  pass "auto-arm: zero-exit empty-output retries retain the attempt bound"
+}
+
+test_host_crash_and_silent_retry_can_hand_back() {
+  local kind dir out status
+  for kind in crash-then-handback empty-then-handback; do
+    dir=$(make_primary_dir "$TMP_ROOT/host-$kind")
+    rm -f "$dir/config/supervision-host-off"
+    : > "$dir/state/task.meta"
+    write_host_fixture "$dir" "$kind"
+    out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+    expect_code 2 "$status" "$kind: the retry must deliver its close"
+    [ "$(wc -l < "$dir/state/host-ran")" -eq 2 ] || fail "$kind: expected exactly one retry"
+    assert_contains "$out" "signal: recovered.status" "$kind: the recovered close was lost"
+    assert_not_contains "$out" "auto-arm FAILED" "$kind: recovery was reported as failure"
+    assert_absent "$dir/state/.claude-autoarm-failure-notified" "$kind: recovery consumed a failure notice"
+    [ "$(epoch_outcome "$dir")" = rewake ] || fail "$kind: the recovered close was not committed"
+  done
+  pass "auto-arm: genuine SIGKILL and silent exit 0 both retry into successful hand-back"
+}
+
 test_host_crash_is_retried_then_reported() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/host-crash")
@@ -1765,6 +1829,9 @@ test_host_stand_down_is_silent
 test_host_benign_rewake_refusal_opens_no_failure_episode
 test_host_lost_handback_notifies_once_per_episode
 test_host_lost_announced_handback_notifies_once_per_episode
+test_host_empty_failure_is_not_retried
+test_host_empty_success_is_bounded
+test_host_crash_and_silent_retry_can_hand_back
 test_host_crash_is_retried_then_reported
 test_arguments_never_arm
 test_fm_lock_status_still_works_with_shared_lib

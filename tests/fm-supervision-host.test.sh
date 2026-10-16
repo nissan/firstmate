@@ -1458,6 +1458,10 @@ SH
   expect_code 2 "$(cat "$home/hook.rc")" "the Stop hook must notify main instead of dropping the close"
   assert_grep 'firstmate watcher auto-arm FAILED' "$home/hook.err" "main must receive the failure notification"
   assert_re 'outcome=failed ' "$home/state/.claude-autoarm-epoch" "the failure must be committed"
+  assert_grep 'after 1 bounded attempts' "$home/hook.err" "an explicit hand-back failure must not start a second host"
+  assert_grep 'last one exited 1 without a wake' "$home/hook.err" "the failure notice must retain the host exit status"
+  [ "$(grep -c $'\tstart\t' "$home/state/.supervision-host.log")" -eq 1 ] || fail "the failed hand-back was retried as a silent crash"
+  [ -e "$home/state/.claude-autoarm-failure-notified" ] || fail "the failure notice was not recorded"
   pass "host+hook: failed at-turn downtime write notifies main despite a healthy successor"
 }
 
