@@ -692,6 +692,11 @@ fm_git_worktree() {
 # The exact Claude launch fragment fm-spawn.sh --claude-review renders: default
 # permissions plus output and own-inbox grants for only this scout, by given and
 # resolved path.
+# Terminated by --add-dir, the next flag group fm-spawn.sh always renders for a
+# claude launch, so this still proves nothing is inserted into or appended after
+# the allowlist. The task-channel --add-dir grant is what lets an allowlisted
+# Edit pass Claude's mandatory prior-Read path check, so it serves this narrow
+# allowlist rather than widening it.
 fm_test_claude_review_permissions() {
   local state=$1 data=$2 id=$3 state_real data_real rules status report inbox
   local -a statuses reports inboxes
@@ -719,7 +724,7 @@ fm_test_claude_review_permissions() {
     rules+=" 'Read(/$inbox/**)' 'Glob(/$inbox/*.msg)'"
   done
   rules+=" 'Bash($state_real/$id.claude-review-ack.sh)'"
-  printf 'claude --permission-mode default --allowedTools%s --settings' "$rules"
+  printf 'claude --permission-mode default --allowedTools%s --add-dir' "$rules"
 }
 
 # --- state/<id>.meta writers ------------------------------------------------
