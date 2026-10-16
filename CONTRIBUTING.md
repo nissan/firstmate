@@ -9,10 +9,8 @@ We require this to reduce the maintainer's burden of reviewing and merging contr
 `no-mistakes` puts a local git proxy in front of your real remote.
 Pushing through it runs an AI-driven review/test/lint pipeline in an isolated worktree, forwards the push upstream only after every check passes, and opens a clean PR automatically.
 
-A GitHub Actions check (`Require no-mistakes`) runs on PRs targeting `main` and requires both the deterministic signature and a parseable structured attestation from no-mistakes v1.46.0 or newer.
-The attestation must bind to the current PR head commit and report the review, test, and document steps as completed, so a stale attestation, a missing `head_sha`, or a skipped required step fails.
-It evaluates every PR opening and body edit independently, reruns after head synchronization or reopening, and prevents a later edit from replacing an earlier pending compliance check.
-GitHub Actions and Dependabot are exempt so their automation keeps working, but other contributor PRs that do not satisfy the attestation contract will not be reviewed or merged.
+This fork runs routine validation locally; hosted CI and attestation workflows are manual-only diagnostic fallbacks, not automatic PR or push checks.
+The local merge policy below does not replace canonical upstream's contribution requirements: contributions there still require no-mistakes v1.46.0 or newer and must satisfy that repository's current rules.
 
 ## Workflow
 
@@ -36,22 +34,25 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 
 Before dispatching an agent-driven contribution, follow the [Firstmate role and task-consent policy](docs/configuration.md#firstmate-role-configfirstmate-role); clone-and-run use alone grants no publication authority.
 
-## Maintaining required checks
+## Fork-local validation
 
-GitHub required checks are configured in the repository's existing main ruleset, not activated by committing workflow YAML.
-When applying this CI layout, preserve its existing pull-request, merge-method, linear-history, deletion, non-fast-forward, and administrator-bypass settings.
-Add required status checks with `strict_required_status_checks_policy: false`; a main update alone must not force a branch update and retest.
-Bind the checks to the GitHub Actions app already producing them, rather than accepting the same context from any integration.
-No new app installation or manual runner setup is needed for that setting.
+`bin/fm-pr-merge.sh` verifies an exact-head local no-mistakes attestation before merging in this fork, as well as its ordinary merge authority, live mergeability, conflict and reported-check safeguards.
+The attestation requires completed review, test, document and lint phases; stale, missing, duplicated or skipped authoritative phases refuse.
+To verify an attestation without merging, obtain the full head and body together from one live forge read, set `PR_HEAD` to that head and `PR_BODY_FILE` to a file containing that body, then run:
 
-Require the actual job contexts: `Lint 1`, `Lint 2`, `Test coverage guard`, `Repo invariants`, `Stock macOS Bash snapshot compatibility`, `Behavior portable parallel 1`, `Behavior portable parallel 2`, `Behavior portable serial 1` through `Behavior portable serial 9`, `Behavior tests (Herdr)`, `Behavior timing aggregate`, and `PR must be raised via no-mistakes`.
-The last name is the compliance job context, not its workflow title; its existing automation exceptions remain unchanged.
-The timing aggregate is not a substitute for individual jobs because it can succeed while collecting evidence from a failed run.
+```sh
+bin/fm-no-mistakes-attestation.sh "$PR_HEAD" < "$PR_BODY_FILE"
+```
 
-Apply the approved rule change only after the corresponding workflow is green and landed, confirming exact names and the Actions integration id from real checks first.
-Snapshot the current ruleset, amend that same rule with the authenticated GitHub API or settings UI, and read back both the ruleset and effective branch rules.
-Verify missing or red checks prevent ordinary merging without creating a test merge; administrator override intentionally remains available.
-Coordinate any workflow rollback with its required-check names so a retired check cannot leave ordinary merges waiting forever.
+This verifies the supplied bytes only; it neither grants merge authority nor checks forge mergeability or check results.
+The trusted default-branch `.no-mistakes.yaml` declares `no_ci: true`, allowing zero reported checks without waiting for hosted runners.
+A reported red or pending check still refuses ordinary merging; zero checks never means that a reported failure was waived.
+
+Do not add required hosted contexts for this fork's routine delivery: a manual-only workflow cannot automatically satisfy them on each new head.
+Use local targeted tests and canonical lint before any authorized publication, consolidate changes, and never use pushes as a debugging loop.
+Dispatch hosted diagnostics only when their environment answers a concrete remaining question; `tests/fm-ci-workflow.test.sh` verifies the manual fallback and local attestation contract.
+Any authorized protection migration must snapshot and read back the effective rules while preserving unrelated pull-request, merge-method, linear-history, deletion, non-fast-forward and administrator-bypass protections.
+This fork-local policy grants no authority to change another repository's required checks.
 
 ## Repo conventions
 
@@ -64,7 +65,7 @@ Coordinate any workflow rollback with its required-check names so a retired chec
   Everything personal to one captain's fleet (`.env`, `data/`, `state/`, `config/`, `projects/`, `.no-mistakes/`) is gitignored; never commit it.
   The root `.tasks.toml` is tracked `tasks-axi` config for `data/backlog.md`; compatible `tasks-axi` is the default backend for routine backlog mutations, with the compatibility definition owned by [`docs/configuration.md`](docs/configuration.md) ("Backlog backend").
   A local `config/backlog-backend=manual` opt-out forces firstmate's routine backlog updates to hand-editing and stays gitignored; validated secondmate handoffs still delegate through `tasks-axi mv`.
-  A local `config/backend` file explicitly overrides runtime auto-detection for new task endpoints and stays gitignored; spawn-supported values are `tmux`, `herdr` (which has its own required CI lane), and `zellij`, `orca`, and `cmux`, which remain experimental with no dedicated real-backend CI lane, while `codex-app` is documented only in `docs/codex-app-backend.md`.
+  A local `config/backend` file explicitly overrides runtime auto-detection for new task endpoints and stays gitignored; spawn-supported values are `tmux`, `herdr` (which has its own manual hosted-fallback lane), and `zellij`, `orca`, and `cmux`, which remain experimental with no dedicated real-backend CI lane, while `codex-app` is documented only in `docs/codex-app-backend.md`.
   It does not make `data/` tracked.
 - Helper scripts in `bin/` are plain bash.
   Each starts with a usage header comment; keep it accurate when you change behavior.
@@ -131,8 +132,8 @@ Its header and `--help` own the flags, family labels, lanes, and changed-file ma
 `bin/fm-test-isolation-proof.sh` remains the single owner of the portable candidate proof and reusable family proof harness; see `docs/fm-test-isolation-proof.md`.
 Portable shard balance evidence lives in `docs/fm-test-portable-shards.md`.
 Family selection is the ordinary local path; `--all` is deliberate full regression only.
-CI owns broad regression across required portable parallel shards, the portable serial lane's separate-runner shards, the Herdr lane, lint, invariants, the coverage guard, and stock macOS Bash compatibility in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-Pushing a new head to a pull request cancels that pull request's still-running CI so only the current head is validated; pushes to `main` are never cancelled, and the workflow owns that contract and its rationale.
+The manual hosted fallback provides broad regression across portable parallel shards, the portable serial lane's separate-runner shards, the Herdr lane, lint, invariants, the coverage guard, and stock macOS Bash compatibility in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+A deliberate manual dispatch does not cancel another diagnostic run; pushing a new head does not start hosted CI.
 Use `bin/fm-test-run.sh --list-lanes` for exact lane names and `--help` for `--jobs` rules and required gate-skip flags when reproducing a lane locally.
 Leave the `sleep 0.1` cadence in the suites' bounded condition waits alone.
 Those sleeps look like recoverable overhead - `fm-watch-triage.test.sh` alone issues about 1,900 of them, each paying a flat ~100ms scheduler wake-up penalty on macOS - but they are not overhead added to the clock; they are how a test waits for a subject that only moves on `fm-watch.sh`'s own one-second `FM_POLL` cadence.
