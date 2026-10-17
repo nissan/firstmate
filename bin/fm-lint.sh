@@ -1280,9 +1280,13 @@ fm_lint_run_local_exclusion_guard() {
     # grace and address-space limit and can never run uncapped where required
     # bounds are in force; and it holds at most JOBS concurrent processes, one
     # under CI, instead of a batch size of its own. The setpgrp hop stays so
-    # each root remains its own process group for the owner's signal sweep.
+    # each root remains its own process group for the owner's signal sweep,
+    # and the bounded watchdog takes the same second hop the per-root runner
+    # gives it, naming the guard wrapper as its owner, so the sweep cannot
+    # kill it before it has escalated terminate-then-kill on the root's group.
     if [ "$BOUND_MECH" != none ]; then
       guard_cmd=(
+        "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"'
         "${BASH:-bash}" "$SELF" --internal-timed "$ROOT_SECONDS" "$ROOT_GRACE"
         "${BASH:-bash}" "$SELF" --internal-root "$guard_dir/$index.rss" "$ROOT_MEMORY_KIB"
         "$SHELLCHECK_BIN" --norc --format=gcc -- "$path"
@@ -1295,7 +1299,7 @@ fm_lint_run_local_exclusion_guard() {
     FM_LINT_GUARD_OUT="$guard_dir/$index.out" \
     FM_LINT_GUARD_RC="$guard_dir/$index.rc" \
       "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
-      "${BASH:-bash}" -c 'rc=0; "$@" >"$FM_LINT_GUARD_OUT" 2>&1 || rc=$?; printf "%s\n" "$rc" >"$FM_LINT_GUARD_RC"' \
+      "${BASH:-bash}" -c 'rc=0; FM_EXEC_TIMED_OWNER_PID=$$ "$@" >"$FM_LINT_GUARD_OUT" 2>&1 || rc=$?; printf "%s\n" "$rc" >"$FM_LINT_GUARD_RC"' \
       fm-lint-guard "${guard_cmd[@]}" &
     pid=$!
     ACTIVE_PIDS+=("$pid")

@@ -977,6 +977,79 @@ SH
   pass "a hanging exclusion-guard root is reaped at the per-root deadline (${elapsed}s)"
 }
 
+# The guard's bounded watchdog must outlive the owner's TERM-then-KILL sweep
+# of the guard wrapper's group, exactly as the per-root runner's does, so a
+# no-source root that ignores TERM is still killed once the cleanup grace
+# elapses instead of running on to its deadline with no owner left.
+test_exclusion_guard_watchdog_outlives_the_owner_sweep() {
+  if ! fm_lint_bounds_supported; then
+    pass "SKIP (host cannot enforce the bounded envelope): exclusion-guard owner-sweep check"
+    return
+  fi
+  local tmp fakebin lint_tmp pid_file out_file parent_pid parent_rc pid i
+  tmp=$(fm_test_tmproot fm-lint-guard-sweep)
+  fakebin=$(fm_fakebin "$tmp")
+  lint_tmp="$tmp/lint"
+  pid_file="$tmp/shellcheck.pid"
+  out_file="$tmp/output"
+  mkdir -p "$lint_tmp"
+  # The source-aware pass completes; only the no-source guard pass blocks, and
+  # it ignores TERM so nothing short of the watchdog's KILL escalation ends it.
+  cat > "$fakebin/shellcheck" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+  printf 'ShellCheck - shell script analysis tool\nversion: 0.11.0\n'
+  exit 0
+fi
+follow=no
+for arg in "$@"; do
+  [ "$arg" != --external-sources ] || follow=yes
+done
+[ "$follow" = no ] || exit 0
+trap '' TERM
+printf '%s\n' "$$" >> "$FM_TEST_SHELLCHECK_PID"
+exec sleep 300
+SH
+  chmod +x "$fakebin/shellcheck"
+
+  PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true TMPDIR="$lint_tmp" \
+    FM_LINT_REQUIRE_BOUNDS=1 FM_LINT_JOBS=1 \
+    FM_LINT_ROOT_SECONDS=120 FM_LINT_ROOT_GRACE=1 \
+    FM_TEST_SHELLCHECK_PID="$pid_file" \
+    "$LINT" > "$out_file" 2>&1 &
+  parent_pid=$!
+  i=0
+  while [ "$i" -lt 3000 ] && [ ! -s "$pid_file" ]; do
+    kill -0 "$parent_pid" 2>/dev/null || break
+    sleep 0.01
+    i=$((i + 1))
+  done
+  [ -s "$pid_file" ] || {
+    kill -TERM "$parent_pid" 2>/dev/null || true
+    wait "$parent_pid" 2>/dev/null || true
+    fail "the bounded exclusion guard did not start a blocking ShellCheck"$'\n'"$(cat "$out_file")"
+  }
+  pid=$(head -n 1 "$pid_file")
+  kill -TERM "$parent_pid" 2>/dev/null \
+    || fail "the lint owner could not be interrupted during the guard phase"
+  parent_rc=0
+  wait "$parent_pid" 2>/dev/null || parent_rc=$?
+  [ "$parent_rc" -eq 143 ] \
+    || fail "guard-phase signal exit was $parent_rc, expected 143"
+  i=0
+  while [ "$i" -lt 1000 ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    fail "a TERM-ignoring guard root outlived the owner's shutdown and its cleanup grace"
+  fi
+  [ -z "$(find "$lint_tmp" -mindepth 1 -maxdepth 1 -name 'fm-lint.*' -print -quit)" ] \
+    || fail "the interrupted guard phase left temporary worker state"
+  pass "the exclusion guard's watchdog kills a TERM-ignoring root after the owner's shutdown"
+}
+
 test_pins_an_explicit_version() {
   [ -n "$REQUIRED" ] || fail "fm-lint.sh --required-version printed nothing"
   # The captain-agreed pin: adopt ShellCheck 0.11.0's rule set consistently,
@@ -2282,3 +2355,4 @@ test_changed_mode_hides_cross_file_codes_that_ci_still_sees
 test_authoritative_lint_owns_local_exclusion_completeness
 test_exclusion_guard_caps_concurrency_at_jobs
 test_exclusion_guard_runs_under_the_bounded_envelope
+test_exclusion_guard_watchdog_outlives_the_owner_sweep
