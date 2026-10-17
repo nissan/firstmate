@@ -98,12 +98,6 @@ case "${1:-}" in
         'export TRACEPARENT='*)
           [ -z "${FM_FAKE_TRACE_EXPORTED:-}" ] || : > "$FM_FAKE_TRACE_EXPORTED"
           ;;
-        'cd -- '*)
-          # FM_FAKE_CD_IGNORED models a shell that never reaches the recorded
-          # worktree, so the caller's own post-cd confirmation is what fails.
-          cdpath=${payload#cd -- \'}
-          [ -n "${FM_FAKE_CD_IGNORED:-}" ] || printf '%s' "${cdpath%\'}" > "$D/cwd"
-          ;;
       esac
     fi
     exit 0 ;;
@@ -254,7 +248,6 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_TRACE_RELEASE="${FM_FAKE_TRACE_RELEASE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
-    FM_FAKE_CD_IGNORED="${FM_FAKE_CD_IGNORED:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -269,7 +262,6 @@ run_spawn() {  # <case-dir> <args...>
     PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
-    FM_FAKE_CD_IGNORED="${FM_FAKE_CD_IGNORED:-}" \
     "$SPAWN" "$@" 2>&1
 }
 
@@ -423,7 +415,7 @@ test_claude_review_relaunch_intake_acknowledges_through_published_helper() {
   launch=$(cat "$dir/fake/literal")
   brief="$dir/home/data/rv6/launch-brief.md"
   helper="$(cd "$dir/home/state" && pwd -P)/rv6.claude-review-ack.sh"
-  assert_contains "$launch" "$brief" "the replacement launch does not read its generated launch brief"
+  assert_contains "$launch" "Firstmate operational input waiting" "the replacement launch does not receive its generated launch brief through the operational input channel"
   assert_grep "resume the exact-head review" "$brief" \
     "the relaunch progress note did not reach the replacement's launch brief"
   assert_grep "$inbox/handled/" "$brief" \
@@ -454,7 +446,7 @@ test_claude_review_relaunch_keeps_helper_after_post_publication_failure() {
 
   out=$(run_control "$dir" rv5 relaunch --note "resume review") || rc=$?
   [ "$rc" -ne 0 ] || fail "a relaunch whose backlog commit fails must report failure"$'\n'"$out"
-  assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement review worker was never launched"
+  assert_grep "Firstmate operational input waiting" "$dir/fake/literal" "the replacement review worker was never launched"
   [ "$(meta_field "$dir" rv5 claude_review)" = on ] \
     || fail "the kept replacement record lost its review posture"
   helper="$(cd "$dir/home/state" && pwd -P)/rv5.claude-review-ack.sh"
@@ -526,6 +518,7 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   add_ship_task "$dir" rl1 claude
   gen_before=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl1)
   printf 'busy_gen=%s\n' "$gen_before" >> "$dir/home/state/rl1.meta"
+  printf 'slot_claim_gen=c1700000000.12.34\n' >> "$dir/home/state/rl1.meta"
   out=$(run_control "$dir" rl1 relaunch --note "stopped mid-refactor"); rc=$?
   expect_code 0 "$rc" "a same-harness relaunch should succeed"$'\n'"$out"
   assert_contains "$out" "relaunched rl1 harness=claude from=claude" "the outcome should name the transition"
@@ -535,6 +528,10 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
     || fail "the worktree must be reused, not reallocated"
   [ "$(meta_field "$dir" rl1 kind)" = ship ] || fail "kind must survive the relaunch"
   [ "$(meta_field "$dir" rl1 project)" = "$dir/proj" ] || fail "project must survive the relaunch"
+  [ "$(meta_field "$dir" rl1 slot_claim_gen)" = c1700000000.12.34 ] \
+    || fail "the Treehouse slot assignment token must survive the relaunch"
+  [ "$(grep -c '^slot_claim_gen=' "$dir/home/state/rl1.meta")" -eq 1 ] \
+    || fail "the relaunch must preserve exactly one Treehouse slot assignment token"
   gen_after=$(meta_field "$dir" rl1 busy_gen)
   [ -n "$gen_after" ] && [ "$gen_after" != "$gen_before" ] \
     || fail "a relaunch must arm a fresh busy generation, got '$gen_after'"
@@ -631,7 +628,6 @@ test_relaunch_preserves_durable_task_metadata() {
     printf '%s\n' 'pr_head=feature/relaunch'
     printf '%s\n' 'x_request=request-19'
     printf '%s\n' 'decisions_reviewed=1'
-    printf '%s\n' 'slot_claim_gen=c1700000000.19.19'
   } >> "$dir/home/state/rl19.meta"
 
   out=$(run_control "$dir" rl19 relaunch --note "continuing review work"); rc=$?
@@ -644,8 +640,6 @@ test_relaunch_preserves_durable_task_metadata() {
     || fail "the task X request must survive relaunch"
   [ "$(meta_field "$dir" rl19 decisions_reviewed)" = 1 ] \
     || fail "the task decision state must survive relaunch"
-  [ "$(meta_field "$dir" rl19 slot_claim_gen)" = c1700000000.19.19 ] \
-    || fail "the immutable slot-claim generation must survive relaunch"
   pass "fm-control relaunch: durable task metadata survives replacement launch publication"
 }
 
@@ -1142,6 +1136,49 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
     || fail "the configured effort token should come with the pin"
   assert_not_contains "$out" "not a verified harness" "codex is a verified harness"
   pass "fm-control relaunch: a secondmate relaunch re-resolves its durable configured harness pin"
+}
+
+test_secondmate_claude_relaunch_keeps_local_settings() {
+  local dir home prior settings out rc
+  dir=$(new_case smlocal sml)
+  home="$dir/home"
+  mkdir -p "$home/config" "$home/data/sml"
+  printf 'codex\n' > "$home/config/secondmate-harness"
+  printf '# secondmate brief\n' > "$home/data/sml/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-local-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin" "$dir/smhome/.claude"
+  printf 'sml\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  prior='{"permissions":{"allow":["Bash(echo hi)"]}}'
+  printf '%s\n' "$prior" > "$dir/smhome/.claude/settings.local.json"
+  printf '%s\n' '{"feedbackDrafts":"on"}' > "$home/state/sml.claude-settings.json"
+  printf 'gen=retired\n' > "$dir/smhome/.fm-busy-stop"
+  {
+    echo "window=fmses:fm-sml"
+    echo "endpoint_task_id=sml"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=default"
+    echo "effort=default"
+    echo "home=$dir/smhome"
+  } > "$home/state/sml.meta"
+  printf '%s\n' "fm-sml" > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  printf 'codex' > "$dir/fake/becomes"
+  out=$(run_control "$dir" sml relaunch); rc=$?
+  expect_code 0 "$rc" "a claude secondmate relaunch should retire wiring without touching local settings"$'\n'"$out"
+  settings="$dir/smhome/.claude/settings.local.json"
+  [ "$(cat "$settings")" = "$prior" ] \
+    || fail "relaunch rewrote the mate home's settings.local.json"
+  [ ! -e "$home/state/sml.claude-settings.json" ] \
+    || fail "relaunch left the retired claude settings file in place"
+  [ ! -e "$dir/smhome/.fm-busy-stop" ] \
+    || fail "relaunch left the retired Stop pointer in the mate home"
+  pass "fm-control relaunch: a claude secondmate keeps settings.local.json and retires the state settings file and the Stop pointer"
 }
 
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop() {
@@ -2596,25 +2633,22 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
   pass "relaunch heals an item that drifted out of In flight while the task stayed live"
 }
 
-# --- 7. a structurally missing endpoint is recoverable -----------------------
-#
-# After a session provider restarts, every task in the home reads `missing`:
-# the pane, tab, or window the record names is authoritatively gone. Nothing
-# can still be running in an endpoint that does not exist, so this is the same
-# positive agent-free proof `dead` is - and the recorded worktree, with every
-# uncommitted change in it, is still exactly where the previous worker left it.
-# Relaunch therefore recreates the endpoint instead of refusing (issue #9).
-#
-# Coverage here is tmux-only: this suite is hermetic (stubbed session provider,
-# no real agent), and exercising the same path on Herdr would mean driving a
-# real Herdr server's lifecycle, which belongs in a `--herdr-lab` guarded test
-# rather than here. Both backends reach the same shared decision in
-# bin/fm-spawn.sh; only the create-the-endpoint half differs per adapter.
+test_exit_and_relaunch_remove_the_dialog_file() {
+  local dir out rc
+  dir=$(new_case dialog-file-exit rl70)
+  add_ship_task "$dir" rl70 claude
+  out=$(run_control "$dir" rl70 exit); rc=$?
+  expect_code 0 "$rc" "exit should stop the agent"$'\n'"$out"
+  [ ! -e "$dir/home/state/rl70.composer-dialog" ] \
+    || fail "exit should remove the dialog file"
 
-# make_endpoint_missing <case-dir>: empty the session inventory, so the task's
-# recorded window is authoritatively absent rather than merely agent-less.
-make_endpoint_missing() {  # <case-dir>
-  : > "$1/fake/windows"
+  dir=$(new_case dialog-file-relaunch rl71)
+  add_ship_task "$dir" rl71 claude
+  out=$(run_control "$dir" rl71 relaunch --note "replace the agent"); rc=$?
+  expect_code 0 "$rc" "relaunch should replace the agent"$'\n'"$out"
+  [ ! -e "$dir/home/state/rl71.composer-dialog" ] \
+    || fail "relaunch should remove the dialog file"
+  pass "fm-control removes the dialog file after exit and after relaunch"
 }
 
 test_exit_and_relaunch_remove_the_dialog_file() {
@@ -2666,6 +2700,8 @@ SH
   pass "fm-control exit removes the dialog file before it releases the control lock"
 }
 
+test_exit_and_relaunch_remove_the_dialog_file
+test_exit_removes_the_dialog_file_before_releasing_the_lock
 test_claude_review_relaunch_preserves_or_explicitly_adds_posture
 test_claude_review_relaunch_intake_acknowledges_through_published_helper
 test_claude_review_relaunch_keeps_helper_after_post_publication_failure
@@ -2699,6 +2735,7 @@ test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter
 test_secondmate_relaunch_picks_up_the_configured_harness_pin
+test_secondmate_claude_relaunch_keeps_local_settings
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop
 test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
 test_explicit_secondmate_harness_ignores_configured_profile_axes

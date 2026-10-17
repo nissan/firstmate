@@ -32,7 +32,7 @@ The two parallel lanes use longest-processing-time assignment over those hints, 
 [`bin/fm-test-run.sh`](../bin/fm-test-run.sh) holds the duration values in `portable_parallel_weight_hints` and the ordered memberships and lane-specific prerequisite constraints beside `list_portable_parallel_1` and `list_portable_parallel_2`.
 Read the derived packing estimates with that runner's `--check-coverage`; its header and `--help` own the output fields and the selection-specific `--list-scheduled` weight rules.
 The largest individual hint sets a lower bound on the estimated duration of any split, regardless of how evenly the remaining work is assigned.
-The manually invoked hosted fallback cap follows the three-tier timeout policy in [Timeouts](#timeouts) below.
+The CI cap follows the three-tier timeout policy in [Timeouts](#timeouts) below.
 
 [`tests/fm-test-run.test.sh`](../tests/fm-test-run.test.sh), in `test_portable_parallel_lanes_stay_duration_balanced`, requires every parallel member to have a hint and the lane sums to differ by no more than five percent of the larger sum.
 Its scheduling regressions also check stored parallel lane order and preserve serial-weight scheduling for other selections.
@@ -45,15 +45,15 @@ Refresh `portable_parallel_weight_hints` with the slowest completed `duration_ms
 It keeps watcher, lock, AFK, real tmux, daemon, secondmate lifecycle, bootstrap, the `live-harness-optin` family, GUI-backend, and other unproven work serial.
 Membership is derived rather than enumerated, so a newly added test lands here by default.
 
-## Portable serial hosted-fallback shards
+## Portable serial CI shards
 
 On green CI run [30725985757](https://github.com/kunchenguid/firstmate/actions/runs/30725985757), that remainder accumulated 19m04s of script time against a 20-minute job timeout.
 On [PR 1495](https://github.com/kunchenguid/firstmate/pull/1495), its main step ran about 19m51s before the job was cancelled at that boundary.
-`portable-serial-<k>of<n>` splits it across `n` separate hosted fallback runners.
-Each shard is still strictly serial in itself, and separate fallback runners mean no two of these stateful scripts ever share a machine, so the split needs no concurrency isolation proof.
+`portable-serial-<k>of<n>` splits it across `n` separate CI runners.
+Each shard is still strictly serial in itself, and separate runners mean no two of these stateful scripts ever share a machine, so the split needs no concurrency isolation proof.
 
 `bin/fm-test-run.sh` owns `n` and refuses any lane whose `of<n>` disagrees with it.
-`.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the fallback suite unrun.
+`.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
 
 Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
 [Verification inputs](#verification-inputs) owns the measurement provenance and exceptions.
@@ -72,9 +72,9 @@ The estimates use per-file maxima from different runs, not measured rebalanced j
 The baseline watch-triage samples range from 944375 to 1074843 ms, while each observed completed portable job adds at most 30 seconds beyond its summed scripts in these runs.
 Even so, maxima from five runs do not establish a P95 or guarantee future headroom.
 Job timeouts remain hang tripwires under the policy in [Timeouts](#timeouts) below; they are not the desired healthy duration.
-`tests/fm-ci-workflow.test.sh` compares the parsed hosted-fallback matrix to the executable runner lanes, and the runner rejects parallel `--jobs` on a serial lane even when that shard has only one member.
+`tests/fm-ci-workflow.test.sh` compares the parsed CI matrix to the executable runner lanes, and the runner rejects parallel `--jobs` on a serial lane even when that shard has only one member.
 
-Refresh the hosted-run hints by downloading the per-shard timing artifacts from several green manual fallback runs and replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the slowest measured `duration_ms` per `path`:
+Refresh the CI-derived hints by downloading the per-shard timing artifacts from several green CI runs and replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the slowest measured `duration_ms` per `path`:
 
 ```sh
 for run in <run-id> <run-id> <run-id>; do
@@ -115,7 +115,7 @@ The longer-term performance objective remains a complete green run under fifteen
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
 The layout uses fourteen long-lived Linux jobs (nine serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
-The workflow is manually dispatched only, so routine pull-request and main pushes consume no hosted runners and each deliberate diagnostic keeps its own run.
+The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
 
 ## Local entry points
 
@@ -124,7 +124,7 @@ The workflow is manually dispatched only, so routine pull-request and main pushe
 
 ## Timeouts
 
-Manual hosted-fallback job timeouts follow one three-tier policy, so the workflow reads as a policy rather than as a collection of per-job numbers.
+CI job timeouts follow one three-tier policy, so the workflow reads as a policy rather than as a collection of per-job numbers.
 Every tier is a hang tripwire with headroom above the healthy duration, never a packing estimate or a runtime target.
 A lane that reaches its tier bound needs investigation and a distribution or runtime fix, not a larger timeout to fit the same work.
 

@@ -1075,9 +1075,10 @@ EOF
 # cadence each registered mate's recorded endpoint is probed once; only a
 # recovery-grade `dead` or `missing` verdict relaunches, every relaunch
 # (success or failure) becomes exactly one durable `check` wake row, and every
-# other verdict lands only in the triage log. The tick finishes every mate
-# before it wakes once on the first outcome, so one dead mate never delays
-# another's recovery; the drain surfaces every queued row. A mate that keeps
+# other verdict lands only in the triage log. The tick finishes every mate's
+# bounded recovery before it wakes once on the first outcome, so one dead mate
+# never delays another's recovery; the drain surfaces every queued row.
+# A mate that keeps
 # dying is parked after SECONDMATE_LIVENESS_MAX_ATTEMPTS ledgered attempts
 # inside SECONDMATE_LIVENESS_WINDOW_SECS: the bound marker wakes once, further
 # probes stay silent, and a later live probe ledgers a `rearmed` row and clears
@@ -2559,33 +2560,12 @@ done
 if [ -n "$EVICTED_PID" ]; then
   echo "watcher: replaced stalled pid $EVICTED_PID (beacon ${EVICTED_BEAT_AGE}s past hard bound ${WATCHER_STALL_BOUND}s)"
 fi
-
-# The claim now exists on disk, but watcher_cleanup and the locks it releases
-# are defined hundreds of lines below, so until then a signal would leave the
-# claim behind with nothing registered to drop it: default SIGTERM kills this
-# shell outright and no EXIT trap runs. A bounded foreground checkpoint
-# (bin/fm-watch-checkpoint.sh) terminates the watcher on a fixed budget, so on
-# a slow host that budget can land inside this window and strand the lock,
-# which then reads to the next session as a live watcher that is not there.
-# Register the narrowest possible release right here; the full cleanup below
-# replaces both traps once its dependencies exist. WATCHER_PID is read directly
-# from this shell rather than through a command substitution so it matches the
-# holder pid fm_lock_claim stored, which is also why the later assignment can
-# be this same value.
-WATCHER_PID=${BASHPID:-$$}
-# shellcheck disable=SC2329 # Registered by the traps immediately below.
-watcher_early_release() {
-  [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "$WATCHER_PID" ] || return 0
-  fm_lock_release "$WATCH_LOCK" || true
-}
-trap watcher_early_release EXIT
-trap 'exit 1' HUP INT TERM
-
 WATCHER_RECOVERY_PENDING=0
 if [ -n "${FM_LOCK_RECOVERED_PID:-}" ]; then
   WATCHER_RECOVERY_PENDING=1
 fi
-if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ]; then
+if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ] \
+  && [ "${FM_WATCH_FOREGROUND_CHECKPOINT:-0}" != 1 ]; then
   if ! fm_recovery_marker_reopen_announced "$WATCHER_DOWNTIME_MARKER"; then
     echo "watcher: recovery state could not be reopened safely; retaining stale lock evidence" >&2
     exit 1
@@ -2693,10 +2673,6 @@ watcher_cleanup() {
   fi
   return "$cleanup_status"
 }
-# Replaces the narrow early release registered right after the lock was claimed,
-# now that everything this cleanup releases exists. WATCHER_PID was set there,
-# from this same main shell, for the same reason: it must equal the holder pid
-# fm_lock_claim stored, or the self-eviction check below will not match.
 trap watcher_cleanup EXIT
 watcher_stop_signals
 # This watcher's own pid, as recorded in the lock by fm_lock_claim (which writes

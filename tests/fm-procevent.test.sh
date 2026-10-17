@@ -1895,21 +1895,11 @@ pe_register "$HR" lavish race-src -- "$RACE_BLOCKER" "$RACE_LOG" "$RACE_TRIGGER"
 printf '%s\n%s\nold-token\nold-identity\n' "$TMP_ROOT/gone-home" 999999 > "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim"
 chmod 0600 "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim"
 race_pids=()
-RACE_OUT="$TMP_ROOT/race-contender-out"
-mkdir -p "$RACE_OUT"
-for n in $(seq 1 24); do
-  pe "$HR" start race-src > "$RACE_OUT/$n" 2>&1 &
+for _ in $(seq 1 24); do
+  pe "$HR" start race-src >/dev/null &
   race_pids+=("$!")
 done
-# 24 contenders on a shared CI runner can take well past 10s to settle, so the
-# bound is 30s, and a miss records what the contenders saw so a real livelock
-# can be told apart from a slow runner.
-if ! wait_for "$RACE_LOG" 300; then
-  race_diag="claim: $(tr '\n' ' ' < "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim" 2>/dev/null || printf 'absent')"
-  race_diag="$race_diag; contenders: $(cat "$RACE_OUT"/* 2>/dev/null | sort | uniq -c | tr '\n' ' ' | cut -c1-600)"
-  : > "$RACE_TRIGGER"
-  fail "no contender acquired the stale claim ($race_diag)"
-fi
+wait_for "$RACE_LOG" 300 || fail "no contender acquired the stale claim"
 sleep 0.5
 [ "$(wc -l < "$RACE_LOG" | tr -d ' ')" = 1 ] || fail "stale-claim race started more than one runner"
 : > "$RACE_TRIGGER"
@@ -3154,6 +3144,34 @@ assert_contains "$out" "CAPTAIN MESSAGE" "an open-session message was mislabeled
 assert_not_contains "$out" "SESSION-ENDING MESSAGE" "an open-session message was labeled as session-ending"
 assert_contains "$out" "| captain is still reviewing" "an open-session message was dropped"
 pass "read distinguishes a live captain message from a session-ending message"
+# Composer sends arrive as several tag=message rows beside real annotations.
+# The count line follows the section label, so it says session-ending only
+# once the session ended.
+for ended in no yes; do
+  {
+    printf 'session:\n  file: /review.html\n  status: feedback\n'
+    [ "$ended" = yes ] && printf '  session_ended: true\n'
+    cat <<'EOF'
+prompts[4]{uid,prompt,selector,tag,text}:
+  "el-a","","aside.sidebar",note,"Sidebar note"
+  "","first comment","",message,"Freeform message"
+  "","second comment","",message,"Freeform message"
+  "","third comment","",message,"Freeform message"
+EOF
+  } > "$READ"
+  out=$(read_out) || fail "read failed on several messages with an annotation (ended=$ended)"
+  if [ "$ended" = yes ]; then
+    label="SESSION-ENDING MESSAGE" count=session_ending_message_count other=captain_message_count
+  else
+    label="CAPTAIN MESSAGE" count=captain_message_count other=session_ending_message_count
+  fi
+  assert_contains "$out" "$label PART 3 of 3" "a message part was dropped or mislabeled (ended=$ended)"
+  assert_contains "$out" "| third comment" "a message body was dropped (ended=$ended)"
+  assert_contains "$out" "$count: 3" "the message count did not follow the section label (ended=$ended)"
+  assert_not_contains "$out" "$other" "the message count used the other label (ended=$ended)"
+  assert_contains "$out" "annotation_count: 1" "a real annotation was miscounted beside messages (ended=$ended)"
+done
+pass "read names the message count with the same label as the message section"
 out=$ending_out
 assert_contains "$out" '|   "question": "sample-forged-call",' \
   "commas in an unquoted freeform message shifted its fields"

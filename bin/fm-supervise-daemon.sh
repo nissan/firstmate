@@ -1600,48 +1600,19 @@ handle_wake() {  # <reason> <state>
               else
                 decision=$(classify_stale "$arg" "$state" "$span_record" "$span_rc")
               fi
-              # THE SPEND-WITHOUT-ARTIFACT GUARD OUTRANKS EVERY STATUS-LOG
-              # ABSORPTION, so it is routed FIRST, before any of the precedence
-              # below can see it. That guard's signal is SPEND, and no status
-              # line is evidence about spend: `working:`, `paused:` and `held:`
-              # are all the crew's own prose, written once and true or not ever
-              # after. Left to the lines below, a burning crew whose last line
-              # was a nonterminal `working:` classified as `self|transient
-              # stale`, housekeeping's recheck found the pane busy (a climbing
-              # token counter is busy), dropped the marker and acked the wake;
-              # one whose last line was a three-hour-old `paused:` was absorbed
-              # outright by the `pause` arm. Either way the guard was silent in
-              # away mode, which is the exact posture the 18-hour burn it exists
-              # to catch ran in. Neither the declared wait nor the captain hold
-              # survives as an exception here: the hold read at this point is
-              # the same unverified status line (the verified form pairs it with
-              # fm_afk_contract_present, as the afk path below does), and the
-              # attended watcher path escalates this pane whatever its status
-              # says, so absorbing it here would only be the two triage paths
-              # disagreeing about one signal. Repeats stay bounded because the
-              # guard itself paces re-escalation by further spend, and the
-              # declaration's own pause tracking is reconciled below either way.
-              #
               # An enriched wedge reason carries the watcher's own escalation count
               # and its "do not re-absorb on the run-step/pane state alone" demand,
               # so it outranks this daemon's cheaper status-log absorption - EXCEPT
               # under a current declared wait. A `pause` verdict is not run-step or
               # pane state at all: it is the crew's own declaration that this pane
               # waits by design, which is the one question the wedge timer cannot
-              # answer for itself, and unlike spend it is the very question the
-              # wedge asks. Overriding it escalated healthy declared waits once
-              # per STALE_ESCALATE_SECS for as long as the wait lasted.
+              # answer for itself. Overriding it escalated healthy declared waits
+              # once per STALE_ESCALATE_SECS for as long as the wait lasted.
               # Housekeeping (2b) then owns the re-surface, so the wait is still
               # bounded - by one recheck per PAUSE_RESURFACE_SECS instead.
-              #
-              # Neither override may DISCARD an escalate the classification
-              # already reached. When the unseen span held an actionable record,
-              # that decision carries the record's own text, and the escalate
-              # branch below then marks the record reported. Replacing the text
-              # there advanced the seen offset past a `blocked:` line nobody ever
-              # read, and nothing re-surfaces it afterwards - so the two reasons
-              # ride out together and the offset only advances over text that
-              # actually reached the buffer.
+              # Preserve any actionable status escalation already found in the
+              # unread span; an override adds its own reason instead of replacing
+              # the text that must reach the supervisor.
               case "$stale_detail" in
                 "$FM_NOPROGRESS_REASON_PREFIX"*) stale_override=1 ;;
                 idle\ *s,\ possible\ wedge,\ escalation\ *)

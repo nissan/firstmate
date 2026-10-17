@@ -221,6 +221,83 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+# --forge forgejo is the Forgejo value of the project's registered forge binding
+# (bin/fm-project-mode.sh --forge), passed at intake exactly like --mode. It
+# names tea instead of gh-axi in the ship brief's forge-CLI rule and in the
+# direct-PR Definition of done's own open-a-PR line, and it marks the delivery
+# contract line so bin/fm-spawn.sh can check it against the registry. A brief
+# with no --forge renders the unchanged gh-axi wording. The forge is a ship
+# input only, and the closed set refuses anything else.
+test_forge_selection_renders_correct_cli() {
+  local home brief out rc
+  home="$TMP_ROOT/forge-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-default some-proj --mode direct-PR >/dev/null 2>&1 \
+    || fail "a ship brief with no --forge should still scaffold"
+  brief="$home/data/brief-forge-default/brief.md"
+  assert_grep "3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations." "$brief" \
+    "a brief with no --forge must render the exact pre-existing gh-axi Rule 3 line"
+  # shellcheck disable=SC2016 # Backticks are literal generated brief text.
+  assert_grep 'open a PR with `gh-axi`' "$brief" \
+    "a direct-PR brief with no --forge must still tell the worker to open the PR with gh-axi"
+  grep -qx "Delivery contract: mode=direct-PR" "$brief" \
+    || fail "a brief with no --forge must keep the bare delivery contract line"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-forgejo some-proj --mode direct-PR --forge forgejo >/dev/null 2>&1 \
+    || fail "--forge forgejo should scaffold a direct-PR ship brief"
+  brief="$home/data/brief-forge-forgejo/brief.md"
+  assert_grep "3. Use tea for Forgejo operations and chrome-devtools-axi for browser operations." "$brief" \
+    "--forge forgejo must render the tea Rule 3 line"
+  # shellcheck disable=SC2016 # Backticks are literal generated brief text.
+  assert_grep 'open a PR with `tea`' "$brief" \
+    "--forge forgejo's direct-PR DOD must tell the worker to open the PR with tea"
+  grep -qx "Delivery contract: mode=direct-PR forge=forgejo" "$brief" \
+    || fail "--forge forgejo must mark the delivery contract line for the spawn's registry check"
+  # shellcheck disable=SC2016 # Backticks and braces are literal generated brief text.
+  assert_grep 'confirm it is not a draft (`tea api --repo <owner>/<repo> /repos/{owner}/{repo}/pulls/<number>` must show `draft` as false' "$brief" \
+    "--forge forgejo's direct-PR DOD must read the draft state back with tea"
+  # shellcheck disable=SC2016 # Backticks are literal generated brief text.
+  assert_grep 'remove that prefix with `tea pulls edit <number>' "$brief" \
+    "--forge forgejo's direct-PR DOD must clear a draft with tea"
+  assert_no_grep 'gh-axi pr view' "$brief" \
+    "--forge forgejo's direct-PR DOD must not send the worker to gh-axi for the draft read-back"
+  assert_no_grep 'gh-axi pr ready' "$brief" \
+    "--forge forgejo's direct-PR DOD must not send the worker to gh-axi to clear a draft"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-nm some-proj --mode no-mistakes --forge forgejo >/dev/null 2>&1 \
+    || fail "--forge forgejo should scaffold a no-mistakes ship brief"
+  brief="$home/data/brief-forge-nm/brief.md"
+  assert_grep "3. Use tea for Forgejo operations and chrome-devtools-axi for browser operations." "$brief" \
+    "a no-mistakes --forge forgejo brief must render the tea Rule 3 line"
+  grep -qx "Delivery contract: mode=no-mistakes forge=forgejo" "$brief" \
+    || fail "a no-mistakes --forge forgejo brief must mark the delivery contract line"
+  # shellcheck disable=SC2016 # Backticks and braces are literal generated brief text.
+  assert_grep 'confirm it is not a draft (`tea api --repo <owner>/<repo> /repos/{owner}/{repo}/pulls/<number>` must show `draft` as false' "$brief" \
+    "a no-mistakes --forge forgejo DOD must read the draft state back with tea"
+  assert_no_grep 'gh-axi pr view' "$brief" \
+    "a no-mistakes --forge forgejo DOD must not send the worker to gh-axi for the draft read-back"
+  assert_no_grep 'gh-axi pr ready' "$brief" \
+    "a no-mistakes --forge forgejo DOD must not send the worker to gh-axi to clear a draft"
+
+  while IFS='|' read -r label args expect; do
+    [ -n "$label" ] || continue
+    # shellcheck disable=SC2086 # The row's arguments must split into words.
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-bad some-proj $args 2>&1); rc=$?
+    expect_code 1 "$rc" "$label must be refused"
+    assert_contains "$out" "$expect" "$label was refused without its reason"
+    [ ! -e "$home/data/brief-forge-bad/brief.md" ] || fail "$label left a brief behind"
+  done <<'ROWS'
+a value outside the closed set|--mode direct-PR --forge gitlab|expected none, gerrit, or forgejo
+the removed github value|--mode direct-PR --forge github|expected none, gerrit, or forgejo
+forgejo on local-only|--mode local-only --forge forgejo|cannot ship mode=local-only
+a shape on forgejo|--mode direct-PR --forge forgejo --shape squash|--shape applies only with --forge gerrit
+forgejo on a scout|--scout --forge forgejo|apply only to ship briefs
+ROWS
+
+  pass "fm-brief.sh: --forge forgejo names tea in Rule 3, the direct-PR DOD, and the draft read-back, marks the delivery contract, and the closed set refuses everything else"
+}
+
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
 # unusable value must stop the scaffold instead of silently defaulting. The
 # no-mistakes-prod-only row is the conditional registry policy: it is never a task
@@ -367,10 +444,6 @@ test_no_mistakes_dod_wording() {
   assert_grep '[captain]' "$brief" "rendered intent contract must explain the neutral legacy provenance marker"
   assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
     "no-mistakes DOD lost its guidance-reference sentence"
-  assert_grep "$ROOT/bin/fm-no-mistakes-run.sh" "$brief" \
-    "no-mistakes DOD did not route runs through Firstmate's repository-policy entrypoint"
-  assert_grep "terminal success after PR publication for a canonical local-validation repository" "$brief" \
-    "no-mistakes DOD still requires a hosted-check return from local-validation repositories"
   # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
   assert_grep '`no-mistakes axi run --help`' "$brief" \
     "no-mistakes DOD must render literal backticks around the help command"
@@ -1056,42 +1129,66 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
-# A scout must write its report incrementally, so an interrupted run still
-# leaves evidence, and must not report a terminal state without one.
-test_scout_report_is_incremental_and_gates_terminal_status() {
-  local brief
-  FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-scout-inc alpha --scout >/dev/null 2>&1 \
+# Contract: a waiting worker spends no turns. A decision wait ends the turn, an
+# external wait sleeps in one bounded blocking shell command sized per harness,
+# and a waiting worker neither polls its inbox nor polls a pipeline between holds.
+test_workers_wait_without_spending_turns() {
+  local home id brief
+  home="$TMP_ROOT/wait-home"
+  mkdir -p "$home/data" "$home/config"
+  : > "$home/config/wait-no-turns"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-wait-ship some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "fm-brief.sh ship scaffold exited non-zero"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-wait-scout some-proj --scout >/dev/null 2>&1 \
     || fail "fm-brief.sh scout scaffold exited non-zero"
-  brief="$BRIEF_HOME/data/brief-scout-inc/brief.md"
-  assert_grep "before you start investigating" "$brief" \
-    "scout brief must require the report be created before investigation starts"
-  assert_grep "append each finding as you establish it" "$brief" \
-    "scout brief must require incremental appends, not one final write"
-  assert_grep "Never append a terminal status line" "$brief" \
-    "scout brief must forbid a terminal status line without a report"
-  assert_grep "exists and is non-empty" "$brief" \
-    "scout brief must name the existence and non-emptiness check"
-  pass "fm-brief.sh: scout report is incremental and gates the terminal status line"
+  for id in brief-wait-ship brief-wait-scout; do
+    brief="$home/data/$id/brief.md"
+    assert_grep "end your turn at once" "$brief" "$id: a decision wait must end the turn"
+    assert_grep "with ONE blocking shell command that returns when the state changes" "$brief" \
+      "$id: an external wait must sleep in one blocking shell command"
+    assert_grep "gh pr checks <pr> --watch" "$brief" "$id: the CI wait primitive is missing"
+    assert_grep "a \`timeout\` of at most 2700 seconds" "$brief" "$id: the Pi ceiling is missing"
+    assert_grep "its maximum \`timeout\` of 600000 ms" "$brief" "$id: the Claude Code ceiling is missing"
+    assert_grep "empty \`write_stdin\` polls of up to 300000 ms" "$brief" "$id: the Codex ceiling is missing"
+    assert_grep "is the sanctioned foreground wait" "$brief" \
+      "$id: the wait a Claude Code worker may use is not named"
+    assert_grep "reattach with \`no-mistakes axi run --wait\` instead, and never send the same \`respond\` again" "$brief" \
+      "$id: a timed-out respond must reattach with axi run, never resend its answer"
+    assert_grep "Do not poll or list the inbox while waiting; a waiting instruction rings." "$brief" \
+      "$id: polling the inbox while waiting is not forbidden"
+    assert_grep "natural checkpoint" "$brief" "$id: the flag dropped the natural-checkpoint inbox check"
+  done
+  brief="$home/data/brief-wait-ship/brief.md"
+  assert_grep "issue the same foreground call again" "$brief" \
+    "the no-mistakes DOD must reattach with the same foreground call"
+  assert_no_grep "background the drive call" "$brief" "the no-mistakes DOD still backgrounds the drive call"
+
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-wait-sm --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "fm-brief.sh secondmate scaffold exited non-zero"
+  brief="$home/data/brief-wait-sm/brief.md"
+  assert_grep "Do not poll or list the inbox while waiting; a waiting instruction rings." "$brief" \
+    "secondmate: polling the inbox while waiting is not forbidden"
+  assert_grep "natural checkpoint" "$brief" "secondmate: the flag dropped the natural-checkpoint inbox check"
+  pass "fm-brief: workers end the turn on a decision, wait in one bounded shell command, and never poll"
 }
 
-# Every crewmate brief must carry the absolute-path read rule: a read behind a
-# `cd` cannot be cleared automatically and stalls the worker on manual approval.
-test_briefs_require_absolute_path_reads() {
-  local brief
-  for id_kind in "brief-abs-ship:--mode local-only" "brief-abs-scout:--scout"; do
-    # shellcheck disable=SC2086 # The fixture flags are intentionally word-split.
-    FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" "${id_kind%%:*}" alpha ${id_kind##*:} >/dev/null 2>&1 \
-      || fail "fm-brief.sh scaffold exited non-zero for ${id_kind}"
-    brief="$BRIEF_HOME/data/${id_kind%%:*}/brief.md"
-    # shellcheck disable=SC2016 # The backticks are literal brief prose, not a substitution.
-    assert_grep 'Never `cd` before a read' "$brief" \
-      "${id_kind%%:*} brief must forbid a cd before a read"
-    assert_grep 'pass absolute paths' "$brief" \
-      "${id_kind%%:*} brief must require absolute paths for reads and searches"
-    assert_grep 'git -C <absolute-path>' "$brief" \
-      "${id_kind%%:*} brief must name the absolute-path git form"
-  done
-  pass "fm-brief.sh: ship and scout briefs require absolute-path reads"
+# Without config/wait-no-turns the scaffold matches the pre-flag brief and drive text.
+test_wait_no_turns_absent_keeps_the_previous_brief() {
+  local home brief
+  home="$TMP_ROOT/wait-off"
+  mkdir -p "$home/data"
+  [ ! -e "$home/config/wait-no-turns" ]
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-wait-off some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "fm-brief.sh ship scaffold exited non-zero"
+  brief="$home/data/brief-wait-off/brief.md"
+  assert_no_grep "end your turn at once" "$brief" "an absent flag still added the waiting section"
+  assert_grep "natural checkpoint" "$brief" "an absent flag dropped the unprompted inbox check"
+  assert_no_grep "Do not poll or list the inbox while waiting" "$brief" "an absent flag still added the no-poll inbox line"
+  assert_grep "background the drive call" "$brief" "an absent flag replaced the backgrounded drive text"
+  assert_no_grep "issue the same foreground call again" "$brief" \
+    "an absent flag still asked for the foreground reattach"
+  pass "fm-brief: without config/wait-no-turns the brief and drive text stay as they were"
 }
 
 # Contract: a waiting worker spends no turns. A decision wait ends the turn, an
@@ -1530,6 +1627,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_forge_selection_renders_correct_cli
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply

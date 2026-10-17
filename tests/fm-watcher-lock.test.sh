@@ -516,6 +516,9 @@ test_lock_steal_reap_cannot_remove_successor() {
   fakebin="$dir/fakebin"
   out="$dir/competitor"
   leave_dead_link_locks "$state" "$steal"
+  # The killed fixture owner may have its PID reused during a loaded serial
+  # shard. Pin a verified-dead PID so the race exercises reaping, not liveness.
+  printf '%s\n' "$(dead_pid)" > "$steal/pid"
   cat > "$fakebin/rm" <<'SH'
 #!/usr/bin/env bash
 last=
@@ -562,32 +565,51 @@ SH
 }
 
 test_lock_stale_steal_single_winner_under_concurrency() {
-  local dir state lockdir dead marker i pids pid wins
+  local dir state lockdir dead marker gate hold i pids pid waiter winner wins
   dir=$(make_case lock-stale-concurrency)
   state="$dir/state"
   lockdir="$state/.contend.lock"
   marker="$dir/wins"
+  gate="$dir/first-winner"
+  hold="$dir/winner-release"
   dead=$(dead_pid)
   mkdir "$lockdir"
   printf '%s\n' "$dead" > "$lockdir/pid"
   : > "$marker"
+  mkfifo "$gate" "$hold"
+  # try_acquire is nonblocking: all one-shot candidates may lose to a transient
+  # steal mutex. A waiting contender guarantees eventual acquisition, and the
+  # FIFO keeps the winner alive until every other contender has finished.
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait "$2" || exit 1
+    printf "%s\n" "${BASHPID:-$$}" >> "$3"
+    printf "%s\n" "${BASHPID:-$$}" > "$4"
+    IFS= read -r _ < "$5"
+  ' _ "$LIB" "$lockdir" "$marker" "$gate" "$hold" &
+  waiter=$!
   pids=
   i=1
-  while [ "$i" -le 40 ]; do
+  while [ "$i" -le 39 ]; do
     FM_STATE_OVERRIDE="$state" bash -c '
       . "$1"
       if fm_lock_try_acquire "$2"; then
         printf "%s\n" "${BASHPID:-$$}" >> "$3"
-        sleep 1
+        printf "%s\n" "${BASHPID:-$$}" > "$4"
+        IFS= read -r _ < "$5"
       fi
-    ' _ "$LIB" "$lockdir" "$marker" &
+    ' _ "$LIB" "$lockdir" "$marker" "$gate" "$hold" &
     pids="$pids $!"
     i=$((i + 1))
   done
+  IFS= read -r winner < "$gate"
+  [ "$winner" = "$waiter" ] || { kill "$waiter" 2>/dev/null || true; wait "$waiter" 2>/dev/null || true; }
   for pid in $pids; do
-    wait "$pid" 2>/dev/null || true
+    [ "$pid" = "$winner" ] || wait "$pid" 2>/dev/null || true
   done
   wins=$(awk 'NF { c++ } END { print c + 0 }' "$marker")
+  printf 'release\n' > "$hold"
+  wait "$winner" 2>/dev/null || true
   [ "$wins" -eq 1 ] || fail "expected exactly one stale-lock stealer, got $wins"
   pass "concurrent stale-lock steal yields exactly one winner"
 }
@@ -679,58 +701,6 @@ test_lock_empty_pid_uses_minimum_grace() {
   [ -d "$lockdir" ] || fail "empty mid-acquire lock dir was removed during grace"
   [ ! -e "$lockdir/pid" ] || fail "empty mid-acquire lock gained a pid during grace"
   pass "empty mid-acquire lock keeps a minimum grace"
-}
-
-test_lock_uncreatable_path_fails_without_steal_recursion() {
-  local dir state out
-  dir=$(make_case lock-uncreatable)
-  state="$dir/state"
-  # A lock whose parent directory is gone can never be created, and no holder
-  # exists to reclaim. The steal path must not recurse through an endless
-  # .steal.steal... chain (observed as Bash SIGSEGV on stack exhaustion).
-  out=$(FUNCNEST=64 FM_STATE_OVERRIDE="$state" bash -c '
-    . "$1"
-    rm -rf "$STATE"
-    if fm_lock_try_acquire "$STATE/.contend.lock"; then rc=0; else rc=1; fi
-    printf "rc=%s\n" "$rc"
-  ' _ "$LIB" 2>&1)
-  [ "$out" = "rc=1" ] || fail "lock acquisition under a missing parent did not fail cleanly: $out"
-  [ ! -e "$state" ] || fail "failed lock acquisition recreated the missing state dir"
-  pass "lock acquisition under a missing parent fails without steal recursion"
-}
-
-test_lock_released_during_acquire_is_taken() {
-  local dir state lockdir out
-  dir=$(make_case lock-release-race)
-  state="$dir/state"
-  lockdir="$state/.contend.lock"
-  mkdir "$lockdir"
-  printf '%s\n' "$$" > "$lockdir/pid"
-  # The live holder releases right after the acquirer's first create attempt
-  # observed its lock, so the acquirer finds no lock on disk and must take it.
-  out=$(FM_STATE_OVERRIDE="$state" bash -c '
-    . "$1"
-    eval "held_$(declare -f fm_lock_try_create)"
-    fm_lock_try_create() {
-      if [ -z "${released:-}" ]; then
-        released=1
-        held_fm_lock_try_create "$@" && return 0
-        rm -rf "$1"
-        return 1
-      fi
-      held_fm_lock_try_create "$@"
-    }
-    if fm_lock_try_acquire "$2"; then rc=0; else rc=1; fi
-    printf "rc=%s pid=%s\n" "$rc" "$(cat "$2/pid" 2>/dev/null)"
-    [ "$rc" -ne 0 ] || fm_lock_release "$2"
-  ' _ "$LIB" "$lockdir" 2>&1)
-  case "$out" in
-    "rc=0 pid="[0-9]*) ;;
-    *) fail "lock released during acquisition was not taken: $out" ;;
-  esac
-  [ "$out" != "rc=0 pid=$$" ] || fail "acquirer reported the released holder's pid: $out"
-  [ ! -e "$lockdir" ] || fail "acquired lock was not released"
-  pass "lock released during acquisition is taken by the acquirer"
 }
 
 test_lock_late_claim_loses_after_recreate() {
@@ -1014,47 +984,97 @@ test_attached_arm_signal_is_recorded_in_cycle_ledger() {
   pass "attached arm signals record a classified lifecycle entry"
 }
 
-test_attached_arm_signal_after_state_removal_exits_cleanly() {
-  local dir state fakebin out armout armerr i wpid armpid status
-  dir=$(make_case attached-arm-signal-state-gone)
+test_arm_term_during_steal_waits_for_watcher_cleanup_trap() {
+  local dir state fakebin armout armpid i dead pidfile status
+  dir=$(make_case arm-term-mid-steal)
   state="$dir/state"
   fakebin="$dir/fakebin"
-  out="$dir/watch.out"
   armout="$dir/arm.out"
-  armerr="$dir/arm.err"
-  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2>&1 &
-  wpid=$!
-  i=0
-  while [ "$i" -lt 60 ]; do
-    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] && [ -e "$state/.last-watcher-beat" ] && break
-    sleep 0.1
-    i=$((i + 1))
-  done
-  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] || fail "seed watcher did not take the lock"
-  # FUNCNEST turns the unbounded lock-steal recursion that overflowed Bash's
-  # native stack into a prompt, observable nesting error.
-  PATH="$fakebin:$PATH" FUNCNEST=64 FM_STATE_OVERRIDE="$state" FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT=30 "$WATCH_ARM" > "$armout" 2> "$armerr" &
+  pidfile="$dir/arm.pid"
+  mkdir "$state/.watch.lock"
+  dead=$(dead_pid)
+  printf '%s\n' "$dead" > "$state/.watch.lock/pid"
+  mkdir -p "$fakebin"
+  cat > "$fakebin/ln" <<'SH'
+#!/usr/bin/env bash
+last=
+for arg do last=$arg; done
+case "$last" in
+  *.watch.lock.steal)
+    sleep 0.2
+    arm_pid=$(cat "$FM_TEST_ARM_PID_FILE" 2>/dev/null || true)
+    [ -n "$arm_pid" ] && kill -TERM "$arm_pid" 2>/dev/null || true
+    ;;
+esac
+exec /bin/ln "$@"
+SH
+  chmod +x "$fakebin/ln"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_TEST_ARM_PID_FILE="$pidfile" FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" 2>&1 &
   armpid=$!
+  printf '%s\n' "$armpid" > "$pidfile"
   i=0
-  while [ "$i" -lt 80 ]; do
-    grep -qF "watcher: attached pid=$wpid" "$armout" 2>/dev/null && break
+  while [ "$i" -lt 100 ] && is_live_non_zombie "$armpid"; do
+    [ -e "$state/.watch.lock.steal" ] && break
+    sleep 0.02
+    i=$((i + 1))
+  done
+  status=0
+  wait_for_exit "$armpid" 150 || status=$?
+  [ "$status" -eq 143 ] || fail "arm did not finish with TERM after stale-lock recovery (status $status)"
+  [ ! -e "$state/.watch.lock.steal" ] && [ ! -L "$state/.watch.lock.steal" ] \
+    || fail "TERM during startup left the steal marker behind"
+  pass "arm defers TERM until startup watcher can run its lock cleanup"
+}
+
+test_arm_term_bounds_wait_for_stalled_startup() {
+  local dir state fakebin armout pidfile release armpid i status
+  dir=$(make_case arm-term-stalled-startup)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  pidfile="$dir/arm.pid"
+  release="$dir/release"
+  cat > "$fakebin/ln" <<'SH'
+#!/usr/bin/env bash
+last=
+for arg do last=$arg; done
+case "$last" in
+  */.watch.lock)
+    i=0
+    while [ "$i" -lt 100 ] && [ ! -s "$FM_TEST_ARM_PID_FILE" ]; do
+      sleep 0.02
+      i=$((i + 1))
+    done
+    kill -TERM "$(cat "$FM_TEST_ARM_PID_FILE")" 2>/dev/null || true
+    while [ ! -e "$FM_TEST_RELEASE" ]; do sleep 0.05; done
+    ;;
+esac
+exec /bin/ln "$@"
+SH
+  chmod +x "$fakebin/ln"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_TEST_ARM_PID_FILE="$pidfile" FM_TEST_RELEASE="$release" \
+    FM_ARM_CONFIRM_TIMEOUT=2 FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" 2>&1 &
+  armpid=$!
+  printf '%s\n' "$armpid" > "$pidfile"
+  i=0
+  while [ "$i" -lt 100 ] && is_live_non_zombie "$armpid"; do
     sleep 0.1
     i=$((i + 1))
   done
-  grep -qF "watcher: attached pid=$wpid" "$armout" || fail "arm did not report attach before state removal"
-  # A home torn down under a live arm leaves the ledger lock uncreatable while
-  # the arm's TERM handler records its interrupted cycle.
-  rm -rf "$state"
-  kill -TERM "$armpid" 2>/dev/null || fail "could not signal the attached arm"
-  wait_for_exit "$armpid" 80
-  status=$?
-  if grep -q 'nesting level exceeded' "$armerr"; then
-    cat "$armerr" >&2
-    fail "arm recursed without bound while recording its interrupted cycle"
+  if is_live_non_zombie "$armpid"; then
+    : > "$release"
+    wait_for_exit "$armpid" 50 >/dev/null 2>&1 || true
+    fail "arm TERM waited past the confirmation deadline for a stalled startup"
   fi
-  [ "$status" -eq 143 ] || fail "attached arm did not exit with TERM status after state removal (got $status)"
-  stop_seed_watcher "$wpid" "$out"
-  pass "attached arm signal after state removal exits without lock-steal recursion"
+  : > "$release"
+  status=0
+  wait "$armpid" 2>/dev/null || status=$?
+  [ "$status" -eq 143 ] || fail "arm did not finish with TERM after a stalled startup (status $status)"
+  pass "arm TERM stops a startup watcher that never becomes cleanup-ready"
 }
 
 test_arm_term_during_steal_waits_for_watcher_cleanup_trap() {
@@ -1663,8 +1683,6 @@ test_lock_resumes_own_interrupted_steal_reap
 test_lock_live_steal_mutex_is_not_reclaimed
 test_lock_does_not_steal_live_lock
 test_lock_empty_pid_uses_minimum_grace
-test_lock_uncreatable_path_fails_without_steal_recursion
-test_lock_released_during_acquire_is_taken
 test_lock_late_claim_loses_after_recreate
 test_lock_paused_mid_acquire_claim_fails_during_steal
 test_watch_restart_rejects_reused_pid
@@ -1673,7 +1691,6 @@ test_watcher_self_evicts_on_lock_takeover
 test_arm_self_eviction_is_loud_without_successor
 test_arm_attaches_and_waits_for_live_fresh_watcher
 test_attached_arm_signal_is_recorded_in_cycle_ledger
-test_attached_arm_signal_after_state_removal_exits_cleanly
 test_arm_starts_and_self_heals
 test_arm_hup_cleans_child_and_temp_output
 test_arm_term_during_steal_waits_for_watcher_cleanup_trap

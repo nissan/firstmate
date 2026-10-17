@@ -155,82 +155,86 @@ test_no_profile_keeps_claude_profile_defaults() {
   pass "no --model/--effort records defaults and types the claude launch instructions"
 }
 
-test_claude_review_grants_only_task_outputs_and_records_posture() {
-  local rec id out status launch helper
-  id=claude-review-z1
-  rec=$(make_spawn_case claude-review claude "$id")
+# Claude Code strips U+2063 from the launch-prompt argument, so a claude launch
+# publishes the launch-brief envelope as a record in the receiving home's
+# operational inbox and passes only a printable doorbell naming it. Parsing the
+# staged launch the way the destination pane's shell would proves the argument
+# it passes and the record it names.
+test_claude_launch_brief_publishes_record_doorbell() {
+  local rec id out status launch doorbell record
+  id="brief-doorbell-z1"
+  rec=$(make_spawn_case brief-doorbell claude "$id")
   read_case_record "$rec"
 
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout --harness claude --claude-review)
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "Claude review scout spawn should succeed"
+  expect_code 0 "$status" "claude spawn for the doorbell check should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "$(fm_test_claude_review_permissions "$HOME_DIR/state" "$HOME_DIR/data" "$id")" \
-    "Claude review launch did not grant only its durable outputs and own inbox intake"
-  assert_not_contains "$launch" "dangerously-skip-permissions" \
-    "Claude review launch rendered the ordinary permission bypass"
-  assert_grep 'claude_review=on' "$HOME_DIR/state/$id.meta" \
-    "Claude review posture was not recorded durably"
-  assert_contains "$launch" 'CLAUDE_CODE_SEND_FEEDBACK=0' \
-    "Claude review launch lost the feedback control"
-  assert_contains "$launch" '"attribution":{"commit":"","pr":"","sessionUrl":false}' \
-    "Claude review launch lost the attribution policy"
-
-  helper="$HOME_DIR/state/$id.claude-review-ack.sh"
-  assert_present "$helper" "Claude review spawn did not generate its acknowledgement helper"
-  [ "$(stat -c '%a' "$helper")" = 700 ] || fail "Claude review acknowledgement helper is not mode 0700"
-  assert_contains "$launch" "'Bash($helper)'" \
-    "generated launch did not allow only the exact no-argument acknowledgement helper"
-  assert_not_contains "$launch" 'Bash(mv' "generated launch still carried a direct move grant"
-  pass "--claude-review accepts a scout, grants only its outputs and own inbox, preserves Claude controls, and records the posture"
+  doorbell=$(claude_launch_brief_arg "$launch")
+  case "$doorbell" in
+    *'⁣'*) fail "the doorbell carries the U+2063 marker Claude strips: $doorbell" ;;
+  esac
+  printf '%s' "$doorbell" | LC_ALL=C grep -q '[^[:print:]]' \
+    && fail "the doorbell is not one printable-ASCII line: $doorbell"
+  [ "$(printf '%s' "$doorbell" | "$ROOT/bin/fm-operational-input.sh" doorbell-kind)" = launch-brief ] \
+    || fail "the published record does not hold a launch-brief envelope: $doorbell"
+  record=$(printf '%s' "$doorbell" | sed -n "s/.*: Firstmate operational input waiting: read '\([^']*\)'.*/\1/p")
+  [ -n "$record" ] || fail "the doorbell names no record: $doorbell"
+  [ "$(cd "$(dirname "$record")" && pwd -P)" = "$(cd "$HOME_DIR/state/operational-inbox" && pwd -P)" ] \
+    || fail "the launch record is not in this home's operational inbox: $record"
+  grep -q 'Current worker role contract' "$record" \
+    || fail "the launch record lost the worker brief: $(cat "$record")"
+  [ "$(printf '%s' "$doorbell" | FM_STATE_OVERRIDE="$HOME_DIR/state" "$ROOT/bin/fm-operational-input.sh" open "$record")" \
+    = "$(cat "$HOME_DIR/data/$id/launch-brief.md")" ] \
+    || fail "open did not return the launch brief body"
+  pass "a claude launch publishes the brief as an operational-inbox record and passes only the doorbell"
 }
 
-test_claude_review_refuses_raw_launch_command() {
-  local rec id out status
-  id=claude-review-raw-z1
-  rec=$(make_spawn_case claude-review-raw claude "$id")
+# A secondmate's launch brief belongs to the secondmate home that pane runs in,
+# so its record must publish there rather than into the primary's state.
+test_claude_secondmate_launch_brief_publishes_into_its_own_home() {
+  local rec id sm out status launch doorbell record
+  id="brief-doorbell-secondmate-z2"
+  rec=$(make_spawn_case brief-doorbell-secondmate claude "$id")
   read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout \
-    'claude --dangerously-skip-permissions' --claude-review 2>&1)
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+
+  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$CASE_DIR/claude-work" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
   status=$?
-  expect_code 1 "$status" "a raw Claude launch command must not record a review posture it never applies"
-  assert_contains "$out" "canonical --harness claude launch" "raw review refusal was not actionable"
-  assert_absent "$HOME_DIR/state/$id.meta" "raw review refusal published metadata"
-  [ ! -s "$LAUNCH_LOG" ] || fail "raw review refusal launched an agent"
-  pass "--claude-review refuses a raw launch command before provisioning"
+  expect_code 0 "$status" "secondmate claude spawn for the doorbell check should succeed"$'\n'"$out"
+  launch=$(cat "$LAUNCH_LOG")
+  doorbell=$(claude_launch_brief_arg "$launch")
+  [ "$(printf '%s' "$doorbell" | "$ROOT/bin/fm-operational-input.sh" doorbell-kind)" = launch-brief ] \
+    || fail "the secondmate record does not hold a launch-brief envelope: $doorbell"
+  record=$(printf '%s' "$doorbell" | sed -n "s/.*: Firstmate operational input waiting: read '\([^']*\)'.*/\1/p")
+  [ -n "$record" ] || fail "the secondmate doorbell names no record: $doorbell"
+  [ "$(cd "$(dirname "$record")" && pwd -P)" = "$(cd "$sm/state/operational-inbox" && pwd -P)" ] \
+    || fail "the secondmate launch record did not publish into its own home: $record"
+  [ -z "$(find "$HOME_DIR/state/operational-inbox" -name '*.msg' -print -quit 2>/dev/null)" ] \
+    || fail "the secondmate launch record leaked into the primary's operational inbox"
+  pass "a secondmate claude launch publishes its brief record into the secondmate's own home"
 }
 
-test_claude_review_rejects_unsupported_and_persistent_harnesses() {
+# A claude worker given a typed envelope would see it with the marker stripped,
+# so a launch-brief record that cannot be published stops the spawn before any
+# launch is sent.
+test_claude_spawn_refuses_when_the_brief_record_cannot_publish() {
   local rec id out status
-  id=claude-review-codex-z1
-  rec=$(make_spawn_case claude-review-codex codex "$id")
+  id="brief-doorbell-refused-z3"
+  rec=$(make_spawn_case brief-doorbell-refused claude "$id")
   read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout --harness codex --claude-review 2>&1)
-  status=$?
-  expect_code 1 "$status" "Claude review mode on Codex must be refused"
-  assert_contains "$out" "apply only to the claude harness" "unsupported review harness refusal was unclear"
-  assert_absent "$HOME_DIR/state/$id.meta" "unsupported review harness published metadata"
+  mkdir -p "$HOME_DIR/state"
+  : > "$HOME_DIR/state/operational-inbox"
 
-  id=claude-review-secondmate-z1
-  rec=$(make_spawn_case claude-review-secondmate claude "$id")
-  read_case_record "$rec"
-  make_seeded_secondmate_home "$CASE_DIR/secondmate" "$id"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$CASE_DIR/secondmate" --secondmate --harness claude --claude-review 2>&1)
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" 2>&1)
   status=$?
-  expect_code 1 "$status" "Claude review mode on a secondmate must be refused"
-  assert_contains "$out" "scout-only" "persistent secondmate review refusal was unclear"
-  assert_absent "$HOME_DIR/state/$id.meta" "secondmate review refusal published metadata"
-
-  id=claude-review-ship-z1
-  rec=$(make_spawn_case claude-review-ship claude "$id")
-  read_case_record "$rec"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude --claude-review 2>&1)
-  status=$?
-  expect_code 1 "$status" "Claude review mode on a ship must be refused"
-  assert_contains "$out" "scout-only" "ship review refusal was unclear"
-  assert_absent "$HOME_DIR/state/$id.meta" "ship review refusal published metadata"
-  [ ! -s "$LAUNCH_LOG" ] || fail "ship review refusal launched an agent"
-  pass "--claude-review rejects ship, unsupported harness, and persistent secondmate combinations"
+  [ "$status" -ne 0 ] || fail "a claude spawn whose launch-brief record cannot publish succeeded"$'\n'"$out"
+  assert_contains "$out" "could not publish the launch brief for $id" \
+    "the refused spawn did not name the record publication failure"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a launch was sent despite the unpublished brief record: $(cat "$LAUNCH_LOG")"
+  pass "a claude spawn whose launch-brief record cannot publish stops with a clear error and sends no launch"
 }
 
 # Claude Code strips U+2063 from the launch-prompt argument, so a claude launch
@@ -2099,7 +2103,12 @@ claude_settings_json_arg() {  # <launch>
   while [ "$#" -gt 0 ]; do
     if [ "$1" = --settings ]; then
       shift
-      printf '%s' "$1"
+      # Claude Code's --settings takes inline JSON or a file path; a
+      # secondmate launch passes the path form.
+      case "$1" in
+      \{*) printf '%s' "$1" ;;
+      *) cat "$1" ;;
+      esac
       return 0
     fi
     shift

@@ -638,6 +638,64 @@ skip-runner: pi-signed is not installed, so its pin check was not exercised
 
 The guard submits no prompt and spends no tokens, so it runs by default wherever a runner is installed; rerun it after every Claude or Pi upgrade.
 
+## Secondmate busy contract
+
+Verified 2026-09-22 on this host with Claude Code 2.1.278, OpenCode 1.18.31, Pi 0.86.1, and Grok 1.0.40.
+
+A tmux-backed secondmate's active-turn gate reads the parent home's semantic busy record.
+Launches of opencode, pi, pi-signed, and omp arm that record and load the same hook or extension an ordinary worker uses, and those hooks do not touch the parent's turn-ended marker.
+A Claude secondmate arms the same record through busy hooks in the parent home's `state/<id>.claude-settings.json`, passed as Claude Code's `--settings` file, and does not write the mate home's `.claude/settings.local.json`.
+That `--settings` load and the merge of its hook entries with the home's own hooks rest on Claude Code's documentation (<https://code.claude.com/docs/en/cli-reference>, <https://code.claude.com/docs/en/hooks>) and not on a live run recorded in this section: the sample output below predates the `--settings` mechanism.
+A Claude secondmate is the one exception on Stop: its home's tracked Stop guard is the only Stop writer, recording idle when it allows the Stop and busy when it blocks it into a continuation, because Claude runs Stop hooks in parallel.
+Claude Code 2.1.278 was probed live in a scratch project with logging `UserPromptSubmit` and `Stop` hooks.
+A synchronous Stop hook that exits 2 forced a continuation with no `UserPromptSubmit`, which is why the guard itself records busy when it blocks.
+An `asyncRewake` Stop hook that exited 2 six seconds after the turn ended woke a new turn, and `UserPromptSubmit` fired 45ms after that hook exited.
+So a secondmate turn started by the Stop auto-arm reopens busy through the same `UserPromptSubmit` hook as a typed prompt, and the auto-arm needs no busy writer of its own.
+
+```text
+# asyncRewake probe                # synchronous block probe
+ups    1790092380.194370578        ups   1790092417.676751768
+stop   1790092380.968402195        stop  1790092418.684176531
+rewake 1790092386.979819188        block 1790092418.692480013
+ups    1790092387.025050498        stop  1790092419.717886938
+stop   1790092388.953108486
+```
+Codex stays unverified.
+Grok keeps its rendered-tail verdict and gets no parent turn-end hook.
+Cursor's transcript sidecar is written for a secondmate the same way it is for an ordinary worker, and this host has no Cursor agent binary, so that path was not started.
+Kimi stays unarmed, and a secondmate still gets no parent turn-end token.
+
+The portable regression is `tests/fm-busy-adapter-wiring.test.sh`.
+It spawns those harnesses through the real `bin/fm-spawn.sh --secondmate` path on a fake tmux pane, drives the generated hook or extension, and runs the stall gate while the record is busy and again after it goes idle.
+
+The live guard is `tests/fm-secondmate-busy-contract-live-e2e.test.sh`.
+It runs by default wherever tmux is installed.
+`FM_SECONDMATE_BUSY_LIVE=1` forces an absent binary to fail rather than skip.
+The spawn pane is a sleeper, so the launch brief is never delivered to a model.
+Each installed armed harness is then started for real, with no prompt and no keystrokes.
+
+```sh
+bash tests/fm-secondmate-busy-contract-live-e2e.test.sh
+```
+
+```text
+# claude 2.1.278 (Claude Code): real process stayed up; pane tail classify=busy fm-spawn
+ok - claude 2.1.278 (Claude Code): a tmux secondmate spawn arms a busy verdict the active-turn gate can see
+# opencode 1.18.31: real process stayed up; pane tail classify=busy fm-spawn
+ok - opencode 1.18.31: a tmux secondmate spawn arms a busy verdict the active-turn gate can see
+# pi 0.86.1: real process stayed up; pane tail classify=unknown launch-prompt
+ok - pi 0.86.1: a tmux secondmate spawn arms a busy verdict the active-turn gate can see
+# skip: pi-signed is not installed on this machine, so its secondmate busy contract is unverified here
+# skip: omp is not installed on this machine, so its secondmate busy contract is unverified here
+ok - grok grok 1.0.40 (eb1a2256660d) [stable]: secondmate spawn stays unarmed and does not emit a parent turn-end
+# skip: codex is not installed on this machine, so its secondmate busy contract is unverified here
+# checked 4 harness(es); absent: pi-signed omp codex
+ok - secondmate busy contract live guard checked every installed harness
+```
+
+Pi's real parked pane classified `unknown launch-prompt`.
+That is the launch-prompt backstop: the same spawn's record classified `busy fm-spawn` for a non-prompt mid-turn tail, which is what the active-turn gate reads while a turn is in progress.
+
 ## Codex hook trust
 
 Verified 2026-09-16 on codex-cli 0.151.0, macOS arm64, in a fresh linked worktree of this repository.
@@ -1635,32 +1693,28 @@ Polling remained active and is covered as the fallback for capability, connect, 
 
 ### Agent lifecycle control
 
-Herdr is one of the two backends whose recovery-grade agent-state classifier the control plane may trust ([agent-control.md](../agent-control.md)), so its lifecycle gating is measured against the real binary; reverified 2026-09-29 on Herdr 0.8.2, previously measured on Herdr 0.9.0 and 0.8.0, and first measured 2026-08-02 on Herdr 0.7.5.
+Herdr is one of the two backends whose recovery-grade agent-state classifier the control plane may trust ([agent-control.md](../agent-control.md)), so its lifecycle gating is measured against the real binary; reverified 2026-08-08 on Herdr 0.8.0, and first measured 2026-08-02 on Herdr 0.7.5 with identical results:
 
 ```sh
-HERDR_LAB_HELPER=bin/fm-herdr-lab.sh tests/fm-control-herdr-smoke.test.sh
+tests/fm-control-herdr-smoke.test.sh
 ```
 
-Observed output on Herdr 0.8.2 (the two stale-registration lines are recorded under "Stale agent registration" below):
+Observed output, refreshed 2026-09-10 on Herdr 0.9.0 after the stale-registration fix (the two stale-registration lines are recorded under "Stale agent registration" below):
 
 ```text
 ok - real herdr: exit on a pane with no registered agent is idempotent success
-ok - real herdr 0.8.2: a gone session reads recoverable while a live pane and a malformed target do not
+ok - real herdr 0.9.0: a gone session reads recoverable while a live pane and a malformed target do not
 ok - real herdr: a drifted agent-free shell returns to its worktree and reuses the same endpoint
 ok - real herdr: interrupt refuses when herdr's own agent registry reports no agent
 ok - real herdr: interrupt delivers the harness's key and proves the agent survived it
 ok - real herdr: no control verb removed the endpoint or the task's local copy
-ok - real herdr 0.8.2: a registration Herdr keeps after its agent exits reads stale-agent and recovers as dead
+ok - real herdr 0.9.0: a registration Herdr keeps after its agent exits reads stale-agent and recovers as dead
 ok - real herdr: exit on a pane with a stale registration is idempotent success
 ok - real herdr: a stale registration no longer blocks relaunch, and the endpoint and local copy survive
-ok - real herdr: an agent behind an unproven composer fails closed instead of typing an exit command into it
-ok - real herdr: the stopped endpoint is positively gone before relaunch
-ok - real herdr: a gone endpoint relaunch preserves task identity and work, creates one flat replacement, rebinds metadata, and leaves unrelated endpoints untouched
+ok - real herdr: an agent that does not stop fails closed instead of being reported as stopped
 ```
 
-The registry read through `herdr pane report-agent` is the same source `fm_backend_herdr_agent_state` classifies, and since 2026-09-10 that registration counts as an agent only while `pane process-info` shows a harness process behind it, so the guard backs the registration with a real process named like a harness (a symlink to `sleep`) and then stops that process, with no real harness launched.
-The final pair first proves structured absence for the exact stopped pane, then drives `fm-control.sh relaunch` through the real adapter and verifies one fresh flat endpoint, consistent session/workspace/tab/pane metadata, the same task and local copy including uncommitted work, and an unchanged unrelated sentinel endpoint.
-The lab helper's default-session tripwire separately verifies that the shared endpoint namespace is unchanged after teardown.
+The registry read through `herdr pane report-agent` is the same source `fm_backend_herdr_agent_state` classifies, and since 2026-09-10 that registration counts as an agent only while `pane process-info` shows a harness process behind it, so the guard backs the registration with a real process named like a harness (using `fm_agent_standin` from [`tests/lib.sh`](../../tests/lib.sh)) and then stops that process, with no real harness launched.
 That command is the guard that refreshes this record; run it after every Herdr upgrade rather than trusting the version above.
 
 For Pi on Herdr 0.9.0, `herdr agent get` reflects whether the agent process remains live; its registration does not persist merely because the pane and parent shell do.
@@ -1724,8 +1778,7 @@ ok - real herdr: a drifted agent-free shell returns to its worktree and reuses t
 
 `tests/fm-backend-herdr.test.sh` pins the logic portably by driving the two signals apart - the same failed pane read yields `missing` under a stopped server and `unreadable` under a running one - and asserts that the husk classifier still refuses on that identical read.
 `tests/fm-control-herdr-smoke.test.sh` proves the Herdr-only drift recovery against a real binary in an isolated lab session.
-`tests/fm-control-relaunch.test.sh` drives a tmux stub and proves that a drifted ADOPTED endpoint keeps tmux's prior refusal, without sending `cd` or any other input to the pane.
-A recreated endpoint is a different case and is steered on every backend: it is built in the project directory, so it is always sent that one `cd` and held to the same mandatory confirmation ([`agent-control.md`](../agent-control.md#fail-closed-boundaries)).
+`tests/fm-control-relaunch.test.sh` drives a tmux stub and proves that tmux retains its prior refusal without sending `cd` or any other input to the pane.
 The Herdr refusal when a shell accepts the command but does not move is not exercised in this change.
 
 ### Stale agent registration

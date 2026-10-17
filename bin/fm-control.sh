@@ -65,13 +65,7 @@
 #              a tmux `missing` cannot be proven absent from a task record, so
 #              it refuses.
 #              An explicit `default` model or effort clears that
-#              axis for the replacement.
-#              --claude-review opts a Claude scout
-#              replacement into the permission-respecting review posture.
-#              Ships and secondmates are refused before their current worker is
-#              stopped. A Claude review task keeps that posture on an ordinary
-#              same-harness relaunch; switching it to another harness is
-#              refused before the old agent is stopped. With no explicit axis, a secondmate
+#              axis for the replacement. With no explicit axis, a secondmate
 #              re-resolves its durable config/secondmate-harness pin (harness
 #              plus its optional model and effort tokens) exactly as any other
 #              respawn does, while a ship or scout keeps the exact adapter
@@ -793,13 +787,6 @@ TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
 
-# journal_write: replace the journal with one record for <phase>. The caller
-# replays CHECKPOINT_LINES into every phase, so the fields safe_checkpoint
-# proved are the SAME bytes in each record: in particular
-# pre_exit_endpoint_state is the classifier state read once, before the agent
-# was stopped, and it is deliberately not refreshed in the later records - a
-# `complete` record still reporting `missing` is the durable evidence of why
-# the exit half of this transaction had no agent to stop.
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
   shift
@@ -969,6 +956,19 @@ resolve_relaunch_profile() {
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   fi
+  # The launch owner applies this home's worker account pin too, but only after
+  # the old agent has been stopped, so a pin that no longer resolves or is
+  # signed out must refuse here, while nothing has changed yet.
+  local account_model=$TARGET_MODEL
+  [ "$account_model" != default ] || account_model=
+  fm_worker_account_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+    "$account_model" "$TARGET_HARNESS" >/dev/null || return 1
+  # Likewise config/crew-exclude-tools: a malformed file, or a replacement
+  # runtime that cannot hide the listed tools, refuses here, before the old
+  # agent stops. Secondmate agents are not covered.
+  if [ "$KIND" != secondmate ]; then
+    fm_exclude_tools_check "$TARGET_HARNESS" 0 "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" >/dev/null || return 1
+  fi
   PRIOR_CLAUDE_REVIEW=$(fm_meta_get "$META" claude_review)
   case "$PRIOR_CLAUDE_REVIEW" in
     ''|on) ;;
@@ -1036,8 +1036,7 @@ safe_checkpoint() {
   else
     dirty=no
   fi
-  CHECKPOINT_LINES+=("worktree_head=$head" "worktree_dirty=$dirty" \
-    "pre_exit_endpoint_state=$(agent_state)")
+  CHECKPOINT_LINES+=("worktree_head=$head" "worktree_dirty=$dirty")
   if [ "$KIND" = secondmate ]; then
     # A secondmate's own crewmates outlive its relaunch: they run in their own
     # endpoints, and the relaunched secondmate reconciles them from its home's
@@ -1173,20 +1172,6 @@ do_relaunch() {
     [ "$(fm_meta_get "$META" control_relaunch_tx)" != "$RELAUNCH_TX" ] \
       || RELAUNCH_META_PUBLISHED=1
     die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
-  fi
-
-  # The launch owner recreates a structurally missing endpoint rather than
-  # adopting it, and publishes the new one in the same record transaction, so
-  # the endpoint this side verifies against has to be re-read from the record
-  # before the replacement's liveness is judged - otherwise a successful
-  # recovery would be reported as a failure against an endpoint that no longer
-  # exists.
-  if fm_backend_validate_task_endpoint "$META" "$ID"; then
-    [ "$FM_BACKEND_VALIDATED_BACKEND" = "$BACKEND" ] \
-      || die "$ID's replacement was launched but its record now names backend '$FM_BACKEND_VALIDATED_BACKEND' rather than '$BACKEND'; its work is preserved at $WT"
-    T=$FM_BACKEND_VALIDATED_TARGET
-  else
-    die "$ID's replacement was launched but its published endpoint cannot be read back; its work is preserved at $WT"
   fi
 
   state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {

@@ -68,7 +68,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-composer-lib.sh`     | Single fleet-wide owner of composer shapes, capability-aware screen classification, and verdicts |
 | `fm-agent-process-lib.sh` | Backend-neutral harness-process name classifier shared by the tmux and herdr adapters |
 | `backends/tmux.sh`       | Verified tmux session-provider adapter                                               |
-| `backends/herdr.sh`      | Herdr session-provider adapter with its own real-backend hosted-fallback lane      |
+| `backends/herdr.sh`      | Herdr session-provider adapter with its own required CI lane                         |
 | `backends/zellij.sh`     | Experimental zellij session-provider adapter                                         |
 | `backends/orca.sh`       | Experimental Orca backend adapter owning both worktree and terminal                  |
 | `backends/cmux.sh`       | Experimental cmux session-provider adapter                                           |
@@ -100,6 +100,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-afk-return.sh`       | Own deterministic return shutdown, the return brief, catch-up evidence, and the firstmate-actionable blocker gate |
 | `fm-supervisor-target-lib.sh` | Resolve the shared supervisor target and backend for the daemon and launcher       |
 | `fm-supervise-daemon.sh` | Presence-gated away-mode sub-supervisor: self-handle routine wakes, guard injection by the detected primary harness, escalate batched digests, alert on failed delivery |
+| `fm-noprogress-lib.sh`   | Detect rising token spend without commits, reports, status, or local-copy writes |
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |
 | `fm-local-validation-lib.sh` | Single owner of the exact repository allowlist for local-only routine validation |
@@ -115,9 +116,10 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-tasks-axi.sh`        | Run `tasks-axi` against this home's backlog from any working directory               |
 | `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
 | `fm-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |
-| `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor, quota snapshot schema validation, and the provider, lane, and applicable-scope reading rules |
+| `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
+| `fm-runway-lib.sh`       | Refuse fresh task launches only when current quota evidence proves no usable allowance remains |
+| `fm-crew-cap-lib.sh`     | Enforce the optional per-home concurrent-worker cap from verified live endpoint evidence |
 | `fm-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
-| `fm-runway-lib.sh`       | `fm-spawn.sh`'s pre-spawn allowance gate: refuse only an already-exhausted allowance, warn and proceed on anything less certain |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `fm-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |
 | `fm-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |
@@ -145,7 +147,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-contributions.sh`    | Observe owned publications, retain exact-head judgments, measure required actors, and wake on maintainer signals |
 | `fm-pr-check.sh`         | Record validated task `pr=` and `pr_head=` values, then atomically arm a static merge poll; refuses GitHub drafts and persistent secondmate records (see [architecture.md](architecture.md)) |
 | `fm-no-mistakes-attestation.sh` | Verify one local no-mistakes attestation binds completed review, test, document, and lint phases to an exact head |
-| `fm-pr-merge.sh`         | Record PR metadata, require exact-head local evidence for no-mistakes tasks and every nissan/firstmate or nissan/Work PR, merge a task's canonical full GitHub or GitLab URL, refuse a Gerrit change because firstmate never submits one, then refuse an outcome it cannot prove landed or queued |
+| `fm-pr-merge.sh`         | Record PR metadata, require exact-head local evidence for no-mistakes tasks and every nissan/firstmate or nissan/Work PR, merge a task's canonical full GitHub, GitLab, or Forgejo URL, refuse a Gerrit change because firstmate never submits one, then refuse an outcome it cannot prove landed or queued |
 | `fm-pr-state.sh`         | Read-only: print one line per GitHub pull-request blocker it can see, reporting on checks that have reported rather than verdicting merge-readiness |
 | `fm-pr-reviewers.sh`     | Read-only: suggest reviewers from GitHub's own author mapping of recent commits on a pull request's changed files, never requesting one |
 | `fm-merge-outcome-lib.sh` | Publish a confirmed merge's durable, role-routed supervision outcome                 |

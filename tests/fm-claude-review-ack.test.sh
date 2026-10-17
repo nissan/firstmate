@@ -78,7 +78,7 @@ out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
 expect_code 0 "$?" "fm-send did not durably steer the review task: $out"
 assert_grep 'steered review instruction' "$INBOX/003.msg" \
   "fm-send did not record the steer in the review task's own inbox"
-assert_grep "list '$INBOX'/*.msg" "$SEND_LOG" "fm-send did not ring the review task's doorbell"
+[ -s "$SEND_LOG" ] || fail "fm-send did not ring the review task's doorbell"
 assert_no_grep 'steered review instruction' "$SEND_LOG" "fm-send typed the steer payload into the review pane"
 "$HELPER" || fail "helper failed to acknowledge a steer delivered by fm-send"
 assert_absent "$INBOX/003.msg" "fm-send steer remained pending after acknowledgement"

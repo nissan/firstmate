@@ -23,7 +23,6 @@
 #   fm-test-run.sh --list-concurrent-safe-families
 #   fm-test-run.sh --concurrent-safe-family-jobs-max <name>
 #   fm-test-run.sh --list-lanes
-#   fm-test-run.sh --serial-shard-plan
 #   fm-test-run.sh --check-coverage
 #
 # Aggregation (no suite execution):
@@ -172,7 +171,6 @@ LIST_SCHEDULED=0
 LIST_FAMILIES=0
 LIST_CONCURRENT_SAFE_FAMILIES=0
 LIST_LANES=0
-SERIAL_SHARD_PLAN=0
 CHECK_COVERAGE=0
 AGGREGATE_OUT=
 FAMILY=
@@ -299,7 +297,7 @@ family_for_basename() {
     fm-lint-workflows.test.sh|\
     fm-operational-input.test.sh|fm-pi-primary-types.test.sh|\
     fm-calm-claude-mod.test.sh|\
-    fm-harness-adapter-references.test.sh|\
+    fm-harness-adapter-references.test.sh|fm-project-mode.test.sh|\
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
     fm-subagent-pretool-check.test.sh|\
     fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
@@ -318,7 +316,7 @@ family_for_basename() {
     fm-mail.test.sh|fm-mail-check.test.sh|\
     fm-turnend-foreign-owner-arm-fix.test.sh|\
     fm-wake-queue.test.sh|fm-watch-arm.test.sh|fm-watch-checkpoint.test.sh|fm-watch-recovery-loop.test.sh|\
-    fm-watch-triage.test.sh|fm-watch-noprogress.test.sh|fm-task-inbox.test.sh|\
+    fm-watch-triage.test.sh|fm-task-inbox.test.sh|\
     fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
@@ -380,6 +378,7 @@ family_for_basename() {
     fm-host-mirror-live-e2e.test.sh|\
     fm-quota-array-dispatch-live-e2e.test.sh|fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-send-inbox-doorbell-live-e2e.test.sh|\
+    fm-secondmate-busy-contract-live-e2e.test.sh|\
     fm-calm-claude-mod-plugin.test.sh|fm-calm-claude-mod-live-e2e.test.sh|\
     fm-calm-pi-queue-retention-live-e2e.test.sh|\
     fm-herdr-submit-confirm-live-e2e.test.sh)
@@ -397,6 +396,7 @@ family_for_basename() {
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
     fm-spawn-compact-adviser-disable.test.sh|\
     fm-spawn-compact-adviser-disable-remote.test.sh|\
+    fm-project-capacity.test.sh|\
     fm-teardown-endpoint-safety.test.sh)
       printf '%s\n' backend-dispatch
       ;;
@@ -831,6 +831,7 @@ tests/fm-remote-transport-lanes.test.sh 66089
 tests/fm-rovo-harness.test.sh 15691
 tests/fm-rovo-signals-live-e2e.test.sh 52
 tests/fm-secondmate-harness.test.sh 188187
+tests/fm-secondmate-busy-contract-live-e2e.test.sh 90000
 tests/fm-secondmate-lifecycle-e2e.test.sh 11268
 tests/fm-secondmate-liveness.test.sh 24564
 tests/fm-secondmate-reconcile.test.sh 100853
@@ -977,29 +978,6 @@ portable_serial_assignments() {
       printf '%s\t%s\n' "$(portable_serial_weight_for "$script")" "$script"
     done < <(list_portable_serial) | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
   )
-}
-
-# Print the generated serial assignment summary as
-# "lane<TAB>script_count<TAB>estimated_ms". This is the public evidence surface
-# used by tests and docs so neither reimplements the owner's packing logic.
-portable_serial_shard_plan() {
-  local tmp shard count total
-  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-serial-plan.XXXXXX") || return 1
-  portable_serial_assignments >"$tmp/assignments"
-  shard=1
-  while [ "$shard" -le "$PORTABLE_SERIAL_SHARDS" ]; do
-    count=0
-    total=0
-    while IFS=$'\t' read -r assigned script; do
-      [ "$assigned" = "$shard" ] || continue
-      count=$((count + 1))
-      total=$((total + $(portable_serial_weight_for "$script")))
-    done <"$tmp/assignments"
-    printf 'portable-serial-%sof%s\t%s\t%s\n' \
-      "$shard" "$PORTABLE_SERIAL_SHARDS" "$count" "$total"
-    shard=$((shard + 1))
-  done
-  rm -rf "$tmp"
 }
 
 # Parse "<k>of<n>" from a portable-serial shard lane and echo <k>, refusing when
@@ -1531,10 +1509,6 @@ families_for_changed_path() {
       printf '%s\n' secondmate
       printf '%s\n' session-bootstrap
       ;;
-    bin/fm-shared-brain-skill.sh)
-      printf '%s\n' __script__:fm-shared-brain-skill.test.sh
-      printf '%s\n' __script__:fm-pause-and-learn-inventory.test.sh
-      ;;
     bin/fm-secondmate*|bin/fm-remote*|bin/fm-on.sh|bin/fm-home-seed.sh|\
     bin/fm-backlog-handoff.sh|bin/fm-backlog-receive.sh|bin/fm-procevent-remote-reply.sh|\
     bin/fm-config-inherit-lib.sh|bin/fm-config-push.sh|bin/fm-shared*|\
@@ -1665,7 +1639,6 @@ families_for_changed_path() {
       printf '%s\n' live-harness-optin
       ;;
     bin/fm-spawn.sh|bin/fm-send.sh|bin/fm-harness.sh|\
-    bin/fm-crew-cap-lib.sh|\
     bin/fm-peek.sh|bin/fm-composer*)
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
@@ -1705,11 +1678,6 @@ families_for_changed_path() {
     .agents/skills/harness-adapters/SKILL.md|.agents/skills/harness-adapters/references/*)
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
-      ;;
-    .agents/skills/pause-and-learn/*)
-      printf '%s\n' pure-contract-unit
-      printf '%s\n' __script__:fm-pause-and-learn-inventory.test.sh
-      printf '%s\n' __script__:fm-shared-brain-skill.test.sh
       ;;
     .agents/skills/*/SKILL.md)
       printf '%s\n' pure-contract-unit
@@ -2080,10 +2048,6 @@ while [ "$#" -gt 0 ]; do
       LIST_LANES=1
       shift
       ;;
-    --serial-shard-plan)
-      SERIAL_SHARD_PLAN=1
-      shift
-      ;;
     --check-coverage)
       CHECK_COVERAGE=1
       shift
@@ -2157,11 +2121,6 @@ if [ "$LIST_LANES" -eq 1 ]; then
   exit 0
 fi
 
-if [ "$SERIAL_SHARD_PLAN" -eq 1 ]; then
-  portable_serial_shard_plan
-  exit $?
-fi
-
 if [ "$CHECK_COVERAGE" -eq 1 ]; then
   run_coverage_guard
   exit $?
@@ -2196,7 +2155,7 @@ esac
 
 # Refuse before any suite is selected or run. The inspection modes execute
 # nothing: --list-families, --list-concurrent-safe-families, --list-lanes,
-# --serial-shard-plan, --check-coverage, --concurrent-safe-family-jobs-max and --aggregate-json have
+# --check-coverage, --concurrent-safe-family-jobs-max and --aggregate-json have
 # already exited above, and --list/--list-scheduled print their selection and
 # exit below. An unset MODE still falls through to the usage error, so a caller
 # who named no selection mode is told that rather than this.

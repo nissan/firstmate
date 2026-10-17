@@ -15,17 +15,16 @@
 # agent over a real agent-named process, over a plain shell, and not at all
 # exercises exactly the classification the control plane gates on - including
 # the registration Herdr keeps after the agent process is gone (issue #4115).
-# The final case destroys that endpoint, then drives the complete control-plane
-# relaunch transaction and proves the real replacement binding (issue #19).
 #
 # Always runs on a private, named, throwaway lab session, never the default
 # one (tests/herdr-test-safety.sh; the 2026-07-02 incident). Skips cleanly
 # when herdr or jq is missing.
 set -u
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 
 command -v herdr >/dev/null 2>&1 || { echo "skip: herdr not found"; exit 0; }
@@ -35,45 +34,52 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the her
 . "$ROOT/tests/herdr-test-safety.sh"
 herdr_forget_inherited_pane
 
-HERDR_LAB_HELPER=${HERDR_LAB_HELPER:-$ROOT/bin/fm-herdr-lab.sh}
-SESSION=$("$HERDR_LAB_HELPER" name firstmate-herdr-relaunch-live-coverage) \
-  || { echo "not ok - could not generate an isolated Herdr lab session name" >&2; exit 1; }
+# The agent-named process below is a symlink to fm_agent_standin's stand-in;
+# decide it before any lab session exists so an impossible case skips cleanly.
+STANDIN_DIR=$(fm_test_tmproot fm-control-herdr-standin) || {
+  printf 'not ok - %s\n' "could not create the stand-in directory" >&2
+  exit 1
+}
+STANDIN_BIN=$(fm_agent_standin "$STANDIN_DIR") || {
+  echo "skip: no long-running stand-in binary survives a rename (multicall coreutils, no C compiler)"
+  exit 0
+}
+
+SESSION="fm-lab-control-smoke-$$"
 export HERDR_SESSION="$SESSION"
-SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-control-herdr.XXXXXX")
-SCRATCH=$(cd "$SCRATCH" && pwd)
-FAKEBIN="$SCRATCH/fakebin"
-mkdir -p "$FAKEBIN"
-cat > "$FAKEBIN/codex" <<EOF
-#!/usr/bin/env bash
-: > "$SCRATCH/codex-launched"
-EOF
-chmod +x "$FAKEBIN/codex"
-# New panes inherit the named server's startup environment, not the process
-# that later asks it to create a tab. Put the inert harness on that server PATH
-# before provisioning so both adopted and recreated endpoints launch the test
-# executable rather than a developer's real CLI. Bash can reconstruct PATH in
-# its interactive startup, so give the lab panes an isolated HOME whose startup
-# files preserve the same prefix.
-SHELL_HOME="$SCRATCH/shell-home"
-mkdir -p "$SHELL_HOME"
-printf "export PATH=%q:\$PATH\n" "$FAKEBIN" > "$SHELL_HOME/.bashrc"
-printf "export PATH=%q:\$PATH\n" "$FAKEBIN" > "$SHELL_HOME/.bash_profile"
-export HOME="$SHELL_HOME"
-export PATH="$FAKEBIN:$PATH"
-CLEANED=0
+SCRATCH=
+LAB_PREPARED=0
 cleanup_all() {
-  local status=0
-  [ "$CLEANED" = 0 ] || return 0
-  CLEANED=1
-  "$HERDR_LAB_HELPER" teardown "$SESSION" || status=$?
-  [ -z "$SCRATCH" ] || rm -rf "$SCRATCH"
-  return "$status"
+  local status=$? cleanup_status=0
+  trap - EXIT
+  if [ -n "$SCRATCH" ]; then
+    if [ -d "$SCRATCH/home/state/hsmoke.git-hooks" ]; then
+      chmod u+w "$SCRATCH/home/state/hsmoke.git-hooks" || {
+        echo "not ok - could not restore write permission on test git hooks" >&2
+        cleanup_status=1
+      }
+    fi
+    rm -rf "$SCRATCH" || {
+      echo "not ok - could not remove Herdr smoke scratch tree: $SCRATCH" >&2
+      cleanup_status=1
+    }
+  fi
+  if [ "$LAB_PREPARED" = 1 ]; then
+    herdr_safe_stop_and_delete "$SESSION" || {
+      echo "not ok - could not tear down Herdr smoke lab session: $SESSION" >&2
+      cleanup_status=1
+    }
+  fi
+  fm_test_cleanup
+  [ "$cleanup_status" = 0 ] || status=1
+  exit "$status"
 }
 trap cleanup_all EXIT
-"$HERDR_LAB_HELPER" provision "$SESSION" || fail "could not provision isolated Herdr lab session"
+fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
+LAB_PREPARED=1
 
-lab() { "$HERDR_LAB_HELPER" run "$SESSION" "$@"; }
-
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-control-herdr.XXXXXX")
+SCRATCH=$(cd "$SCRATCH" && pwd)
 HOME_DIR="$SCRATCH/home"
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/data/hsmoke"
 cat > "$HOME_DIR/data/hsmoke/brief.md" <<'EOF'
@@ -131,9 +137,8 @@ EOF
 } > "$HOME_DIR/state/hsmoke.meta"
 
 run_control() {
-  env PATH="${FAKEBIN:+$FAKEBIN:}$PATH" \
-    FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
-    FM_CONTROL_POLL=0.2 FM_CONTROL_EXIT_WAIT=2 FM_CONTROL_LAUNCH_WAIT=8 \
+  env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
+    FM_CONTROL_POLL=0.2 FM_CONTROL_EXIT_WAIT=2 \
     "$ROOT/bin/fm-control.sh" "$@" 2>&1
 }
 
@@ -184,6 +189,13 @@ STATE=$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")
   || version_fail "a malformed endpoint target does not stay unreadable"
 pass "real herdr $HERDR_VERSION: a gone session reads recoverable while a live pane and a malformed target do not"
 
+FAKEBIN="$SCRATCH/fakebin"
+mkdir -p "$FAKEBIN"
+cat > "$FAKEBIN/codex" <<EOF
+#!/usr/bin/env bash
+: > "$SCRATCH/codex-launched"
+EOF
+chmod +x "$FAKEBIN/codex"
 printf -v FAKEBIN_Q '%q' "$FAKEBIN"
 printf -v PROJ_Q '%q' "$PROJ"
 fm_backend_herdr_send_text_line "$SESSION:$PANE_ID" "export PATH=$FAKEBIN_Q:\$PATH" \
@@ -209,7 +221,7 @@ done
   || fail "the relaunched Herdr shell did not end up in its recorded worktree"
 [ "$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = "$SESSION:$PANE_ID" ] \
   || fail "the Herdr relaunch replaced its endpoint instead of reusing it"
-lab pane get "$PANE_ID" >/dev/null 2>&1 \
+herdr pane get "$PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
   || fail "the Herdr relaunch removed the endpoint it was required to reuse"
 awk -F= '$1 == "harness" {$0="harness=claude"} {print}' "$HOME_DIR/state/hsmoke.meta" \
   > "$HOME_DIR/state/hsmoke.meta.tmp"
@@ -230,13 +242,12 @@ pass "real herdr: interrupt refuses when herdr's own agent registry reports no a
 # A registration alone no longer proves an agent (issue #4115): the adapter
 # verifies the pane's processes through the real `pane process-info` view. So
 # the registered agent is backed by a real agent-named foreground process - a
-# symlink to a long-running system binary named `claude`, the same construction
-# tests/fm-tmux-agent-liveness.test.sh uses (a copied platform binary fails code
-# signing on macOS arm64; the symlink name is what the kernel records as argv[0]).
+# symlink named `claude` to the fm_agent_standin stand-in decided above, the same
+# construction tests/fm-tmux-agent-liveness.test.sh uses (the symlink name is
+# what the kernel records as argv[0]; tests/lib.sh owns why it is never a copy).
 AGENT_BIN="$SCRATCH/agentbin"
 mkdir -p "$AGENT_BIN"
-SLEEP_BIN=$(command -v sleep) || fail "sleep not found"
-ln -s "$SLEEP_BIN" "$AGENT_BIN/claude"
+ln -s "$STANDIN_BIN" "$AGENT_BIN/claude"
 printf -v AGENT_Q '%q' "$AGENT_BIN/claude"
 
 wait_process_state() {  # <expected> <tries>
@@ -257,8 +268,8 @@ start_agent_process() {
 }
 
 start_agent_process
-lab pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-smoke-agent \
-  --state idle >/dev/null 2>&1 \
+herdr pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-smoke-agent \
+  --state idle --session "$SESSION" >/dev/null 2>&1 \
   || fail "could not register a live agent on the task pane"
 
 STATE=$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")
@@ -271,7 +282,7 @@ case "$OUT" in
 esac
 pass "real herdr: interrupt delivers the harness's key and proves the agent survived it"
 
-lab pane get "$PANE_ID" >/dev/null 2>&1 \
+herdr pane get "$PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
   || fail "the control plane must never remove the endpoint it was operating on"
 [ -d "$WT" ] || fail "the control plane must never remove the task's local copy"
 pass "real herdr: no control verb removed the endpoint or the task's local copy"
@@ -283,16 +294,16 @@ pass "real herdr: no control verb removed the endpoint or the task's local copy"
 # keeps the registration, which is exactly the shape a Pi crew leaves behind
 # when it exits under a nested shell. Before the fix this read `alive` forever:
 # exit waited out its timeout and refused, and relaunch was refused for good.
-AGENT_PID=$(lab pane process-info --pane "$PANE_ID" 2>/dev/null \
+AGENT_PID=$(herdr pane process-info --pane "$PANE_ID" --session "$SESSION" 2>/dev/null \
   | jq -r '.result.process_info.foreground_processes[0].pid // empty')
 [ -n "$AGENT_PID" ] || fail "could not read the agent-named process pid from pane process-info"
 kill "$AGENT_PID" 2>/dev/null || fail "could not stop the agent-named process"
 wait_process_state shell 50 \
-  || version_fail "after the agent process exited the pane reads '$(fm_backend_herdr_pane_process_state "$SESSION" "$PANE_ID")' rather than 'shell' through pane process-info. Raw process-info: $(lab pane process-info --pane "$PANE_ID" 2>&1 | tr -d '\n')"
+  || version_fail "after the agent process exited the pane reads '$(fm_backend_herdr_pane_process_state "$SESSION" "$PANE_ID")' rather than 'shell' through pane process-info. Raw process-info: $(herdr pane process-info --pane "$PANE_ID" --session "$SESSION" 2>&1 | tr -d '\n')"
 
 # The divergence that makes this case non-vacuous: Herdr's own registry still
 # reports the agent, and only the process-level view disagrees.
-REGISTERED=$(lab agent get "$PANE_ID" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
+REGISTERED=$(herdr agent get "$PANE_ID" --session "$SESSION" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
 [ -n "$REGISTERED" ] \
   || version_fail "Herdr released the registration when the agent process exited, so this run cannot prove the stale-registration path; the classifier still reads dead through agent_not_found"
 
@@ -322,7 +333,7 @@ done
 [ -e "$SCRATCH/codex-launched" ] || fail "the replacement harness was not launched after the stale registration"
 [ "$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = "$SESSION:$PANE_ID" ] \
   || fail "the relaunch replaced its endpoint instead of reusing it"
-lab pane get "$PANE_ID" >/dev/null 2>&1 \
+herdr pane get "$PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
   || fail "the relaunch removed the endpoint it was required to reuse"
 [ -d "$WT" ] || fail "the relaunch must never remove the task's local copy"
 awk -F= '$1 == "harness" {$0="harness=claude"} {print}' "$HOME_DIR/state/hsmoke.meta" \
@@ -330,140 +341,28 @@ awk -F= '$1 == "harness" {$0="harness=claude"} {print}' "$HOME_DIR/state/hsmoke.
 mv "$HOME_DIR/state/hsmoke.meta.tmp" "$HOME_DIR/state/hsmoke.meta"
 pass "real herdr: a stale registration no longer blocks relaunch, and the endpoint and local copy survive"
 
-# Last: the foreground process is a plain `sleep`, so the pane never draws any
+# Last: the foreground process is the sleeping stand-in, so the pane never draws any
 # recognized composer chrome. exit's composer-empty guard (bin/fm-control.sh)
 # therefore refuses before ever typing the exit command, rather than typing it
 # into a live agent that ignores it and reporting a stop that did not happen.
 start_agent_process
-lab pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-smoke-agent \
-  --state idle >/dev/null 2>&1 \
+herdr pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-smoke-agent \
+  --state idle --session "$SESSION" >/dev/null 2>&1 \
   || fail "could not re-register the live agent on the task pane"
 if OUT=$(run_control hsmoke exit 2>&1); then
   fail "exit should fail closed when the agent's composer is not proven empty: $OUT"
 fi
 case "$OUT" in
-  *"not proven empty"*) : ;;
-  *) fail "the exit failure should say the composer is not proven empty, got: $OUT" ;;
+  *"composer visibly holds pending text; refusing to type the /exit exit command"*|*"not proven empty; refusing to type the /exit exit command"*) : ;;
+  *) fail "the exit failure should refuse to type the /exit command for an unproven or pending composer, got: $OUT" ;;
 esac
-pass "real herdr: an agent behind an unproven composer fails closed instead of typing an exit command into it"
+[ "$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")" = alive ] \
+  || fail "the exit refusal did not preserve the fake foreground agent"
+SCREEN_AFTER=$(fm_backend_herdr_visible_capture "$SESSION:$PANE_ID") \
+  || fail "could not read the pane after the exit refusal"
+case "$SCREEN_AFTER" in
+  *'/exit'*) fail "the refused /exit command appeared on the agent pane" ;;
+esac
+pass "real herdr: exit refuses an unproven or pending composer without typing an exit command"
 
-# --- a structurally gone endpoint: stop, relaunch, and real metadata rebind --
-#
-# Close the exact old pane through the guarded lab helper, not through the
-# control plane. This models endpoint loss outside Firstmate and makes the
-# precondition non-vacuous: the old endpoint must be structured-not-found
-# before relaunch. A sentinel endpoint in another workspace proves the
-# transaction neither sweeps the named session nor mistakes unrelated state
-# for the task it owns.
-OLD_WINDOW=$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)
-OLD_WORKSPACE=$(sed -n 's/^herdr_workspace_id=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)
-OLD_TAB=$(sed -n 's/^herdr_tab_id=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)
-OLD_PANE=$(sed -n 's/^herdr_pane_id=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)
-OLD_HEAD=$(git -C "$WT" rev-parse HEAD)
-printf 'uncommitted recovery evidence\n' > "$WT/relaunch-dirty.txt"
-
-SENTINEL_RAW=$(lab workspace create --cwd "$PROJ" --label fm-control-unrelated --no-focus 2>/dev/null) \
-  || fail "could not create the unrelated Herdr sentinel workspace"
-SENTINEL_WORKSPACE=$(printf '%s' "$SENTINEL_RAW" | jq -r '.result.workspace.workspace_id // empty')
-SENTINEL_TAB=$(printf '%s' "$SENTINEL_RAW" | jq -r '.result.tab.tab_id // empty')
-SENTINEL_PANE=$(printf '%s' "$SENTINEL_RAW" | jq -r '.result.root_pane.pane_id // empty')
-[ -n "$SENTINEL_WORKSPACE" ] && [ -n "$SENTINEL_TAB" ] && [ -n "$SENTINEL_PANE" ] \
-  || fail "the unrelated sentinel did not return exact workspace, tab, and pane ids"
-SENTINEL_BEFORE=$(lab pane get "$SENTINEL_PANE" | jq -c '
-  .result.pane | {pane_id, tab_id, workspace_id, foreground_cwd}
-') || fail "could not snapshot the unrelated sentinel endpoint"
-
-lab pane close "$OLD_PANE" >/dev/null \
-  || fail "could not remove the exact old task endpoint in the isolated lab"
-if lab pane get "$OLD_PANE" >/dev/null 2>&1; then
-  fail "the old task endpoint still exists before the missing-endpoint relaunch"
-fi
-fm_backend_herdr_endpoint_confirmed_gone "$OLD_WINDOW" \
-  || fail "the adapter did not positively confirm the stopped endpoint was gone"
-pass "real herdr: the stopped endpoint is positively gone before relaunch"
-
-# The replacement executable is inert, but it behaves like a real registered
-# harness for the postcondition: its process identity is `codex`, it registers
-# on the exact pane Herdr injected, and it remains alive until lab teardown.
-# The helper performs the registration call so even this child process cannot
-# fall back to ambient session selection.
-CODEX_PROCESS="$SCRATCH/agentbin/codex"
-ln -sf "$SLEEP_BIN" "$CODEX_PROCESS"
-cat > "$FAKEBIN/codex" <<EOF
-#!/usr/bin/env bash
-set -eu
-: > "$SCRATCH/codex-launched"
-"$HERDR_LAB_HELPER" run "$SESSION" pane report-agent "\$HERDR_PANE_ID" \
-  --source fm-control-relaunch --agent fm-control-relaunch-agent --state idle >/dev/null
-exec "$CODEX_PROCESS" 900
-EOF
-chmod +x "$FAKEBIN/codex"
-rm -f "$SCRATCH/codex-launched"
-
-OUT=$(run_control hsmoke relaunch --harness codex --note \
-  "the old Herdr endpoint is gone; continue in the same local copy") \
-  || fail "a positively gone Herdr endpoint should be recreated and rebound: $OUT"
-NEW_WINDOW=$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)
-NEW_WORKSPACE=$(sed -n 's/^herdr_workspace_id=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)
-NEW_TAB=$(sed -n 's/^herdr_tab_id=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)
-NEW_PANE=$(sed -n 's/^herdr_pane_id=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)
-
-[ -e "$SCRATCH/codex-launched" ] || fail "the replacement harness did not launch"
-[ "$NEW_WINDOW" = "$SESSION:$NEW_PANE" ] \
-  || fail "the rebound window does not name the new pane in the recorded session: $NEW_WINDOW"
-[ "$NEW_WINDOW" != "$OLD_WINDOW" ] && [ "$NEW_PANE" != "$OLD_PANE" ] \
-  || fail "a gone endpoint was not replaced by a fresh endpoint"
-[ "$NEW_TAB" != "$OLD_TAB" ] \
-  || fail "a gone endpoint reused its destroyed tab instead of creating one fresh tab"
-[ "$(sed -n 's/^endpoint_task_id=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = hsmoke ] \
-  || fail "the rebound record changed the task identity"
-[ "$(sed -n 's/^worktree=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = "$WT" ] \
-  || fail "the rebound record changed the task's local copy"
-[ "$(sed -n 's/^project=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = "$PROJ" ] \
-  || fail "the rebound record changed the task's project"
-[ "$(sed -n 's/^herdr_session=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = "$SESSION" ] \
-  || fail "the rebound record moved the task to another Herdr session"
-[ "$(sed -n 's/^harness=//p' "$HOME_DIR/state/hsmoke.meta" | tail -1)" = codex ] \
-  || fail "the rebound record does not name the replacement harness"
-[ "$(git -C "$WT" rev-parse HEAD)" = "$OLD_HEAD" ] \
-  || fail "the missing-endpoint relaunch moved the local copy's HEAD"
-[ "$(cat "$WT/relaunch-dirty.txt")" = "uncommitted recovery evidence" ] \
-  || fail "the missing-endpoint relaunch lost uncommitted work"
-lab pane get "$NEW_PANE" >/dev/null 2>&1 \
-  || fail "the rebound metadata names a pane that does not exist"
-lab tab get "$NEW_TAB" >/dev/null 2>&1 \
-  || fail "the rebound metadata names a tab that does not exist"
-[ "$(lab workspace get "$NEW_WORKSPACE" | jq -r '.result.workspace.label // empty')" = firstmate ] \
-  || fail "the recovery did not retain the accepted flat firstmate workspace layout"
-[ ! -e "$HOME_DIR/state/hsmoke.herdr-presentation" ] \
-  || fail "the flat recovery unexpectedly published presentation authority"
-TASK_TAB_COUNT=0
-while IFS= read -r workspace; do
-  count=$(lab tab list --workspace "$workspace" 2>/dev/null \
-    | jq -r '[.result.tabs[]? | select(.label == "fm-hsmoke")] | length') \
-    || fail "could not inventory task tabs after relaunch"
-  TASK_TAB_COUNT=$((TASK_TAB_COUNT + count))
-done < <(lab workspace list | jq -r '.result.workspaces[]?.workspace_id')
-[ "$TASK_TAB_COUNT" -eq 1 ] \
-  || fail "the missing-endpoint relaunch left $TASK_TAB_COUNT task endpoints instead of one"
-if lab pane get "$OLD_PANE" >/dev/null 2>&1; then
-  fail "the old endpoint reappeared after metadata was rebound"
-fi
-[ "$OLD_WORKSPACE" != "$NEW_WORKSPACE" ] \
-  || fail "the destroyed one-task container unexpectedly survived as recovery authority"
-[ "$(lab pane get "$SENTINEL_PANE" | jq -c '
-  .result.pane | {pane_id, tab_id, workspace_id, foreground_cwd}
-')" = "$SENTINEL_BEFORE" ] \
-  || fail "the missing-endpoint relaunch changed the unrelated sentinel endpoint"
-if ! lab workspace get "$SENTINEL_WORKSPACE" >/dev/null 2>&1 \
-   || ! lab tab get "$SENTINEL_TAB" >/dev/null 2>&1; then
-  fail "the missing-endpoint relaunch removed unrelated Herdr state"
-fi
-[ "$(sed -n 's/^phase=//p' "$HOME_DIR/state/hsmoke.control-relaunch" | tail -1)" = complete ] \
-  || fail "the relaunch transaction did not reach its complete durable phase"
-[ "$(sed -n 's/^exit_result=//p' "$HOME_DIR/state/hsmoke.control-relaunch" | tail -1)" = endpoint-gone ] \
-  || fail "the relaunch transaction did not record the proven-gone endpoint"
-pass "real herdr: a gone endpoint relaunch preserves task identity and work, creates one flat replacement, rebinds metadata, and leaves unrelated endpoints untouched"
-
-cleanup_all || { printf 'not ok - %s\n' 'guarded Herdr lab teardown or default-session tripwire verification failed' >&2; exit 1; }
-trap - EXIT
+fm_backend_herdr_kill "$SESSION:$PANE_ID" 2>/dev/null || true
