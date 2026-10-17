@@ -1,0 +1,36 @@
+# bin/fm-teardown.sh on scout tasks (disposable home, fake tmux/treehouse, real git worktree); product output shown verbatim
+
+## 1. zero-byte report.md, no --force
+$ fm-teardown.sh ev1
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: scout task ev1 has a report at /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-teardown-scout-report.WVU6R0/ev-zero/home/data/ev1/report.md but it is empty.
+The scout contract requires a non-empty report before any terminal status. Have the crewmate write it, or use --force after explicit discard approval.
+rc=1
+state/ev1.meta still present: yes
+
+## 2. same zero-byte report.md, --force
+$ fm-teardown.sh ev1 --force
+NOTICE: FORCED teardown of scout task ev1 with an EMPTY report at /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-teardown-scout-report.WVU6R0/ev-zero/home/data/ev1/report.md - its investigation is being discarded and cannot be recovered.
+rc=0
+state/ev1.meta still present: no
+
+## 3. no report.md at all, --force (unchanged pre-existing wording)
+$ fm-teardown.sh ev2 --force
+NOTICE: FORCED teardown of scout task ev2 with NO report at /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-teardown-scout-report.WVU6R0/ev-missing/home/data/ev2/report.md - its investigation is being discarded and cannot be recovered.
+rc=0
+
+## 4. adversarial: report.md holding one newline (1 byte) is accepted by the size gate; refusal, if any, comes from the later captain-call gate
+$ fm-teardown.sh ev3
+REFUSED: scout task ev3 has not passed the captain-call completion gate.
+rc=1
+
+## 5. non-empty report.md, --force: no discard notice
+$ fm-teardown.sh ev4 --force
+discard-notice lines: 0
+rc=0

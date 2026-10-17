@@ -1,0 +1,17 @@
+# bin/fm-captain-hold.sh complete <origin> --none: origin has no state/<origin>.meta and no backlog row, so only data/<origin>/report.md can prove it lives here
+# (disposable home; stub tasks-axi answers version/help probes and reports every row absent via "code: NOT_FOUND")
+
+## origin ev-empty: report.md exists but is zero bytes
+$ fm-captain-hold.sh complete ev-empty --none
+fm-captain-hold: origin ev-empty is not owned by the active home <lab>/home
+rc=1
+
+## origin ev-written: report.md has content
+$ fm-captain-hold.sh complete ev-written --none
+complete: ev-written captain-call inventory reviewed
+rc=0
+
+## origin ev-absent: no report.md at all (pre-existing behaviour)
+$ fm-captain-hold.sh complete ev-absent --none
+fm-captain-hold: origin ev-absent is not owned by the active home <lab>/home
+rc=1

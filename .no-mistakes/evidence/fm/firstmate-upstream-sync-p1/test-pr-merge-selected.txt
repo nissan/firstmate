@@ -1,0 +1,5 @@
+# tasks-axi stub (absent rows via NOT_FOUND) on PATH, as for the other pr-merge runs
+$ run-selected.sh tests/fm-pr-merge.test.sh test_allow_unstarted_actions_option_validation test_github_merged_outcome_is_verified
+ok - fm-pr-merge validates the provider and compatibility of --allow-unstarted-actions
+ok - fm-pr-merge verifies a genuinely merged GitHub pull request
+rc=0

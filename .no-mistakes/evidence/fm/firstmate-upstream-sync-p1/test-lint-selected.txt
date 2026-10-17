@@ -1,0 +1,9 @@
+$ run-selected.sh tests/fm-lint.test.sh test_help_reports_the_complete_interface test_canonical_partitions_preserve_full_lint test_authoritative_lint_owns_local_exclusion_completeness test_exclusion_guard_caps_concurrency_at_jobs test_exclusion_guard_runs_under_the_bounded_envelope test_exclusion_guard_watchdog_outlives_the_owner_sweep test_worker_trees_stop_on_signal
+ok - fm-lint.sh --help reports the complete executable interface
+ok - two canonical lint partitions preserve complete source-aware coverage and reject weakened modes
+ok - authoritative lint owns local exclusion completeness without a behavior-lane repository sweep
+ok - the exclusion guard caps its concurrency at JOBS (485 guard roots, peak        1)
+ok - SKIP (host cannot enforce the bounded envelope): exclusion-guard deadline check
+ok - SKIP (host cannot enforce the bounded envelope): exclusion-guard owner-sweep check
+ok - worker and exclusion-guard trees stop on signal with and without telemetry
+rc=0

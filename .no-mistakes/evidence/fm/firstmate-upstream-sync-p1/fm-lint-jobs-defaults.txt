@@ -1,0 +1,30 @@
+# fm-lint.sh worker-count defaults (stub ShellCheck on PATH, one explicit root so the run is fast)
+$ env -u CI -u GITHUB_ACTIONS -u FM_LINT_JOBS bin/fm-lint.sh --telemetry local.tsv bin/fm-lint.sh ; grep ^jobs local.tsv
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+rc=0
+jobs	2
+
+$ env -u FM_LINT_JOBS CI=true bin/fm-lint.sh --telemetry ci.tsv bin/fm-lint.sh ; grep ^jobs ci.tsv
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+rc=0
+jobs	1
+
+$ env -u CI -u FM_LINT_JOBS GITHUB_ACTIONS=true bin/fm-lint.sh --telemetry gha.tsv bin/fm-lint.sh ; grep ^jobs gha.tsv
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+rc=0
+jobs	1
+
+$ CI=true FM_LINT_JOBS=3 bin/fm-lint.sh --telemetry override.tsv bin/fm-lint.sh ; grep ^jobs override.tsv
+fm-lint.sh: jobs must be 1 or 2, got 3.
+rc=2
+ugrep: warning: /var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T//fm-nm-test-01M54XAM/lintjobs/override.tsv: No such file or directory
+
+# (FM_LINT_JOBS=3 above is refused by the existing 1-or-2 bound; the override case is FM_LINT_JOBS=2 under CI)
+$ CI=true FM_LINT_JOBS=2 bin/fm-lint.sh --telemetry override.tsv bin/fm-lint.sh ; grep ^jobs override.tsv
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+rc=0
+jobs	2

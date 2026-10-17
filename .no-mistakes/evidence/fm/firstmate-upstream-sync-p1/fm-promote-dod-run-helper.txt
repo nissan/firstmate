@@ -1,0 +1,20 @@
+# bin/fm-promote.sh: promoting a scout to a no-mistakes ship renders ship instructions whose DOD names the run helper
+$ fm-promote.sh ev-promote --mode no-mistakes --yolo off
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+promoted ev-promote to ship mode=no-mistakes yolo=off (teardown protection restored)
+wrote ship instructions for mode=no-mistakes: <home>/data/ev-promote/ship-instructions.md
+next: FM_HOME=<home> bin/fm-send.sh fm-ev-promote "$(cat <home>/data/ev-promote/ship-instructions.md)"
+rc=0
+--- state/ev-promote.meta ---
+kind=ship
+mode=no-mistakes
+yolo=off
+--- data/ev-promote/ship-instructions.md (helper and delivery-ready lines) ---
+47:Use `<fm-root>/bin/fm-no-mistakes-run.sh` in place of `no-mistakes axi run` when starting or reattaching; that helper's header owns repository-specific hosted-check routing.
+74:After /no-mistakes reports delivery ready (CI green for a hosted-check repository at the CI-ready return point - do not wait for it to keep monitoring in the background until merge - or terminal success after PR publication for a canonic

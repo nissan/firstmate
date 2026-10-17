@@ -1,0 +1,6 @@
+$ run-selected.sh tests/fm-brief.test.sh test_dod_block_requires_run_helper test_scout_report_is_incremental_and_gates_terminal_status test_briefs_require_absolute_path_reads test_no_mistakes_dod_wording
+ok - fm-dod-lib.sh: fm_dod_block requires the no-mistakes run helper
+ok - fm-brief.sh: scout report is incremental and gates the terminal status line
+ok - fm-brief.sh: ship and scout briefs require absolute-path reads
+ok - fm-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright
+rc=0

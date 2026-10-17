@@ -1,0 +1,13 @@
+$ bin/fm-test-run.sh --list --family pr-forge | grep -n "scout-report\|no-mistakes-run"
+2:tests/fm-no-mistakes-run.test.sh
+9:tests/fm-teardown-scout-report.test.sh
+rc=0
+
+$ bin/fm-test-run.sh --list --family backend-dispatch | grep -n "claude-review-ack\|spawn-dispatch"
+4:tests/fm-claude-review-ack.test.sh
+18:tests/fm-spawn-dispatch-profile.test.sh
+rc=0
+
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=262 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=222 serial_shards=9 serial_unhinted=14 serial_max_ms=1074843 serial_budget_ms=1200000 herdr=16
+rc=0

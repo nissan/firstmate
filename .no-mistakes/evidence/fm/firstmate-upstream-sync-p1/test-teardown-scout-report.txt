@@ -1,0 +1,10 @@
+$ bash tests/fm-teardown-scout-report.test.sh
+ok - fm-teardown: a report-less scout with a gone endpoint still refuses without --force
+ok - fm-teardown: the report-less scout refusal is unchanged for a live endpoint
+ok - fm-teardown: --force returns a stranded report-less scout and says what it discarded
+ok - fm-teardown: nothing is announced as discarded by a cleanup that refuses instead
+ok - fm-teardown: a refusal past the report gate still announces no discard
+ok - fm-teardown: the discard notice is scoped to a scout that actually has no report
+ok - fm-teardown: a zero-byte scout report refuses cleanup without --force
+ok - fm-teardown: --force announces the discard for a zero-byte report too
+rc=0

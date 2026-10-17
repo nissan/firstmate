@@ -1,0 +1,8 @@
+$ run-selected.sh tests/fm-dod-lib.test.sh test_pr_based_dod_draft_check_uses_gh_axi
+all fm-dod-lib tests passed
+ok - PR-based DoD draft check uses gh-axi
+rc=0
+
+$ run-selected.sh tests/fm-self-repo-role.test.sh test_dod_block_renders_and_bounds_consent
+ok - fm_dod_block: upstream consent renders on publishing contracts and is refused on local-only
+rc=0

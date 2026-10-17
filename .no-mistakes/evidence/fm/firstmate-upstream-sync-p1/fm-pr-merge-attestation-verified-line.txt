@@ -1,0 +1,25 @@
+# bin/fm-pr-merge.sh pre-merge verification line (stderr) with gh mocked; PR body carries a valid no-mistakes attestation for the live head
+# (tasks-axi is absent on this host; a disposable stub answering only its version/help probes and reporting every row absent via the NOT_FOUND contract is on PATH so the captain-hold read resolves to not-held)
+
+## 1. task recorded mode=no-mistakes (attestation required and valid)
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/51
+verified: https://github.com/example/repo/pull/51 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 1010101010101010101010101010101010101010, and local no-mistakes validation bound to that head
+verified: https://github.com/example/repo/pull/51 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+rc=0
+
+## 2. same PR, task recorded mode=direct-PR in a repository that is not a local-validation repository (no attestation clause expected)
+mode=direct-PR
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/51
+verified: https://github.com/example/repo/pull/51 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 1010101010101010101010101010101010101010
+verified: https://github.com/example/repo/pull/51 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+rc=0
+
+## 3. adversarial: mode=no-mistakes but the PR body attestation names a different head
+$ fm-pr-merge.sh task-x1 https://github.com/example/repo/pull/51
+no-mistakes attestation: attestation is malformed, stale, duplicated, or missing a completed local review, test, document, or lint phase
+error: refusing to merge https://github.com/example/repo/pull/51
+  - the pull-request body has no valid no-mistakes local-validation attestation for head 1010101010101010101010101010101010101010
+rc=1
+
+## existing end-to-end test
+ok - fm-pr-merge verifies a genuinely merged GitHub pull request

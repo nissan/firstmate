@@ -1,0 +1,6 @@
+# node is absent from PATH on this host; a disposable Node v22.23.3 (nodejs.org tarball, sha256-verified) is prepended for this run only
+$ PATH=<disposable-node>:$PATH run-selected.sh tests/fm-spawn-dispatch-profile.test.sh test_claude_review_grants_only_task_outputs_and_records_posture test_claude_review_refuses_raw_launch_command test_claude_review_rejects_unsupported_and_persistent_harnesses
+ok - --claude-review accepts a scout, grants only its outputs and own inbox, preserves Claude controls, and records the posture
+ok - --claude-review refuses a raw launch command before provisioning
+ok - --claude-review rejects ship, unsupported harness, and persistent secondmate combinations
+rc=0

@@ -1,0 +1,13 @@
+# bin/fm-spawn.sh --scout --harness claude --claude-review (disposable home, fake tmux captures the literal launch command)
+$ fm-spawn.sh ev-review <project> --scout --harness claude --claude-review
+rc=0
+--- launch command as sent to the pane (permission flags; paths shortened) ---
+claude --permission-mode default --allowedTools 'Edit(/<home>/state/ev-review.status)' 'Write(/<home>/state/ev-review.status)' 'Edit(/<home>/data/ev-review/report.md)' 'Write(/<home>/data/ev-review/re
+port.md)' 'Bash(echo * >> '\''<home>/state/ev-review.status'\'')' 'Read(/<home>/state/ev-review.inbox/**)' 'Glob(/<home>/state/ev-review.inbox/*.msg)' 'Bash(<home>/state/ev-review.claude-review-ack.sh
+)' --add-dir '<home>/state/operational-inbox' --add-dir '<home>/state/ev-review.inbox' --add-dir '<home>/data/ev-review' --add-dir
+--- bypass flag present? ---
+0
+--- state/ev-review.meta posture line ---
+claude_review=on
+--- acknowledgement helper mode (BSD stat on this macOS host) ---
+700 <home>/state/ev-review.claude-review-ack.sh
