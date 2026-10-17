@@ -4995,11 +4995,6 @@ BUSY_GEN=
       FM_KEEP_AI_TRAILERS="$KEEP_AI_TRAILERS" "$SCRIPT_DIR/fm-devin-config.sh" "$STATE_REAL" "$ID" "$BUSY_GEN" || exit 1
     fi
     ;;
-  devin)
-    if [ "$RAW_LAUNCH" -eq 0 ]; then
-      FM_KEEP_AI_TRAILERS="$KEEP_AI_TRAILERS" "$SCRIPT_DIR/fm-devin-config.sh" "$STATE_REAL" "$ID" "$BUSY_GEN" || exit 1
-    fi
-    ;;
   gemini)
     if [ "$RAW_LAUNCH" -eq 0 ]; then
       # Semantic busy-state hooks (bin/fm-busy-lib.sh): BeforeAgent opens a
