@@ -285,16 +285,6 @@ while [ "$#" -gt 0 ]; do
       ;;
     --allow-unstarted-actions=*)
       echo "error: --allow-unstarted-actions takes no value" >&2
-    exit 2
-    ;;
-    --allow-missing)
-      [ -n "${2:-}" ] || { echo "error: --allow-missing requires a check name" >&2; exit 2; }
-      [ "${#ALLOW_MISSING[@]}" -eq 0 ] || { echo "error: --allow-missing may be specified only once" >&2; exit 2; }
-      ALLOW_MISSING+=("$2")
-      shift 2
-      ;;
-    --allow-missing=*)
-      echo "error: --allow-missing requires a separate check name argument" >&2
       exit 2
       ;;
     --) shift; break ;;
@@ -938,94 +928,12 @@ github_checks_not_green() {
   ' 2>/dev/null || return 1
 }
 
-FM_PR_GITHUB_REQUIRED=
-FM_PR_GITHUB_REQUIRED_ERROR=
-github_read_required_contexts() {
-  local base=$1 branch_path branch_json rules_json classic='' ruleset='' api_err api_err_text
-  FM_PR_GITHUB_REQUIRED='[]'
-  FM_PR_GITHUB_REQUIRED_ERROR=
-  branch_path=$(github_urlencode_path_segment "$base")
 
-  if ! branch_json=$(gh api "repos/$PR_OWNER/$PR_REPO/branches/$branch_path" 2>/dev/null) \
-    || [ -z "$branch_json" ] \
-    || ! classic=$(printf '%s' "$branch_json" | jq -c '
-      if type != "object" or (.protected | type) != "boolean" then
-        error("branch payload is unreadable")
-      elif .protected == false then
-        empty
-      elif (.protection.required_status_checks | type) != "object" then
-        error("branch protection summary is unreadable")
-      else
-        .protection.required_status_checks
-        | ((.checks // []) | if type == "array" then .[] else error("invalid checks") end
-           | {context, app_id}),
-          ((.contexts // []) | if type == "array" then .[] else error("invalid contexts") end
-           | {context: ., app_id: null})
-        | if (.context | type) == "string" and (.context | length) > 0
-             and (.app_id == null or (.app_id | type) == "number")
-          then . else error("invalid required check") end
-        | if .app_id == -1 then .app_id = null else . end
-      end' 2>/dev/null); then
-    classic=''
-    FM_PR_GITHUB_REQUIRED_ERROR="the branch protection summary for base branch $base could not be read"
-  fi
-
-  if ! api_err=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-required-rules.XXXXXX"); then
-    FM_PR_GITHUB_REQUIRED_ERROR="${FM_PR_GITHUB_REQUIRED_ERROR:+$FM_PR_GITHUB_REQUIRED_ERROR
-}the branch rules for base branch $base could not be read"
-  else
-    if ! rules_json=$(gh api --paginate "repos/$PR_OWNER/$PR_REPO/rules/branches/$branch_path" 2>"$api_err"); then
-      api_err_text=$(cat "$api_err" 2>/dev/null)
-      if ! github_branch_rules_unavailable_on_plan "$api_err_text"; then
-        FM_PR_GITHUB_REQUIRED_ERROR="${FM_PR_GITHUB_REQUIRED_ERROR:+$FM_PR_GITHUB_REQUIRED_ERROR
-}the branch rules for base branch $base could not be read"
-      fi
-    elif [ -z "$rules_json" ] || ! ruleset=$(printf '%s' "$rules_json" | jq -c '
-        if type != "array" then error("rules payload is unreadable") else .[] end
-        | select(type != "object" or .type == "required_status_checks")
-        | if type == "object" and (.parameters.required_status_checks | type) == "array"
-          then .parameters.required_status_checks[] else error("invalid required check rule") end
-        | if type == "object" and (.context | type) == "string" and (.context | length) > 0
-             and (.integration_id == null or (.integration_id | type) == "number")
-          then {context, app_id: .integration_id} else error("invalid required check rule") end
-        | if .app_id == -1 then .app_id = null else . end' 2>/dev/null); then
-      ruleset=''
-      FM_PR_GITHUB_REQUIRED_ERROR="${FM_PR_GITHUB_REQUIRED_ERROR:+$FM_PR_GITHUB_REQUIRED_ERROR
-}the branch rules for base branch $base could not be read"
-    fi
-    rm -f "$api_err"
-  fi
-
-  FM_PR_GITHUB_REQUIRED=$(printf '%s\n%s\n' "$classic" "$ruleset" | jq -sc '
-    unique_by([.context, .app_id]) | group_by(.context)
-    | map(if any(.[]; .app_id != null) then map(select(.app_id != null)) else . end) | add // []')
-  [ -z "$FM_PR_GITHUB_REQUIRED_ERROR" ]
-}
-
-github_required_checks_missing() {
-  local json=$1 required=$2 producers=$3
-  printf '%s' "$json" | jq -r --argjson required "$required" --argjson producers "$producers" '
-    if (.statusCheckRollup | type) != "array" then error("no check rollup") else . end
-    | .statusCheckRollup as $reported
-    | $required
-    | map(. as $requirement
-      | select(any($reported[];
-          if $requirement.app_id == null then
-            (if .__typename == "CheckRun" then .name else .context end) == $requirement.context
-          elif .__typename == "CheckRun" then
-            .name == $requirement.context
-            and any($producers[]; .name == $requirement.context and .app.id == $requirement.app_id)
-          else
-            .context == $requirement.context
-          end) | not)
-      | .context) | unique[]
-  ' 2>/dev/null || return 1
-}
-
-# Pre-merge conditions from a live PR view, base requirements, and head producers.
-# Sets FM_PR_MERGE_HEAD to the verified head on success. Returns 3, rather than
-# the usual 1, when mergeable=UNKNOWN is the only failing condition, so the
-# caller can retry a still-computing mergeability read instead of refusing.
+# Prove that every currently red check failed before GitHub assigned a runner or
+# executed a step. This is the one guarded bootstrap path for moving a repository
+# off hosted routine gates when account limits reject jobs at admission time.
+# It never classifies from timing or error prose: each check must resolve to a
+# live Actions job at the exact PR head with runner_id=0 and an empty steps list.
 github_verify_unstarted_action_failures() {
   local json=$1 red=$2 name rows row url job_id run_id job repo_prefix
   repo_prefix=$(printf 'https://github.com/%s/actions/runs/' "$PR_PATH" | tr '[:upper:]' '[:lower:]')

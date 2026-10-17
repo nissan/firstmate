@@ -117,27 +117,6 @@ attested_body_json() {
 # protection summary on the branch, and the active ruleset rules for it. Each
 # name is given as classic:<context> or ruleset:<context>; with no names the
 # branch is unprotected and has no rules. Args: case_dir [kind:name]...
-write_github_required() {
-  local case_dir=$1 spec contexts='' checks='' rules='' protected=false
-  shift
-  for spec in "$@"; do
-    case "$spec" in
-      classic:*)
-        protected=true
-        contexts="${contexts:+$contexts,}\"${spec#classic:}\""
-        checks="${checks:+$checks,}{\"context\":\"${spec#classic:}\",\"app_id\":null}"
-        ;;
-      ruleset:*)
-        rules="${rules:+$rules,}{\"type\":\"required_status_checks\",\"parameters\":{\"required_status_checks\":[{\"context\":\"${spec#ruleset:}\"}]}}"
-        ;;
-      *) fail "write_github_required: unknown spec '$spec'" ;;
-    esac
-  done
-  printf '{"name":"main","protected":%s,"protection":{"enabled":%s,"required_status_checks":{"enforcement_level":"%s","contexts":[%s],"checks":[%s]}}}\n' \
-    "$protected" "$protected" "$([ "$protected" = true ] && echo non_admins || echo off)" "$contexts" "$checks" \
-    > "$case_dir/github-branch.json"
-  printf '[{"type":"deletion"}%s]\n' "${rules:+,$rules}" > "$case_dir/github-required-rules.json"
-}
 
 # Live GitHub JSON for the pre-merge verify, plus gh-axi for the
 # post-merge fallback view. Merge itself is `gh pr merge --match-head-commit`.

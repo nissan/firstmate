@@ -2651,24 +2651,6 @@ test_exit_and_relaunch_remove_the_dialog_file() {
   pass "fm-control removes the dialog file after exit and after relaunch"
 }
 
-test_exit_and_relaunch_remove_the_dialog_file() {
-  local dir out rc
-  dir=$(new_case dialog-file-exit rl70)
-  add_ship_task "$dir" rl70 claude
-  out=$(run_control "$dir" rl70 exit); rc=$?
-  expect_code 0 "$rc" "exit should stop the agent"$'\n'"$out"
-  [ ! -e "$dir/home/state/rl70.composer-dialog" ] \
-    || fail "exit should remove the dialog file"
-
-  dir=$(new_case dialog-file-relaunch rl71)
-  add_ship_task "$dir" rl71 claude
-  out=$(run_control "$dir" rl71 relaunch --note "replace the agent"); rc=$?
-  expect_code 0 "$rc" "relaunch should replace the agent"$'\n'"$out"
-  [ ! -e "$dir/home/state/rl71.composer-dialog" ] \
-    || fail "relaunch should remove the dialog file"
-  pass "fm-control removes the dialog file after exit and after relaunch"
-}
-
 # The lock release removes paths at or under the control lock with rm, so a
 # recording rm sees the state directory at the moment of release without a
 # second overlapping command.
@@ -2708,8 +2690,6 @@ test_claude_review_relaunch_keeps_helper_after_post_publication_failure
 test_claude_review_relaunch_rejects_unsupported_switch_before_stop
 test_claude_review_ship_relaunch_refuses_before_stop_or_record_change
 test_claude_review_relaunch_rejects_unrecognized_record_before_stop
-test_exit_and_relaunch_remove_the_dialog_file
-test_exit_removes_the_dialog_file_before_releasing_the_lock
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
