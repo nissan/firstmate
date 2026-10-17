@@ -3900,7 +3900,6 @@ cleanup_firstmate_home_children() {
       "$sub_state/$child_id.cursor-session" "$sub_state/$child_id.reconcile-nudged" \
       "$sub_state/$child_id.claude-settings.json" "$sub_state/$child_id.devin-config.json" \
       "$sub_state/$child_id.claude-review-ack.sh" \
-      "$sub_state/$child_id.devin-config.json" \
       "$sub_state/.$child_id.branch-outcome-index"
     rm -rf "$sub_state/.$child_id.claude-review-ack.lock"
     chmod u+w "$sub_state/$child_id.git-hooks" 2>/dev/null || true

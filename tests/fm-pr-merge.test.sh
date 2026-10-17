@@ -113,11 +113,6 @@ attested_body_json() {
     + " -->"'
 }
 
-# The base branch's required checks as GitHub reports them: the classic branch
-# protection summary on the branch, and the active ruleset rules for it. Each
-# name is given as classic:<context> or ruleset:<context>; with no names the
-# branch is unprotected and has no rules. Args: case_dir [kind:name]...
-
 # Live GitHub JSON for the pre-merge verify, plus gh-axi for the
 # post-merge fallback view. Merge itself is `gh pr merge --match-head-commit`.
 # Args: case_dir head_sha
@@ -270,31 +265,6 @@ case "${1:-} ${2:-}" in
     # The required-check reads: the branch itself, and its rules read without
     # the merge-queue filter the queue reader below applies.
     case " $* " in
-      *" repos/"*"/commits/"*"/check-runs"*)
-        case "$*" in
-          *"/commits/$(cat "$FM_TEST_GH_HEAD")/check-runs"*) ;;
-          *) exit 1 ;;
-        esac
-        cat "$FM_TEST_GH_RUNS"
-        exit $?
-        ;;
-      *" repos/"*"/rules/branches/"*merge_queue*) ;;
-      *" repos/"*"/rules/branches/"*)
-        if [ -f "${FM_TEST_GH_REQUIRED_RULES_FAIL:-}" ]; then
-          cat "$FM_TEST_GH_REQUIRED_RULES_FAIL" >&2
-          exit 1
-        fi
-        cat "$FM_TEST_GH_REQUIRED_RULES"
-        exit 0
-        ;;
-      *" repos/"*"/branches/"*)
-        if [ -f "${FM_TEST_GH_BRANCH_FAIL:-}" ]; then
-          cat "$FM_TEST_GH_BRANCH_FAIL" >&2
-          exit 1
-        fi
-        cat "$FM_TEST_GH_BRANCH"
-        exit 0
-        ;;
       *" repos/"*"/commits/"*"/check-runs"*)
         case "$*" in
           *"/commits/$(cat "$FM_TEST_GH_HEAD")/check-runs"*) ;;

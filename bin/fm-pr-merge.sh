@@ -247,7 +247,6 @@ ATTENDED_OVERRIDE=false
 ALLOW_RED=()
 ALLOW_MISSING=()
 ALLOW_UNSTARTED_ACTIONS=false
-ALLOW_MISSING=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --attended-override)
@@ -327,10 +326,6 @@ if [ "$ALLOW_UNSTARTED_ACTIONS" = true ] && [ "$PROVIDER" != github ]; then
 fi
 if [ "$ALLOW_UNSTARTED_ACTIONS" = true ] && [ "${#ALLOW_RED[@]}" -gt 0 ]; then
   echo "error: --allow-unstarted-actions and --allow-red cannot be combined" >&2
-  exit 2
-fi
-if [ "${#ALLOW_MISSING[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
-  echo "error: --allow-missing does not apply to GitLab, where a merge already requires the head pipeline to have succeeded" >&2
   exit 2
 fi
 
@@ -1522,10 +1517,6 @@ require_current_away_authority() {
   fi
   if [ "$FM_PR_AWAY_POSTURE" = true ] && [ "$ALLOW_UNSTARTED_ACTIONS" = true ]; then
     echo "error: --allow-unstarted-actions is attended-only; while the away-posture record exists the green check is absolute" >&2
-    return 2
-  fi
-  if [ "$FM_PR_AWAY_POSTURE" = true ] && [ "${#ALLOW_MISSING[@]}" -gt 0 ]; then
-    echo "error: --allow-missing is attended-only; while the away-posture record exists every required check must report" >&2
     return 2
   fi
 }

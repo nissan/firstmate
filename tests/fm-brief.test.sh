@@ -1191,12 +1191,6 @@ test_wait_no_turns_absent_keeps_the_previous_brief() {
   pass "fm-brief: without config/wait-no-turns the brief and drive text stay as they were"
 }
 
-# Contract: a waiting worker spends no turns. A decision wait ends the turn, an
-# external wait sleeps in one bounded blocking shell command sized per harness,
-# and a waiting worker neither polls its inbox nor polls a pipeline between holds.
-
-# Without config/wait-no-turns the scaffold matches the pre-flag brief and drive text.
-
 test_worker_role_scope() {
   local kind home brief
   home="$TMP_ROOT/worker-role"
@@ -1276,6 +1270,42 @@ test_home_brief_include_is_appended_last() {
   assert_contains "$out" "brief-include.md must be a readable regular file" "unusable include refusal did not name the file"
   assert_absent "$home/data/include-unusable" "an unusable include left a partial scaffold behind"
   pass "fm-brief.sh: the home brief include lands last on ship and scout, verbatim, and fails closed"
+}
+
+test_scout_report_is_incremental_and_gates_terminal_status() {
+  local brief
+  FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-scout-inc alpha --scout >/dev/null 2>&1 \
+    || fail "fm-brief.sh scout scaffold exited non-zero"
+  brief="$BRIEF_HOME/data/brief-scout-inc/brief.md"
+  assert_grep "before you start investigating" "$brief" \
+    "scout brief must require the report be created before investigation starts"
+  assert_grep "append each finding as you establish it" "$brief" \
+    "scout brief must require incremental appends, not one final write"
+  assert_grep "Never append a terminal status line" "$brief" \
+    "scout brief must forbid a terminal status line without a report"
+  assert_grep "exists and is non-empty" "$brief" \
+    "scout brief must name the existence and non-emptiness check"
+  pass "fm-brief.sh: scout report is incremental and gates the terminal status line"
+}
+
+# Every crewmate brief must carry the absolute-path read rule: a read behind a
+# `cd` cannot be cleared automatically and stalls the worker on manual approval.
+test_briefs_require_absolute_path_reads() {
+  local brief
+  for id_kind in "brief-abs-ship:--mode local-only" "brief-abs-scout:--scout"; do
+    # shellcheck disable=SC2086 # The fixture flags are intentionally word-split.
+    FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" "${id_kind%%:*}" alpha ${id_kind##*:} >/dev/null 2>&1 \
+      || fail "fm-brief.sh scaffold exited non-zero for ${id_kind}"
+    brief="$BRIEF_HOME/data/${id_kind%%:*}/brief.md"
+    # shellcheck disable=SC2016 # The backticks are literal brief prose, not a substitution.
+    assert_grep 'Never `cd` before a read' "$brief" \
+      "${id_kind%%:*} brief must forbid a cd before a read"
+    assert_grep 'pass absolute paths' "$brief" \
+      "${id_kind%%:*} brief must require absolute paths for reads and searches"
+    assert_grep 'git -C <absolute-path>' "$brief" \
+      "${id_kind%%:*} brief must name the absolute-path git form"
+  done
+  pass "fm-brief.sh: ship and scout briefs require absolute-path reads"
 }
 
 # --base-branch names the branch a task starts from and a ship's PR targets. It is

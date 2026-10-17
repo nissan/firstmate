@@ -45,7 +45,7 @@ Refresh `portable_parallel_weight_hints` with the slowest completed `duration_ms
 It keeps watcher, lock, AFK, real tmux, daemon, secondmate lifecycle, bootstrap, the `live-harness-optin` family, GUI-backend, and other unproven work serial.
 Membership is derived rather than enumerated, so a newly added test lands here by default.
 
-## Portable serial CI shards
+## Portable serial hosted-fallback shards
 
 On green CI run [30725985757](https://github.com/kunchenguid/firstmate/actions/runs/30725985757), that remainder accumulated 19m04s of script time against a 20-minute job timeout.
 On [PR 1495](https://github.com/kunchenguid/firstmate/pull/1495), its main step ran about 19m51s before the job was cancelled at that boundary.

@@ -304,7 +304,6 @@ fm_secondmate_liveness_relaunch() {  # <meta> <id> [timeout-secs]
     fi
     [ -z "$target" ] || fm_backend_kill "$backend" "$target" 2>/dev/null || true
   fi
-  local rc=0
   if [ -n "$timeout" ]; then
     FM_SM_LIVE_OUT=$(FM_SPAWN_NO_GUARD=1 fm_run_timed "$timeout" "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1) || rc=$?
   else

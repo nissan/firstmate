@@ -362,52 +362,6 @@ SH
   chmod +x "$fakebin/shellcheck"
 }
 
-# fm_lint_stub_shellcheck_bound <fakebin> <log>: a ShellCheck that reports the
-# allocation failure a root exceeding the address-space bound produces, so the
-# owner's degrade-and-retry decision is exercised without asking CI to actually
-# allocate several gigabytes. FM_TEST_OOM_ROOT names the root that fails;
-# FM_TEST_OOM_ALWAYS=1 makes it fail at every rung, and
-# FM_TEST_OOM_UNLESS_FAST=1 makes it fail until extended analysis is off, which
-# is the real shape of the one root that needs that last rung.
-fm_lint_stub_shellcheck_bound() {
-  local fakebin=$1 log=$2
-  : > "$log"
-  cat > "$fakebin/shellcheck" <<SH
-#!/usr/bin/env bash
-if [ "\${1:-}" = --version ]; then
-  printf 'ShellCheck - shell script analysis tool\nversion: 0.11.0\n'
-  exit 0
-fi
-follow=no
-exclude=none
-ext=on
-while [ "\$#" -gt 0 ] && [ "\$1" != -- ]; do
-  case "\$1" in
-    --external-sources) follow=yes ;;
-    --extended-analysis=false) ext=off ;;
-    --exclude=*) exclude=\${1#--exclude=} ;;
-  esac
-  shift
-done
-[ "\$#" -eq 0 ] || shift
-target=\${1:-}
-printf '%s\n' "\$target" >> "$log"
-if [ -n "\${FM_TEST_FLAG_LOG:-}" ]; then
-  printf '%s external-sources=%s extended-analysis=%s exclude=%s\n' \
-    "\$target" "\$follow" "\$ext" "\$exclude" >> "\$FM_TEST_FLAG_LOG"
-fi
-if [ "\$target" = "\${FM_TEST_OOM_ROOT:-}" ] \
-  && { [ "\$follow" = yes ] \
-    || [ "\${FM_TEST_OOM_ALWAYS:-0}" = 1 ] \
-    || { [ "\${FM_TEST_OOM_UNLESS_FAST:-0}" = 1 ] && [ "\$ext" = on ]; }; }; then
-  printf 'shellcheck: out of memory\n' >&2
-  exit 1
-fi
-exit 0
-SH
-  chmod +x "$fakebin/shellcheck"
-}
-
 # fm_lint_bounds_supported: the platform pair the bounded per-root envelope
 # needs - a watchdog mechanism and an enforceable address-space limit. macOS
 # rejects ulimit -v, so bounded-mode tests run there only when this is true.

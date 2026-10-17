@@ -155,6 +155,84 @@ test_no_profile_keeps_claude_profile_defaults() {
   pass "no --model/--effort records defaults and types the claude launch instructions"
 }
 
+test_claude_review_grants_only_task_outputs_and_records_posture() {
+  local rec id out status launch helper
+  id=claude-review-z1
+  rec=$(make_spawn_case claude-review claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout --harness claude --claude-review)
+  status=$?
+  expect_code 0 "$status" "Claude review scout spawn should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "$(fm_test_claude_review_permissions "$HOME_DIR/state" "$HOME_DIR/data" "$id")" \
+    "Claude review launch did not grant only its durable outputs and own inbox intake"
+  assert_not_contains "$launch" "dangerously-skip-permissions" \
+    "Claude review launch rendered the ordinary permission bypass"
+  assert_grep 'claude_review=on' "$HOME_DIR/state/$id.meta" \
+    "Claude review posture was not recorded durably"
+  assert_contains "$launch" 'CLAUDE_CODE_SEND_FEEDBACK=0' \
+    "Claude review launch lost the feedback control"
+  assert_contains "$launch" '"attribution":{"commit":"","pr":"","sessionUrl":false}' \
+    "Claude review launch lost the attribution policy"
+
+  helper="$HOME_DIR/state/$id.claude-review-ack.sh"
+  assert_present "$helper" "Claude review spawn did not generate its acknowledgement helper"
+  [ "$(stat -c '%a' "$helper")" = 700 ] || fail "Claude review acknowledgement helper is not mode 0700"
+  assert_contains "$launch" "'Bash($helper)'" \
+    "generated launch did not allow only the exact no-argument acknowledgement helper"
+  assert_not_contains "$launch" 'Bash(mv' "generated launch still carried a direct move grant"
+  pass "--claude-review accepts a scout, grants only its outputs and own inbox, preserves Claude controls, and records the posture"
+}
+
+test_claude_review_refuses_raw_launch_command() {
+  local rec id out status
+  id=claude-review-raw-z1
+  rec=$(make_spawn_case claude-review-raw claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout \
+    'claude --dangerously-skip-permissions' --claude-review 2>&1)
+  status=$?
+  expect_code 1 "$status" "a raw Claude launch command must not record a review posture it never applies"
+  assert_contains "$out" "canonical --harness claude launch" "raw review refusal was not actionable"
+  assert_absent "$HOME_DIR/state/$id.meta" "raw review refusal published metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "raw review refusal launched an agent"
+  pass "--claude-review refuses a raw launch command before provisioning"
+}
+
+test_claude_review_rejects_unsupported_and_persistent_harnesses() {
+  local rec id out status
+  id=claude-review-codex-z1
+  rec=$(make_spawn_case claude-review-codex codex "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout --harness codex --claude-review 2>&1)
+  status=$?
+  expect_code 1 "$status" "Claude review mode on Codex must be refused"
+  assert_contains "$out" "apply only to the claude harness" "unsupported review harness refusal was unclear"
+  assert_absent "$HOME_DIR/state/$id.meta" "unsupported review harness published metadata"
+
+  id=claude-review-secondmate-z1
+  rec=$(make_spawn_case claude-review-secondmate claude "$id")
+  read_case_record "$rec"
+  make_seeded_secondmate_home "$CASE_DIR/secondmate" "$id"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$CASE_DIR/secondmate" --secondmate --harness claude --claude-review 2>&1)
+  status=$?
+  expect_code 1 "$status" "Claude review mode on a secondmate must be refused"
+  assert_contains "$out" "scout-only" "persistent secondmate review refusal was unclear"
+  assert_absent "$HOME_DIR/state/$id.meta" "secondmate review refusal published metadata"
+
+  id=claude-review-ship-z1
+  rec=$(make_spawn_case claude-review-ship claude "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude --claude-review 2>&1)
+  status=$?
+  expect_code 1 "$status" "Claude review mode on a ship must be refused"
+  assert_contains "$out" "scout-only" "ship review refusal was unclear"
+  assert_absent "$HOME_DIR/state/$id.meta" "ship review refusal published metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "ship review refusal launched an agent"
+  pass "--claude-review rejects ship, unsupported harness, and persistent secondmate combinations"
+}
+
 # Claude Code strips U+2063 from the launch-prompt argument, so a claude launch
 # publishes the launch-brief envelope as a record in the receiving home's
 # operational inbox and passes only a printable doorbell naming it. Parsing the
@@ -236,19 +314,6 @@ test_claude_spawn_refuses_when_the_brief_record_cannot_publish() {
   [ ! -s "$LAUNCH_LOG" ] || fail "a launch was sent despite the unpublished brief record: $(cat "$LAUNCH_LOG")"
   pass "a claude spawn whose launch-brief record cannot publish stops with a clear error and sends no launch"
 }
-
-# Claude Code strips U+2063 from the launch-prompt argument, so a claude launch
-# publishes the launch-brief envelope as a record in the receiving home's
-# operational inbox and passes only a printable doorbell naming it. Parsing the
-# staged launch the way the destination pane's shell would proves the argument
-# it passes and the record it names.
-
-# A secondmate's launch brief belongs to the secondmate home that pane runs in,
-# so its record must publish there rather than into the primary's state.
-
-# A claude worker given a typed envelope would see it with the marker stripped,
-# so a launch-brief record that cannot be published stops the spawn before any
-# launch is sent.
 
 test_non_cursor_launch_clears_inherited_cursor_markers() {
   local rec id out status launch

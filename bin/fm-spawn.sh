@@ -2232,7 +2232,6 @@ launch_template() {
   # selects (header above): --dangerously-skip-permissions by default, or
   # --permission-mode auto for a captain who refuses bypass mode. A
   # --claude-review scout replaces it with its own narrower allowlist.
-  # --permission-mode auto for a captain who refuses bypass mode.
   # __CLAUDEADDDIRS__ is the task-channel directory grant
   # claude_add_dirs_flag below builds: Claude path-checks Read/Glob/Grep (and
   # an Edit's mandatory prior Read) against cwd plus --add-dir, and since
@@ -5339,23 +5338,6 @@ if [ "$KEEP_AI_TRAILERS" = 0 ]; then
   }
 fi
 
-# Per-task git hooksPath that strips AI commit trailers at the commit object.
-# Installed for every kind, including secondmate, unless the home opts in to
-# keeping trailers. Cursor and other non-Claude runtimes inject the trailer
-# after the typed message, so the typed message is not the object. When
-# installed, the pane receives this directory via GIT_CONFIG_* below, which
-# overrides a project's husky core.hooksPath without rewriting it; the installer
-# chains the previous hooks so they still run. Real secondmate
-# homes are firstmate clones; a launch whose worktree is not git fails closed
-# rather than shipping a runtime that cannot strip.
-GIT_HOOKS_DIR="$STATE_REAL/$ID.git-hooks"
-if [ "$KEEP_AI_TRAILERS" = 0 ]; then
-  "$FM_ROOT/bin/fm-git-strip-ai-trailers.sh" install "$GIT_HOOKS_DIR" "$WT" || {
-    echo "error: could not install the AI-trailer strip hooks for $ID" >&2
-    exit 1
-  }
-fi
-
 # Delivery posture recorded in meta so fm-teardown's safety check and the
 # validate/merge stages can branch on it. A ship task carries the explicit
 # per-task decision validated above; a secondmate's posture is fixed; a scout
@@ -5445,10 +5427,6 @@ preserve_relaunch_meta() {
   [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"
   [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
   [ "$CLAUDE_REVIEW_ACTIVE" -ne 1 ] || echo "claude_review=on"
-  # The worker account pin, only when this home declares one, so an unpinned
-  # task record stays byte-identical.
-  [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"
-  [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   [ -z "${FM_TREEHOUSE_SLOT_CLAIM_GEN:-}" ] \
