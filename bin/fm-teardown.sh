@@ -3982,6 +3982,14 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
     echo "The report is the work product. Have the crewmate write it, or use --force after explicit discard approval." >&2
     exit 1
   fi
+  # The generated scout instructions forbid a terminal status until the report
+  # exists AND is non-empty, so an existence-only gate here would accept a
+  # zero-byte file as the deliverable and let the investigation be discarded.
+  if [ ! -s "$REPORT" ]; then
+    echo "REFUSED: scout task $ID has a report at $REPORT but it is empty." >&2
+    echo "The scout contract requires a non-empty report before any terminal status. Have the crewmate write it, or use --force after explicit discard approval." >&2
+    exit 1
+  fi
   if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
       FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-captain-hold.sh" verify "$ID" >/dev/null; then
     echo "REFUSED: scout task $ID has not passed the captain-call completion gate." >&2
@@ -4240,12 +4248,18 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fm_treehouse_slot_owner_release "$WT" "$ID"
 fi
 
-if [ "$KIND" = scout ] && [ "$FORCE" = "--force" ] && [ ! -f "$DATA/$ID/report.md" ]; then
-  # A forced teardown of a report-less scout is the explicit escape for an
-  # abandoned investigation. Announce the irreversible loss only after every
-  # refusal that could preserve the worktree has passed and its return has
-  # succeeded, so a failed cleanup never claims it discarded findings.
-  echo "NOTICE: FORCED teardown of scout task $ID with NO report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
+if [ "$KIND" = scout ] && [ "$FORCE" = "--force" ]; then
+  # A forced teardown of a scout with no usable report is the explicit escape
+  # for an abandoned investigation. Announce the irreversible loss only after
+  # every refusal that could preserve the worktree has passed and its return has
+  # succeeded, so a failed cleanup never claims it discarded findings. A
+  # zero-byte report is no work product either, so it is announced the same way
+  # rather than passing silently as a kept deliverable.
+  if [ ! -f "$DATA/$ID/report.md" ]; then
+    echo "NOTICE: FORCED teardown of scout task $ID with NO report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
+  elif [ ! -s "$DATA/$ID/report.md" ]; then
+    echo "NOTICE: FORCED teardown of scout task $ID with an EMPTY report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
+  fi
 fi
 
 HERDR_PRESENTATION_JOURNAL="$STATE/$ID.herdr-presentation"

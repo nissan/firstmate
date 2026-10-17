@@ -1262,29 +1262,46 @@ done
 
 # The local changed-file posture, and the memory fallback, exclude only
 # diagnostics that require source context. Prove that list remains complete on
-# every authoritative full run. Each no-source process owns one root and at most
-# four run concurrently; these shallow graphs stay far below the memory envelope
-# the bounded source-aware roots above are sized against.
+# every authoritative full run. Each no-source process owns one root, runs
+# inside the same per-root deadline and address-space envelope as the
+# source-aware roots above, and obeys the same JOBS concurrency limit.
 fm_lint_run_local_exclusion_guard() {
   [ "$EXPLICIT_PATHS" -eq 0 ] && [ "$FOLLOW_SOURCES" -eq 1 ] && [ "$FAST" -eq 0 ] || return 0
   local guard_dir index path pid rc unexpected code
-  local -a guard_pids
+  local -a guard_cmd
   guard_dir="$TMP_ROOT/local-exclusion-guard"
   mkdir -p "$guard_dir"
-  guard_pids=()
   index=0
   for path in "${ROOTS[@]}"; do
-    # shellcheck disable=SC2016 # The child shell, not this one, expands $1-$3.
-    "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
-      "${BASH:-bash}" -c 'rc=0; "$1" --norc --format=gcc -- "$2" >"$3.out" 2>&1 || rc=$?; printf "%s\n" "$rc" >"$3.rc"' \
-      fm-lint-guard "$SHELLCHECK_BIN" "$path" "$guard_dir/$index" &
+    # This guard is per-root ShellCheck like every other analysis in this run,
+    # so it owes the same two promises the header makes. It goes through the
+    # same --internal-timed and --internal-root owner the bounded per-root
+    # runner uses, so a guard root carries the identical deadline, cleanup
+    # grace and address-space limit and can never run uncapped where required
+    # bounds are in force; and it holds at most JOBS concurrent processes, one
+    # under CI, instead of a batch size of its own. The setpgrp hop stays so
+    # each root remains its own process group for the owner's signal sweep.
+    if [ "$BOUND_MECH" != none ]; then
+      guard_cmd=(
+        "${BASH:-bash}" "$SELF" --internal-timed "$ROOT_SECONDS" "$ROOT_GRACE"
+        "${BASH:-bash}" "$SELF" --internal-root "$guard_dir/$index.rss" "$ROOT_MEMORY_KIB"
+        "$SHELLCHECK_BIN" --norc --format=gcc -- "$path"
+      )
+    else
+      guard_cmd=("$SHELLCHECK_BIN" --norc --format=gcc -- "$path")
+    fi
+    # shellcheck disable=SC2016 # The child shell, not this one, expands these.
+    FM_LINT_INTERNAL=1 \
+    FM_LINT_GUARD_OUT="$guard_dir/$index.out" \
+    FM_LINT_GUARD_RC="$guard_dir/$index.rc" \
+      "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
+      "${BASH:-bash}" -c 'rc=0; "$@" >"$FM_LINT_GUARD_OUT" 2>&1 || rc=$?; printf "%s\n" "$rc" >"$FM_LINT_GUARD_RC"' \
+      fm-lint-guard "${guard_cmd[@]}" &
     pid=$!
     ACTIVE_PIDS+=("$pid")
-    guard_pids+=("$pid")
     index=$((index + 1))
-    if [ "${#guard_pids[@]}" -eq 4 ]; then
+    if [ "${#ACTIVE_PIDS[@]}" -ge "$JOBS" ]; then
       fm_lint_wait_workers
-      guard_pids=()
     fi
   done
   fm_lint_wait_workers

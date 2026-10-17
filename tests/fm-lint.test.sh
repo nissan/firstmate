@@ -902,6 +902,81 @@ test_authoritative_lint_owns_local_exclusion_completeness() {
   pass "authoritative lint owns local exclusion completeness without a behavior-lane repository sweep"
 }
 
+# The exclusion guard is per-root ShellCheck like any other analysis, so it owes
+# the same concurrency promise the header makes: a run holds at most JOBS
+# concurrent processes, one under CI. The older concurrency regression passes
+# explicit paths, which switches the guard off entirely, so it never covered
+# this path.
+test_exclusion_guard_caps_concurrency_at_jobs() {
+  local tmp fakebin log concurrency flags out peak guard_calls
+  tmp=$(fm_test_tmproot fm-lint-guard-jobs)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  concurrency="$tmp/concurrency"
+  flags="$tmp/flags.log"
+  mkdir -p "$concurrency"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+
+  # No explicit paths, so the canonical set runs and the guard is active.
+  out=$(PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true \
+    FM_TEST_CONCURRENCY_DIR="$concurrency" FM_TEST_FLAG_LOG="$flags" \
+    "$LINT" 2>&1) \
+    || fail "guard concurrency fixture failed"$'\n'"$out"
+
+  guard_calls=$(grep -c '^external-sources=no$' "$flags" || true)
+  [ "$guard_calls" -gt 0 ] \
+    || fail "the exclusion guard never ran, so this case would be vacuous"
+
+  peak=$(LC_ALL=C sort -nr "$concurrency/counts" | head -1)
+  [ "$peak" -eq 1 ] \
+    || fail "CI ran $peak concurrent ShellCheck processes; the guard must honor JOBS=1 like every other per-root analysis"
+  pass "the exclusion guard caps its concurrency at JOBS ($guard_calls guard roots, peak $peak)"
+}
+
+# The guard must also run inside the per-root deadline and address-space
+# envelope. A guard root that hangs has to be reaped at the bound and named,
+# exactly as a source-aware root is, rather than running uncapped until the job
+# timeout.
+test_exclusion_guard_runs_under_the_bounded_envelope() {
+  if ! fm_lint_bounds_supported; then
+    pass "SKIP (host cannot enforce the bounded envelope): exclusion-guard deadline check"
+    return
+  fi
+  local tmp fakebin out rc started elapsed
+  tmp=$(fm_test_tmproot fm-lint-guard-bounded)
+  fakebin=$(fm_fakebin "$tmp")
+  # Blocks only the no-source pass, so the source-aware pass completes and the
+  # guard is the single thing left to bound.
+  cat > "$fakebin/shellcheck" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+  printf 'ShellCheck - shell script analysis tool\nversion: 0.11.0\n'
+  exit 0
+fi
+follow=no
+for arg in "$@"; do
+  [ "$arg" != --external-sources ] || follow=yes
+done
+[ "$follow" = no ] || exit 0
+exec sleep 300
+SH
+  chmod +x "$fakebin/shellcheck"
+
+  started=$(date +%s)
+  rc=0
+  out=$(PATH="$fakebin:$PATH" CI=true GITHUB_ACTIONS=true \
+    FM_LINT_REQUIRE_BOUNDS=1 FM_LINT_JOBS=1 \
+    FM_LINT_ROOT_SECONDS=2 FM_LINT_ROOT_GRACE=1 \
+    "$LINT" 2>&1) || rc=$?
+  elapsed=$(( $(date +%s) - started ))
+
+  [ "$rc" -ne 0 ] \
+    || fail "a hanging exclusion-guard root reported success"$'\n'"$out"
+  [ "$elapsed" -lt 120 ] \
+    || fail "the exclusion guard ran uncapped for ${elapsed}s instead of being reaped at its deadline"
+  pass "a hanging exclusion-guard root is reaped at the per-root deadline (${elapsed}s)"
+}
+
 test_pins_an_explicit_version() {
   [ -n "$REQUIRED" ] || fail "fm-lint.sh --required-version printed nothing"
   # The captain-agreed pin: adopt ShellCheck 0.11.0's rule set consistently,
@@ -2205,3 +2280,5 @@ test_explicit_path_keeps_external_sources
 test_fast_mode_on_a_local_branch_keeps_source_following
 test_changed_mode_hides_cross_file_codes_that_ci_still_sees
 test_authoritative_lint_owns_local_exclusion_completeness
+test_exclusion_guard_caps_concurrency_at_jobs
+test_exclusion_guard_runs_under_the_bounded_envelope
