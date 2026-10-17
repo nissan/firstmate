@@ -178,8 +178,8 @@ The worktree and the task's records are unaffected either way.
 
 ### A scout lost with no report
 
-A scout that was lost this way with no report written is the one case this cannot recover: its findings were never durable.
-`bin/fm-teardown.sh <id> --force` returns that stranded slot and prints one loud line saying the investigation is being discarded; without `--force` the report refusal stands.
+A scout that was lost this way with no report written, or with only an empty `data/<id>/report.md`, is the one case this cannot recover: its findings were never durable.
+`bin/fm-teardown.sh <id> --force` returns that stranded slot and prints one loud line saying the investigation is being discarded; without `--force` the report refusal stands, and a zero-byte report is refused the same way because the scout brief forbids a terminal status until the report exists and is non-empty.
 The notice is printed only after the worktree has actually been returned - past every refusal `--force` does not skip, including the leaked-process reap and the worktree return itself - so a cleanup that refuses instead never claims a discard that did not happen.
 
 ## Capability matrix
@@ -201,5 +201,5 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 - `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and the endpoint-absence proof both verbs share - the Herdr reclaim of a destroyed endpoint, and tmux refusing one it cannot prove absent.
-- `tests/fm-teardown-scout-report.test.sh` - the report-less scout: the refusal without `--force`, the forced discard notice, and the refusals that must never print it.
+- `tests/fm-teardown-scout-report.test.sh` - the report-less and empty-report scout: the refusal without `--force`, the forced discard notice, and the refusals that must never print it.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
