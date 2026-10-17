@@ -178,7 +178,7 @@ test_claude_review_grants_only_task_outputs_and_records_posture() {
 
   helper="$HOME_DIR/state/$id.claude-review-ack.sh"
   assert_present "$helper" "Claude review spawn did not generate its acknowledgement helper"
-  [ "$(stat -c '%a' "$helper")" = 700 ] || fail "Claude review acknowledgement helper is not mode 0700"
+  [ "$(stat -c %a "$helper" 2>/dev/null || stat -f %Lp "$helper")" = 700 ] || fail "Claude review acknowledgement helper is not mode 0700"
   assert_contains "$launch" "'Bash($helper)'" \
     "generated launch did not allow only the exact no-argument acknowledgement helper"
   assert_not_contains "$launch" 'Bash(mv' "generated launch still carried a direct move grant"
