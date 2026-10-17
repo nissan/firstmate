@@ -1,0 +1,24 @@
+### S5: FM_HOME=<lab> bin/fm-promote.sh promote-live --mode no-mistakes --yolo off
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+promoted promote-live to ship mode=no-mistakes yolo=off (teardown protection restored)
+wrote ship instructions for mode=no-mistakes: /var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T//fm-brief-lab.0tWJMu/promote-home/data/promote-live/ship-instructions.md
+next: FM_HOME=/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T//fm-brief-lab.0tWJMu/promote-home bin/fm-send.sh fm-promote-live "$(cat /var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T//fm-brief-lab.0tWJMu/promote-home/data/promote-live/ship-instructions.md)"
+exit=0
+--- meta after promotion ---
+window=fm-promote-live
+worktree=/tmp/wt
+kind=ship
+mode=no-mistakes
+yolo=off
+branch=fm/promote-live
+--- ship-instructions.md: run helper and delivery-ready lines ---
+47:Use `/Users/nissan/.no-mistakes/worktrees/3a4d358839a1/01M54GMJA5W8M07TJJWMRTX3PH/bin/fm-no-mistakes-run.sh` in place of `no-mistakes axi run` when starting or reattaching; that helper's header owns repository-specific hosted-check routing.
+74:After /no-mistakes reports delivery ready (CI green for a hosted-check repository at the CI-ready return point - do not wait for it to keep monitoring in the background until merge - or terminal success after PR publication for a canonical local-validation repository), read the PR back from the forge and confirm it is not a draft (`gh-axi pr view <number>` must print `draft: no`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with `gh-axi pr ready <number>`.
+--- brief.md appended contract carries the same helper line ---
+1

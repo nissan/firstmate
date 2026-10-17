@@ -1,0 +1,29 @@
+### S8: fm-lint.sh worker default under CI vs local (real ShellCheck 0.11.0, explicit root bin/fm-dod-lib.sh, --telemetry)
+
+[CI=true (hosted/private runner)] exit=0
+  fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+  fm-lint.sh: full ShellCheck extended analysis enabled
+  telemetry: jobs=1 root_count=1 result_exit=0 
+
+[GITHUB_ACTIONS=true] exit=0
+  fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+  fm-lint.sh: full ShellCheck extended analysis enabled
+  telemetry: jobs=1 root_count=1 result_exit=0 
+
+[local (CI and GITHUB_ACTIONS unset)] exit=0
+  fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+  fm-lint.sh: full ShellCheck extended analysis enabled
+  telemetry: jobs=2 root_count=1 result_exit=0 
+
+[local with FM_LINT_JOBS=1 override] exit=0
+  fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+  fm-lint.sh: full ShellCheck extended analysis enabled
+  telemetry: jobs=1 root_count=1 result_exit=0 
+
+[CI=true with FM_LINT_JOBS=2 override] exit=0
+  fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+  fm-lint.sh: full ShellCheck extended analysis enabled
+  telemetry: jobs=2 root_count=1 result_exit=0 
+
+[adversarial FM_LINT_JOBS=3 (out of range)] exit=2
+  fm-lint.sh: jobs must be 1 or 2, got 3.

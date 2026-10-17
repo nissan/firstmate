@@ -1,0 +1,147 @@
+FM_TEST_BEGIN 2026-10-17T10:11:04Z tests/fm-brief.test.sh family=pure-contract-unit expected_gate_skip=none
+FM_TEST_BEGIN 2026-10-17T10:11:04Z tests/fm-lint.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - fm-brief: scaffolds leave the worker role scope to the launch boundary and keep the secondmate contract
+ok - fm-brief.sh: bash -n succeeds
+/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-test-run.u31jXl/w1/tmp/fm-brief.DHH8tc/heredoc-in-substitution.sh:2
+ok - fm-brief.sh: no heredoc is nested inside a command substitution (Bash 3.2 parse-safe)
+ok - fm-brief.sh: --help renders the complete header
+ok - fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly
+ok - fm-brief.sh: --forge forgejo names tea in Rule 3, the direct-PR DOD, and the draft read-back, marks the delivery contract, and the closed set refuses everything else
+ok - fm-brief.sh: ship --mode is required and closed-set validated
+ok - fm-brief.sh: the explicit ship mode wins over the registered posture
+ok - fm-brief.sh: --yolo and scout/secondmate --mode are refused, never silently dropped
+ok - fm-brief.sh: faster paths use configured authority without stacked review
+ok - fm-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright
+ok - fm-dod-lib.sh: fm_dod_block requires the no-mistakes run helper
+ok - fm-brief.sh: no-mistakes DOD detects a green PR from the drive call, not a status poll
+ok - fm-brief.sh: PR-based done requires a non-draft PR; a deliberate draft declares a wait
+ok - fm-brief.sh: no-mistakes ask-user findings use one event plus a verbatim snapshot
+ok - fm-brief.sh: ship project-memory wording bounds edits to corrections of wrong information
+ok - fm-brief.sh: --herdr-lab emits the complete hard safety contract
+ok - fm-brief.sh: --herdr-lab uses its quoted Firstmate-owned helper path
+ok - fm-brief.sh: ship and scout scaffolds make omitted Herdr intent fail-visible
+ok - fm-brief.sh: the documented {TASK} and {FIRSTMATE_SPEC} fills cannot corrupt the Herdr safety gate
+ok - fm-brief.sh: Herdr lab contract covers scouts and rejects secondmate misuse
+ok - fm-brief.sh: --no-projects scaffolds a project-less charter and guards misuse
+ok - fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting
+ok - fm-brief.sh: relative directory inputs ignore CDPATH, render stable absolute charter paths, or fail loudly
+ok - fm-brief.sh: custom pause verb renders in every scaffold
+ok - fm-brief.sh: ship and scout scaffolds declare a validation-round pause once, then hold it
+ok - fm-brief.sh: investigation and visual-review completions load the shared decision policy
+ok - fm-brief: scout and secondmate code paths still scaffold well-formed briefs
+ok - fm-brief.sh: scout Lavish hosting follows the bootstrap lavish-axi floor
+ok - fm-brief: workers end the turn on a decision, wait in one bounded shell command, and never poll
+ok - fm-brief: without config/wait-no-turns the brief and drive text stay as they were
+ok - fm-brief.sh: the home brief include lands last on ship and scout, verbatim, and fails closed
+ok - fm-brief.sh: scout report is incremental and gates the terminal status line
+ok - fm-brief.sh: ship and scout briefs require absolute-path reads
+ok - fm-brief.sh: --base-branch records the base, targets the PR at it, and is refused where no PR carries it
+ok - fm-brief.sh: --branch-prefix omitted defaults every ship mode to fm/<task-id>
+ok - fm-brief.sh: a --branch-prefix override renders identically across every generated section
+ok - fm-brief.sh: an empty --branch-prefix override resolves to a bare <task-id> branch
+ok - fm-brief.sh: --branch-prefix is refused on scout and secondmate scaffolds
+ok - fm-brief.sh: --branch-prefix value is validated against embedded spaces and a leading dash
+Switched to a new branch '$(touch${IFS}/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-test-run.u31jXl/w1/tmp/fm-brief.DHH8tc/branch-prefix-shell-safe-marker)brief-branch-safe-g3'
+ok - fm-brief.sh: ref-format-valid shell metacharacters stay literal in generated branch commands
+ok - fm-brief.sh: every crewmate scaffold forbids administering the shared worktree pool
+FM_TEST_END 2026-10-17T10:11:21Z tests/fm-brief.test.sh exit=0 duration_ms=16727 gate_skip=false
+ok - fm-lint.sh --help reports the complete executable interface
+ok - fm-lint.sh --list-files reports the complete shell inventory
+ok - two canonical lint partitions preserve complete source-aware coverage and reject weakened modes
+ok - fm-lint.sh --fast disables ShellCheck extended analysis
+ok - fm-lint.sh keeps full ShellCheck analysis by default in CI
+ok - fm-lint.sh rejects explicit --fast mode in CI
+ok - fm-lint.sh --fast catches an ordinary shell lint defect
+ok - fm-lint.sh pins an explicit ShellCheck version (0.11.0)
+ok - ShellCheck installer retries a transient download failure
+ok - ShellCheck installer selects the official archive, URL, and checksum per OS/arch
+ok - ShellCheck installer rejects a wrong checksum
+ok - ShellCheck installer falls back to shasum -a 256 when sha256sum is absent
+ok - ShellCheck installer prefers sha256sum when both hashers are present
+ok - ShellCheck installer rejects an unsupported OS or architecture
+ok - missing ShellCheck fails closed
+ok - fm-lint.sh refuses to lint under a non-pinned ShellCheck version
+ok - fm-lint.sh catches a real lint defect the old no-op gate passed
+ok - fm-lint.sh rejects direct Beads CLI invocations in firstmate core
+ok - fm-lint.sh enforces backend purity for explicit core paths
+ok - fm-lint.sh ignores ambient ShellCheck options
+ok - fm-lint.sh passes a clean fixture
+ok - jobs=1 and jobs=2 preserve deterministic diagnostics, failures, cleanup bounds, and quiet telemetry
+ok - source-aware roots stay separate and four scheduling shards obey the two-worker limit
+ok - CI runs every complete source graph separately with one-worker memory bound
+ok - lint failure still publishes finished telemetry
+ok - CI always uploads telemetry from the authoritative lint owner
+ok - worker and exclusion-guard trees stop on signal with and without telemetry
+ok - SKIP (host cannot enforce the bounded envelope): root deadline kill check
+ok - SKIP (host cannot enforce the bounded envelope): memory-limit death check
+ok - memory failures retry without source following, exclude cross-file codes, and preserve a real fallback finding
+ok - SKIP (host cannot enforce the bounded envelope): fallback deadline check
+ok - explicit memory evidence outranks findings and signal reasons (modes: 0)
+ok - OOM words in a source excerpt or a root path never classify a root as memory
+ok - FM_LINT_REQUIRE_BOUNDS refuses missing enforcement and proceeds when enforceable
+ok - SKIP (host cannot enforce the bounded envelope): pinned memory-envelope check
+ok - the roots sidecar and telemetry record the run's final exit status
+ok - the retained sidecar records each root's lifecycle with a mode, reason, and duration
+ok - seeded dispatcher, adapter, production-owner, and test-local diagnostics preserve parity
+ok - fm-lint.sh changed mode lints only the changed canonical file
+ok - fm-lint.sh forces a full lint in CI even when the local diff would be empty
+ok - fm-lint.sh forces a full lint when HEAD is on main
+ok - fm-lint.sh explicit paths bypass changed-file mode selection
+ok - fm-lint.sh exits 0 with a note when the local branch has no changed lint targets
+ok - fm-lint.sh --list-files reports the would-be changed set in changed mode
+ok - fm-lint.sh changed mode drops source following and excludes cross-file codes
+ok - fm-lint.sh changed mode invokes ShellCheck once per root
+ok - fm-lint.sh CI keeps source following without the local exclusion list
+ok - fm-lint.sh on main keeps source following and owns the no-source exclusion guard
+ok - fm-lint.sh without a merge-base keeps source following and owns the no-source exclusion guard
+ok - fm-lint.sh explicit paths keep source following
+ok - fm-lint.sh --fast on a local branch keeps source following
+ok - fm-lint.sh changed mode excludes cross-file codes that explicit paths still report
+ok - authoritative lint owns local exclusion completeness without a behavior-lane repository sweep
+FM_TEST_END 2026-10-17T10:14:46Z tests/fm-lint.test.sh exit=0 duration_ms=221147 gate_skip=false
+FM_TEST_BEGIN 2026-10-17T10:14:46Z tests/fm-dod-lib.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - scout done: is not gated
+ok - unpushed ship done: is refused
+ok - no-mistakes pre-validation done: is not gated
+ok - named head on a remote-tracking ref is accepted
+ok - a moved remote branch that lacks the named head is refused
+ok - a 40-hex token in the note is not the named head
+ok - a recorded merged PR satisfies the gate after prune
+ok - the merged-PR short-circuit applies only to the recorded PR the done line names
+ok - a forge-recorded head for the named PR is accepted without a local object
+ok - a direct-PR recorded head does not cover a later unpushed commit
+ok - no-mistakes CI-ready done: with extra text is gated
+ok - keyed and spaced ship done: lines are gated
+ok - local-only linked named branch is reachable from the project clone
+ok - local-only detached HEAD only in the disposable copy is refused
+ok - standalone local-only done: requires the named head in the project clone
+ok - non-done lines are not gated
+ok - fenced and indented Captain lines are not authorized intent
+ok - PR-based DoD draft check uses gh-axi
+ok - promotion keeps a scout's recorded base branch and refuses local-only for it
+ok - worker role names the skill and its fallback skill file
+all fm-dod-lib tests passed
+FM_TEST_END 2026-10-17T10:14:52Z tests/fm-dod-lib.test.sh exit=0 duration_ms=5704 gate_skip=false
+FM_TEST_BEGIN 2026-10-17T10:14:52Z tests/fm-self-repo-role.test.sh family=unclassified expected_gate_skip=none
+ok - fm-role.sh report: default, user, and maintainer directives resolve
+ok - fm-role.sh report: malformed, unknown, and unsafe input fails closed
+ok - fm-role.sh check: the default user/operator home cannot publish to firstmate upstream
+not ok - an ordinary project must not be gated at all: expected exit 2, got 1
+FM_TEST_END 2026-10-17T10:14:53Z tests/fm-self-repo-role.test.sh exit=1 duration_ms=996 gate_skip=false
+FM_TEST_BEGIN 2026-10-17T10:14:53Z tests/fm-spawn-dispatch-profile.test.sh family=backend-dispatch expected_gate_skip=none
+not ok - allowlist=absent spawn should succeed: warning: no provider allowance is tracked for the 'sh' worker runtime on model default; spawning env-absent anyway
+warning: /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-spawn-dispatch-profile.YgpmEF/env-absent/home/data/env-absent/launch-brief.md records no ship branch; defaulting to legacy branch fm/env-absent
+warning: /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-spawn-dispatch-profile.YgpmEF/env-absent/home/data/env-absent/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: spawn refused for env-absent: cannot determine whether /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-spawn-dispatch-profile.YgpmEF/env-absent/project shares firstmate's history (the code root /Users/nissan/.no-mistakes/worktrees/3a4d358839a1/01M54GMJA5W8M07TJJWMRTX3PH has no readable history, or a shallow clone shares no root commit); fetch full history (git fetch --unshallow) before dispatching publishing work
+error: to let this home publish to path:/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-spawn-dispatch-profile.YgpmEF/env-absent/project, write 'maintainer path:/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-spawn-dispatch-profile.YgpmEF/env-absent/project' into /private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-spawn-dispatch-profile.YgpmEF/env-absent/home/config/firstmate-role (docs/configuration.md "Firstmate role"), or pass --upstream-consent path:/private/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T/fm-spawn-dispatch-profile.YgpmEF/env-absent/project for this one task with the captain's explicit approval: expected exit 0, got 1
+FM_TEST_END 2026-10-17T10:14:54Z tests/fm-spawn-dispatch-profile.test.sh exit=1 duration_ms=911 gate_skip=false
+FM_TEST_SUMMARY total=5 failed=2 skipped_gate=0 duration_ms=229208
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=911 failed=1
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=3 duration_ms=243578 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=996 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-lint.test.sh duration_ms=221147
+FM_TEST_SLOWEST rank=2 script=tests/fm-brief.test.sh duration_ms=16727
+FM_TEST_SLOWEST rank=3 script=tests/fm-dod-lib.test.sh duration_ms=5704
+FM_TEST_SLOWEST rank=4 script=tests/fm-self-repo-role.test.sh duration_ms=996
+FM_TEST_SLOWEST rank=5 script=tests/fm-spawn-dispatch-profile.test.sh duration_ms=911
+exit=1

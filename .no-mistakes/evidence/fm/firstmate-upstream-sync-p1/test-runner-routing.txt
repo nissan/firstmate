@@ -1,0 +1,29 @@
+### S10: bin/fm-test-run.sh --list --family pr-forge
+tests/fm-check-unregister.test.sh
+tests/fm-no-mistakes-run.test.sh
+tests/fm-pipeline-spend.test.sh
+tests/fm-pr-check-security.test.sh
+tests/fm-pr-merge.test.sh
+tests/fm-pr-reviewers.test.sh
+tests/fm-pr-state.test.sh
+tests/fm-review-diff.test.sh
+tests/fm-teardown-scout-report.test.sh
+tests/fm-teardown.test.sh
+tests/fm-x-mode.test.sh
+
+### bin/fm-test-run.sh --list --family backend-dispatch (claude-review ack suite routing)
+tests/fm-claude-review-ack.test.sh
+tests/fm-crew-cap.test.sh
+tests/fm-spawn-dispatch-profile.test.sh
+
+### families of new scripts via --list --all | grep
+tests/fm-crew-cap.test.sh
+tests/fm-no-mistakes-run.test.sh
+tests/fm-pause-and-learn-inventory.test.sh
+tests/fm-shared-brain-skill.test.sh
+tests/fm-teardown-scout-report.test.sh
+tests/fm-watch-noprogress.test.sh
+
+### bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=262 parallel=24 parallel_max_ms=665545 parallel_imbalance_ms=2 parallel_unhinted=0 serial=222 serial_shards=9 serial_unhinted=14 serial_max_ms=1074843 serial_budget_ms=1200000 herdr=16
+exit=0

@@ -1,0 +1,29 @@
+### S1/S2: scout brief rendered by: FM_HOME=<lab> bin/fm-brief.sh scout-inc alpha --scout
+--- rule 3 block ---
+24:3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+25-   Never `cd` before a read: pass absolute paths to every read and search, use `git -C <absolute-path>`, and prefer the Read tool for a single file.
+26-   A read behind a `cd` cannot be cleared automatically and stops for a human, stalling you for nothing.
+27-4. Report status by appending one line:
+--- Definition of done ---
+79:# Definition of done
+80-Create `/var/folders/jh/8hhpg3_x0mq0389h7hnp61w00000gn/T//fm-brief-lab.0tWJMu/data/scout-inc/report.md` before you start investigating, and append each finding as you establish it.
+81-A run that is interrupted or runs out of budget leaves usable evidence only if the report was written incrementally; findings held back for a final write are lost entirely.
+82-Never append a terminal status line (`done`, `failed`, `blocked`, `needs-decision`) before confirming that file exists and is non-empty.
+83-The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
+
+### S2/S3: ship brief rendered by: FM_HOME=<lab> bin/fm-brief.sh ship-nm alpha --mode no-mistakes
+--- rule 3 block ---
+30:3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+31-   Never `cd` before a read: pass absolute paths to every read and search, use `git -C <absolute-path>`, and prefer the Read tool for a single file.
+32-   A read behind a `cd` cannot be cleared automatically and stops for a human, stalling you for nothing.
+--- run-helper and delivery-ready lines ---
+105:Use `/Users/nissan/.no-mistakes/worktrees/3a4d358839a1/01M54GMJA5W8M07TJJWMRTX3PH/bin/fm-no-mistakes-run.sh` in place of `no-mistakes axi run` when starting or reattaching; that helper's header owns repository-specific hosted-check routing.
+132:After /no-mistakes reports delivery ready (CI green for a hosted-check repository at the CI-ready return point - do not wait for it to keep monitoring in the background until merge - or terminal success after PR publication for a canonical local-validation repository), read the PR back from the forge and confirm it is not a draft (`gh-axi pr view <number>` must print `draft: no`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with `gh-axi pr ready <number>`.
+--- helper path occurrences: 1
+
+### S4 adversarial: fm_dod_block with no run helper (all three modes)
+no-mistakes: rc=1 output=[error: fm_dod_block: missing no-mistakes run helper]
+direct-PR: rc=1 output=[error: fm_dod_block: missing no-mistakes run helper]
+local-only: rc=1 output=[error: fm_dod_block: missing no-mistakes run helper]
+--- explicit helper: DOD renders and names it ---
+11:Use `/opt/fm/bin/fm-no-mistakes-run.sh` in place of `no-mistakes axi run` when starting or reattaching; that helper's header owns repository-specific hosted-check routing.
