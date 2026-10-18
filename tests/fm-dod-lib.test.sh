@@ -373,7 +373,10 @@ test_pr_based_dod_draft_check_uses_gh_axi() {
   local mode out
   for mode in direct-PR no-mistakes; do
     out="$TMP_ROOT/dod-$mode.md"
-    fm_dod_block "$mode" dod-draft-task > "$out"
+    # The run helper is a required argument in this fork (the pipeline is
+    # driven through bin/fm-no-mistakes-run.sh), so supply one.
+    fm_dod_block "$mode" dod-draft-task fm/dod-draft-task none "" \
+      "$ROOT/bin/fm-no-mistakes-run.sh" > "$out"
     assert_no_grep 'gh pr view' "$out" "$mode: DoD must not document a raw gh draft check"
     # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
     assert_grep 'confirm it is not a draft (`gh-axi pr view <number>` must print `draft: no`' "$out" \

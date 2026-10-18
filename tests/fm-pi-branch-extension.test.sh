@@ -1486,6 +1486,8 @@ let finishReplacementPrompt;
 globalThis.__fmOnBranchPrompt = () => new Promise((resolve) => { finishReplacementPrompt = resolve; });
 const replacementOffer = dispatch("signal: after replacement");
 if (!replacementOffer.accepted) throw new Error("branch refused a wake after the replacement");
+// Wait for the replacement wake's prompt, not just its session: a report made
+// before the prompt starts lands ahead of the wake's durable-report baseline.
 await settle(() => (globalThis.__fmSessions ?? []).length === 2, "replacement branch session");
 await settle(() => (globalThis.__fmPrompts ?? []).length === 2, "replacement branch prompt");
 const report2 = globalThis.__fmSessions[1].options.customTools.find((tool) => tool.name === "fm_branch_report");

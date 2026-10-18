@@ -78,6 +78,18 @@
 #                          tool process.
 #   stale: <window> (unread firstmate instruction: ...)
 #   stale: <window> (steering-inbox ladder bookkeeping unwritable: ...)
+#                          an unhandled record's ladder cannot advance; quiet
+#                          successful attempts never wake firstmate
+#                          (bin/fm-task-inbox-lib.sh owns the ladder policy)
+#   stale: <window> (spending without producing: ...)
+#                          the spend-without-artifact guard: a pane whose token
+#                          counter kept CLIMBING while no commit, report write,
+#                          status line, or worktree write appeared. This is the
+#                          one shape the hash-driven staleness backbone below
+#                          cannot see, because such a pane never freezes. A
+#                          FROZEN counter is a wait, never this wake
+#                          (bin/fm-noprogress-lib.sh owns the whole policy).
+#                          Human inspection only - nothing is ever stopped.
 #   stale: <window> (steering-inbox busy bookkeeping unwritable: ...)
 #                          steering-inbox recovery; bin/fm-task-inbox-lib.sh owns
 #                          delivery-attempt, busy-deferral, and unavailable-endpoint policy
@@ -1064,8 +1076,9 @@ EOF
 # recovery-grade `dead` or `missing` verdict relaunches, every relaunch
 # (success or failure) becomes exactly one durable `check` wake row, and every
 # other verdict lands only in the triage log. The tick finishes every mate's
-# bounded recovery before it wakes once on the first outcome; the drain
-# surfaces every queued row. A mate that keeps
+# bounded recovery before it wakes once on the first outcome, so one dead mate
+# never delays another's recovery; the drain surfaces every queued row.
+# A mate that keeps
 # dying is parked after SECONDMATE_LIVENESS_MAX_ATTEMPTS ledgered attempts
 # inside SECONDMATE_LIVENESS_WINDOW_SECS: the bound marker wakes once, further
 # probes stay silent, and a later live probe ledgers a `rearmed` row and clears

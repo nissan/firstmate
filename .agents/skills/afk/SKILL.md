@@ -180,6 +180,8 @@ Classify each wake this way, applying the steering-inbox exception before status
   With no unreported actionable event, the wake self-handles, and the current declaration outranks an enriched possible-wedge reason so it never escalates on the `FM_STALE_ESCALATE_SECS` cadence.
   If a declared external wait is still declared past `FM_PAUSE_RESURFACE_SECS` (default four hours), housekeeping sends one recheck and resets the pause window; a captain-held transfer is never rechecked while the posture record exists.
   The window ages against the crew's own latest status line, so only a status append that stops declaring the wait ends this routing and restores wedge detection.
+  The spend-without-artifact guard is the one reason that does outrank a current declaration, because a declared wait cannot explain a token counter that keeps climbing while nothing is produced; [`bin/fm-noprogress-lib.sh`](../../../bin/fm-noprogress-lib.sh) owns that policy.
+  Neither override discards a verdict the classification already resolved to escalate: an actionable event found in the unread status span rides out alongside the override's reason, so the seen position only ever advances over text that reached the digest.
 - `check` -> always escalate. Check scripts print only when firstmate should wake.
 - `stale` with a terminal status, a bare legacy captain-relevant line, or an unrecognized status prefix such as `parked:` -> escalate.
   Nonterminal progress remains transient even when its prose contains a legacy free-text token or its seen-status marker already matches, so record a marker and self-handle.

@@ -74,8 +74,8 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `backends/cmux.sh`       | Experimental cmux session-provider adapter                                           |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture, forge binding, or ship-branch prefix from `data/projects.md` for fleet sync, home seeding, and the forge agreement a ship spawn or scout promotion applies |
-| `fm-shared-brain-skill.sh` | Resolve an identity-bound skill from the registered Shared Brain local copy without network access |
 | `fm-forge-detect.sh`     | Propose a clone's forge binding from its origin remote for project-add intake, never recording it |
+| `fm-shared-brain-skill.sh` | Resolve an identity-bound authoritative skill from the registered `shared-brain` local copy without network access |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |
 | `fm-marker-lib.sh`       | Compatibility entry point for the from-firstmate carrier owned by `fm-operational-input.sh` |
@@ -103,9 +103,8 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-noprogress-lib.sh`   | Detect rising token spend without commits, reports, status, or local-copy writes |
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |
-| `fm-local-validation-lib.sh` | Identify repositories whose routine delivery is validated locally |
-| `fm-no-mistakes-attestation.sh` | Verify local no-mistakes evidence binds all required phases to an exact head |
-| `fm-no-mistakes-run.sh`  | Compatibility wrapper for local-validation no-mistakes runs |
+| `fm-local-validation-lib.sh` | Single owner of the exact repository allowlist for local-only routine validation |
+| `fm-no-mistakes-run.sh`  | Start or reattach to no-mistakes while omitting hosted-check waiting only for the canonical local-validation repositories |
 | `fm-pipeline-spend.sh`   | Attribute a task's no-mistakes pipeline spend to the task and keep it in the private spend ledger |
 | `fm-tangle-lib.sh`       | Shared default-branch resolution and primary-checkout tangle classification          |
 | `fm-timeout-lib.sh`      | Single owner of hard-bounded command execution and its fallback watchdog |
@@ -147,7 +146,8 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-pr-poll.sh`          | Provide the byte-static watcher program for validated pull-request, merge-request, and Gerrit-change poll sidecars |
 | `fm-contributions.sh`    | Observe owned publications, retain exact-head judgments, measure required actors, and wake on maintainer signals |
 | `fm-pr-check.sh`         | Record validated task `pr=` and `pr_head=` values, then atomically arm a static merge poll; refuses GitHub drafts and persistent secondmate records (see [architecture.md](architecture.md)) |
-| `fm-pr-merge.sh`         | Record PR metadata, merge a task's canonical full GitHub, GitLab, or Forgejo URL, refuse a Gerrit change because firstmate never submits one, then refuse an outcome it cannot prove landed or queued |
+| `fm-no-mistakes-attestation.sh` | Verify one local no-mistakes attestation binds completed review, test, document, and lint phases to an exact head |
+| `fm-pr-merge.sh`         | Record PR metadata, require exact-head local evidence for no-mistakes tasks and every nissan/firstmate or nissan/Work PR, merge a task's canonical full GitHub, GitLab, or Forgejo URL, refuse a Gerrit change because firstmate never submits one, then refuse an outcome it cannot prove landed or queued |
 | `fm-pr-state.sh`         | Read-only: print one line per GitHub pull-request blocker it can see, reporting on checks that have reported rather than verdicting merge-readiness |
 | `fm-pr-reviewers.sh`     | Read-only: suggest reviewers from GitHub's own author mapping of recent commits on a pull request's changed files, never requesting one |
 | `fm-merge-outcome-lib.sh` | Publish a confirmed merge's durable, role-routed supervision outcome                 |

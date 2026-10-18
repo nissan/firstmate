@@ -115,6 +115,8 @@ The exception has these limits:
 
 - Malformed, absent, dead, or ancestry-uncertain lock records do not satisfy this Claude-specific exception and retain the ordinary guard behavior.
 - A missing or mismatched sidecar or an untrusted id adds nothing to the verdict, so a live owner outside the ancestry still takes this exit exactly as before.
+- A live verified owner never qualifies for the lock-unavailable path: a foreign owner takes the Claude-specific read-only exit above, and this session's own owner must use the ordinary auto-arm failure proof.
+- A missing, malformed, dead, or otherwise unverifiable lock instead leaves the identity-gated auto-arm inert before it can publish that proof, so the synchronous guard spends the same block budget and then allows one separately marked, loud attended stop that directs lock repair; later unhealthy stops block again until positive watcher recovery, or loss of supervision need while no auto-arm failure notice is pending, resets the episode.
 
 ### Pull-warning verdict by supervision model
 
@@ -393,7 +395,7 @@ Claude drops that exit 2 when it terminated the hook at the configured timeout i
 The first fresh exhausted-failure epoch preserves its handoff without consuming a blocked-stop count.
 Later fresh failed epochs advance the same monotonic progression instead of resetting it.
 When none of those proofs appears, the guard re-blocks up to `FM_CLAUDE_TURNEND_BLOCK_BUDGET` times (default 3, below Claude's 8-block override).
-In Claude mode, positive watcher recovery clears the block budget, failure notice, and attended alarm together under the existing budget lock before either hook reports ordinary recovery.
+In Claude mode, positive watcher recovery clears the block budget, failure notice, and both attended alarms together under the existing budget lock before either hook reports ordinary recovery.
 
 The block budget is charged by two rules:
 
@@ -414,6 +416,10 @@ The one loud attended fail-open is available only when all of these hold:
 - Its one notice is already consumed.
 - The block budget is exhausted.
 - A final check finds neither a healthy watcher nor an automatic continuation.
+
+A separate attended fail-open uses the same exhausted budget when final lock inspection still finds no live verified harness owner, covering a missing, malformed, stale, or otherwise unverifiable lock without pretending the inert auto-arm recorded a failure.
+It has its own one-shot marker, never applies in away mode or to a verified live owner, and never mutates or reclaims the lock.
+It is cleared with the rest of the episode by positive watcher recovery, or with the block budget when supervision need disappears while no auto-arm failure notice is pending.
 
 After that alarm, the Stop auto-arm suppresses further exit-2 continuations until positive watcher recovery, so the final fail-open remains reachable.
 The alarm cannot repeat during that failure episode, and a later unhealthy stop blocks again.
@@ -553,6 +559,9 @@ That warning uses `bin/fm-supervision-instructions.sh --repair-line`, so it alwa
 - Monotonic failed-epoch progression.
 - Bounded attended fail-open.
 - The same bound against a ledger frozen by an inert auto-arm with and without a verified failure episode.
+- The separate missing, malformed, and stale-lock bound.
+- Read-once lock classification across stale-reclaim interleavings.
+- The verified-owner negative control.
 - Post-alarm continuation suppression.
 - Positive recovery reset.
 - Generation and legacy claim cases that must block or clear instead of allowing a blind stop.

@@ -45,7 +45,7 @@ Refresh `portable_parallel_weight_hints` with the slowest completed `duration_ms
 It keeps watcher, lock, AFK, real tmux, daemon, secondmate lifecycle, bootstrap, the `live-harness-optin` family, GUI-backend, and other unproven work serial.
 Membership is derived rather than enumerated, so a newly added test lands here by default.
 
-## Portable serial CI shards
+## Portable serial hosted-fallback shards
 
 On green CI run [30725985757](https://github.com/kunchenguid/firstmate/actions/runs/30725985757), that remainder accumulated 19m04s of script time against a 20-minute job timeout.
 On [PR 1495](https://github.com/kunchenguid/firstmate/pull/1495), its main step ran about 19m51s before the job was cancelled at that boundary.
@@ -78,7 +78,7 @@ Refresh the CI-derived hints by downloading the per-shard timing artifacts from 
 
 ```sh
 for run in <run-id> <run-id> <run-id>; do
-  gh-axi run download "$run" -R kunchenguid/firstmate --dir "/tmp/fm-serial/$run"
+  gh-axi run download "$run" -R nissan/firstmate --dir "/tmp/fm-serial/$run"
 done
 jq -r '.scripts[] | select(.exit == 0) | [.path, .duration_ms] | @tsv' /tmp/fm-serial/*/fm-test-timing-portable-serial-*/*.json \
   | awk -F'\t' '$2 > m[$1] { m[$1] = $2 } END { for (p in m) print p, m[p] }' \
@@ -94,8 +94,8 @@ Measure native-Windows-only scripts through the focused Git Bash runner and reta
 
 `bin/fm-test-run.sh --check-coverage` verifies that both parallel lanes partition the proven-isolated set.
 It also verifies that the parallel lanes, portable serial lane, and real-Herdr family are disjoint and cover every `tests/*.test.sh` script.
-It separately verifies that the portable serial CI shards are non-empty, disjoint, and together equal the portable serial lane.
-Its hint-coverage and modeled-budget checks are described in [Portable serial CI shards](#portable-serial-ci-shards); neither replaces inspection of actual CI timing artifacts.
+It separately verifies that the portable serial hosted-fallback shards are non-empty, disjoint, and together equal the portable serial lane.
+Its hint-coverage and modeled-budget checks are described in [Portable serial hosted-fallback shards](#portable-serial-hosted-fallback-shards); neither replaces inspection of actual timing artifacts.
 
 ## Timing artifacts
 
@@ -105,8 +105,8 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 
 ## Lint partitions and end-to-end latency
 
-`bin/fm-lint.sh` owns two canonical CI partitions, each attempting full source-aware ShellCheck analysis and running workflow validation and backend-purity checks.
-CI requires its per-root bounds, so an unenforceable deadline or address-space limit refuses lint rather than running uncapped; the script header owns the envelope, per-root execution contract, and memory fallback.
+`bin/fm-lint.sh` owns two canonical hosted-fallback partitions, each attempting full source-aware ShellCheck analysis and running workflow validation and backend-purity checks.
+The hosted-fallback lint requires its per-root bounds, so an unenforceable deadline or address-space limit refuses lint rather than running uncapped; the script header owns the envelope, per-root execution contract, and memory fallback.
 Its `--list-files` interface exposes partition membership; `tests/fm-lint.test.sh` verifies complete/disjoint executed roots, initial analysis flags, and fallback reporting.
 The workflow uploads each partition's quiet telemetry plus its per-root lifecycle sidecar to distinguish analysis cost, memory use, and host contention.
 No fast mode, path skips, or paid runner provisioning is part of this layout.

@@ -481,6 +481,25 @@ test_no_mistakes_dod_wording() {
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright"
 }
 
+# The run helper is a required argument: rendering a DOD without it must be
+# refused rather than naming bare `no-mistakes axi run` as its own substitute.
+test_dod_block_requires_run_helper() {
+  local mode out err code
+  for mode in no-mistakes direct-PR local-only; do
+    code=0
+    out=$(bash -c '. "$1/bin/fm-dod-lib.sh"; fm_dod_block "$2" dod-helper-b1' _ "$ROOT" "$mode" 2>"$TMP_ROOT/dod-helper.err") || code=$?
+    err=$(cat "$TMP_ROOT/dod-helper.err")
+    expect_code 1 "$code" "$mode: fm_dod_block without a run helper"
+    assert_equals "" "$out" "$mode: fm_dod_block rendered a DOD without a run helper"
+    assert_contains "$err" "missing no-mistakes run helper" "$mode: missing helper was not named"
+  done
+  out=$(bash -c '. "$1/bin/fm-dod-lib.sh"; fm_dod_block no-mistakes dod-helper-b1 fm/dod-helper-b1 none "" /opt/fm/bin/fm-no-mistakes-run.sh' _ "$ROOT") \
+    || fail "fm_dod_block refused an explicit run helper"
+  assert_contains "$out" "Use \`/opt/fm/bin/fm-no-mistakes-run.sh\` in place of \`no-mistakes axi run\`" \
+    "no-mistakes DOD did not name the supplied run helper"
+  pass "fm-dod-lib.sh: fm_dod_block requires the no-mistakes run helper"
+}
+
 # The green-PR report must not depend on a status poll: `axi status` never
 # reports `checks-passed` while the ci step monitors the PR for merge, so a
 # worker told to wait on it for the next gate or outcome never learned its PR
@@ -1253,6 +1272,42 @@ test_home_brief_include_is_appended_last() {
   pass "fm-brief.sh: the home brief include lands last on ship and scout, verbatim, and fails closed"
 }
 
+test_scout_report_is_incremental_and_gates_terminal_status() {
+  local brief
+  FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-scout-inc alpha --scout >/dev/null 2>&1 \
+    || fail "fm-brief.sh scout scaffold exited non-zero"
+  brief="$BRIEF_HOME/data/brief-scout-inc/brief.md"
+  assert_grep "before you start investigating" "$brief" \
+    "scout brief must require the report be created before investigation starts"
+  assert_grep "append each finding as you establish it" "$brief" \
+    "scout brief must require incremental appends, not one final write"
+  assert_grep "Never append a terminal status line" "$brief" \
+    "scout brief must forbid a terminal status line without a report"
+  assert_grep "exists and is non-empty" "$brief" \
+    "scout brief must name the existence and non-emptiness check"
+  pass "fm-brief.sh: scout report is incremental and gates the terminal status line"
+}
+
+# Every crewmate brief must carry the absolute-path read rule: a read behind a
+# `cd` cannot be cleared automatically and stalls the worker on manual approval.
+test_briefs_require_absolute_path_reads() {
+  local brief
+  for id_kind in "brief-abs-ship:--mode local-only" "brief-abs-scout:--scout"; do
+    # shellcheck disable=SC2086 # The fixture flags are intentionally word-split.
+    FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" "${id_kind%%:*}" alpha ${id_kind##*:} >/dev/null 2>&1 \
+      || fail "fm-brief.sh scaffold exited non-zero for ${id_kind}"
+    brief="$BRIEF_HOME/data/${id_kind%%:*}/brief.md"
+    # shellcheck disable=SC2016 # The backticks are literal brief prose, not a substitution.
+    assert_grep 'Never `cd` before a read' "$brief" \
+      "${id_kind%%:*} brief must forbid a cd before a read"
+    assert_grep 'pass absolute paths' "$brief" \
+      "${id_kind%%:*} brief must require absolute paths for reads and searches"
+    assert_grep 'git -C <absolute-path>' "$brief" \
+      "${id_kind%%:*} brief must name the absolute-path git form"
+  done
+  pass "fm-brief.sh: ship and scout briefs require absolute-path reads"
+}
+
 # --base-branch names the branch a task starts from and a ship's PR targets. It is
 # recorded as a Base branch line under # Setup, which fm-spawn reads back, and is
 # refused where no pull request carries the work.
@@ -1552,6 +1607,7 @@ test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_dod_block_requires_run_helper
 test_no_mistakes_dod_green_detection
 test_pr_based_dod_requires_non_draft
 test_ask_user_escalation_format
@@ -1572,6 +1628,8 @@ test_scout_lavish_line_follows_presentation_floor
 test_workers_wait_without_spending_turns
 test_wait_no_turns_absent_keeps_the_previous_brief
 test_home_brief_include_is_appended_last
+test_scout_report_is_incremental_and_gates_terminal_status
+test_briefs_require_absolute_path_reads
 test_base_branch_is_rendered_and_bounded
 test_ship_branch_prefix_defaults_to_legacy_fm
 test_ship_branch_prefix_override_is_consistent_across_modes

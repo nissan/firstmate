@@ -690,6 +690,8 @@ The report is the only thing that survives, so anything worth keeping must be in
 1. Never push to any remote and never open a PR.
 2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+   Never \`cd\` before a read: pass absolute paths to every read and search, use \`git -C <absolute-path>\`, and prefer the Read tool for a single file.
+   A read behind a \`cd\` cannot be cleared automatically and stops for a human, stalling you for nothing.
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
@@ -711,7 +713,9 @@ $SHARED_INFRA_RULE
 $WAIT_BLOCK$INBOX_SECTION
 
 # Definition of done
-Write your findings to \`$DATA/$ID/report.md\`.
+Create \`$DATA/$ID/report.md\` before you start investigating, and append each finding as you establish it.
+A run that is interrupted or runs out of budget leaves usable evidence only if the report was written incrementally; findings held back for a final write are lost entirely.
+Never append a terminal status line (\`done\`, \`failed\`, \`blocked\`, \`needs-decision\`) before confirming that file exists and is non-empty.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
 $LAVISH_LINE
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
@@ -742,7 +746,7 @@ case "$MODE" in
     ;;
 esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
-DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT") || exit 1
+DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$FM_ROOT/bin/fm-no-mistakes-run.sh" "$UPSTREAM_CONSENT") || exit 1
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -766,6 +770,8 @@ $RULE1
    Outside the worktree, write only that task material and the status and steering-inbox records authorized below.
    Leave the worktree clean before reporting done.
 3. $FORGE_RULE_LINE
+   Never \`cd\` before a read: pass absolute paths to every read and search, use \`git -C <absolute-path>\`, and prefer the Read tool for a single file.
+   A read behind a \`cd\` cannot be cleared automatically and stops for a human, stalling you for nothing.
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.

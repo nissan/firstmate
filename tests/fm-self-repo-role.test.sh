@@ -452,12 +452,14 @@ test_dod_block_renders_and_bounds_consent() {
   local out rc
   # shellcheck source=/dev/null
   . "$ROOT/bin/fm-dod-lib.sh"
-  out=$(fm_dod_block direct-PR consent-id fm/consent-id none '' github.com/kunchenguid/firstmate)
+  # fm_dod_block takes the required no-mistakes run helper 6th and the
+  # optional consent 7th, so each call supplies the helper before any consent.
+  out=$(fm_dod_block direct-PR consent-id fm/consent-id none '' "$ROOT/bin/fm-no-mistakes-run.sh" github.com/kunchenguid/firstmate)
   assert_contains "$out" "Delivery contract: mode=direct-PR upstream-consent=github.com/kunchenguid/firstmate" \
     "a publishing contract must render the recorded consent token"
-  out=$(fm_dod_block direct-PR noconsent-id fm/noconsent-id)
+  out=$(fm_dod_block direct-PR noconsent-id fm/noconsent-id none '' "$ROOT/bin/fm-no-mistakes-run.sh")
   assert_not_contains "$out" "upstream-consent" "a contract without consent must not render the token"
-  out=$(fm_dod_block local-only local-id fm/local-id none '' github.com/a/b 2>&1); rc=$?
+  out=$(fm_dod_block local-only local-id fm/local-id none '' "$ROOT/bin/fm-no-mistakes-run.sh" github.com/a/b 2>&1); rc=$?
   expect_code 1 "$rc" "local-only must refuse a consent token it can never spend"
   pass "fm_dod_block: upstream consent renders on publishing contracts and is refused on local-only"
 }

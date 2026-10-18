@@ -43,8 +43,10 @@
 #
 # Lint defaults to two concurrency-limited workers over two stable logical
 # shards, and each worker runs ONE canonical root per ShellCheck process, so a
-# run holds at most JOBS concurrent ShellCheck processes. Diagnostics replay
-# in stable shard/root order. FM_LINT_JOBS=1 changes concurrency, not diagnostics
+# run holds at most JOBS concurrent ShellCheck processes. CI defaults to one
+# worker for the private runner, so concurrent graph memory stays bounded to a
+# single source graph; local callers may use two. Diagnostics replay
+# in stable shard/root order. FM_LINT_JOBS changes concurrency, not diagnostics
 # or exit selection.
 # --partition 1of2/2of2 splits the entire canonical inventory across
 # two CI runners, each with those same concurrency-limited workers.
@@ -96,6 +98,11 @@
 # filename. In partition mode begin/end
 # lines also stream to stderr, and an abnormal root end is always reported
 # there.
+#
+# The same default full run also verifies that the changed-file exclusion list
+# still covers every diagnostic caused only by dropping source context. This
+# low-memory sweep belongs here rather than in a behavior-test lane, so lint has
+# one authoritative surface and behavior tests never repeat a repository walk.
 #
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
@@ -709,7 +716,13 @@ fm_lint_run_backend_purity() {
   }
 }
 
-JOBS=${FM_LINT_JOBS:-2}
+if [ -n "${FM_LINT_JOBS:-}" ]; then
+  JOBS=$FM_LINT_JOBS
+elif [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; then
+  JOBS=1
+else
+  JOBS=2
+fi
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 FAST=0
 ANALYSIS_MODE=full
@@ -1246,6 +1259,88 @@ while [ "$worker" -lt "$SHARD_COUNT" ]; do
   fi
   worker=$((worker + 1))
 done
+
+# The local changed-file posture, and the memory fallback, exclude only
+# diagnostics that require source context. Prove that list remains complete on
+# every authoritative full run. Each no-source process owns one root, runs
+# inside the same per-root deadline and address-space envelope as the
+# source-aware roots above, and obeys the same JOBS concurrency limit.
+fm_lint_run_local_exclusion_guard() {
+  [ "$EXPLICIT_PATHS" -eq 0 ] && [ "$FOLLOW_SOURCES" -eq 1 ] && [ "$FAST" -eq 0 ] || return 0
+  local guard_dir index path pid rc unexpected code
+  local -a guard_cmd
+  guard_dir="$TMP_ROOT/local-exclusion-guard"
+  mkdir -p "$guard_dir"
+  index=0
+  for path in "${ROOTS[@]}"; do
+    # This guard is per-root ShellCheck like every other analysis in this run,
+    # so it owes the same two promises the header makes. It goes through the
+    # same --internal-timed and --internal-root owner the bounded per-root
+    # runner uses, so a guard root carries the identical deadline, cleanup
+    # grace and address-space limit and can never run uncapped where required
+    # bounds are in force; and it holds at most JOBS concurrent processes, one
+    # under CI, instead of a batch size of its own. The setpgrp hop stays so
+    # each root remains its own process group for the owner's signal sweep,
+    # and the bounded watchdog takes the same second hop the per-root runner
+    # gives it, naming the guard wrapper as its owner, so the sweep cannot
+    # kill it before it has escalated terminate-then-kill on the root's group.
+    if [ "$BOUND_MECH" != none ]; then
+      guard_cmd=(
+        "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"'
+        "${BASH:-bash}" "$SELF" --internal-timed "$ROOT_SECONDS" "$ROOT_GRACE"
+        "${BASH:-bash}" "$SELF" --internal-root "$guard_dir/$index.rss" "$ROOT_MEMORY_KIB"
+        "$SHELLCHECK_BIN" --norc --format=gcc -- "$path"
+      )
+    else
+      guard_cmd=("$SHELLCHECK_BIN" --norc --format=gcc -- "$path")
+    fi
+    # shellcheck disable=SC2016 # The child shell, not this one, expands these.
+    FM_LINT_INTERNAL=1 \
+    FM_LINT_GUARD_OUT="$guard_dir/$index.out" \
+    FM_LINT_GUARD_RC="$guard_dir/$index.rc" \
+      "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
+      "${BASH:-bash}" -c 'rc=0; FM_EXEC_TIMED_OWNER_PID=$$ "$@" >"$FM_LINT_GUARD_OUT" 2>&1 || rc=$?; printf "%s\n" "$rc" >"$FM_LINT_GUARD_RC"' \
+      fm-lint-guard "${guard_cmd[@]}" &
+    pid=$!
+    ACTIVE_PIDS+=("$pid")
+    index=$((index + 1))
+    if [ "${#ACTIVE_PIDS[@]}" -ge "$JOBS" ]; then
+      fm_lint_wait_workers
+    fi
+  done
+  fm_lint_wait_workers
+
+  unexpected=
+  index=0
+  while [ "$index" -lt "$ROOT_COUNT" ]; do
+    rc=$(cat "$guard_dir/$index.rc" 2>/dev/null || printf '2')
+    case "$rc" in ''|*[!0-9]*) rc=2 ;; esac
+    if [ "$rc" -gt 1 ]; then
+      printf 'fm-lint.sh: local exclusion guard failed to analyze root %s (exit %s).\n' \
+        "${ROOTS[index]}" "$rc" >&2
+      cat "$guard_dir/$index.out" >&2
+      return "$rc"
+    fi
+    while IFS= read -r code; do
+      [ -n "$code" ] || continue
+      case ",$LOCAL_NOX_EXCLUDE," in
+        *",$code,"*) ;;
+        *) unexpected="${unexpected}${unexpected:+ }$code" ;;
+      esac
+    done < <(sed -n 's/.*\[\(SC[0-9][0-9]*\)\].*/\1/p' "$guard_dir/$index.out" | LC_ALL=C sort -u)
+    index=$((index + 1))
+  done
+  [ -z "$unexpected" ] || {
+    printf 'fm-lint.sh: no-source analysis emitted codes outside the local exclusion list: %s\n' "$unexpected" >&2
+    return 1
+  }
+}
+
+exclusion_guard_rc=0
+fm_lint_run_local_exclusion_guard || exclusion_guard_rc=$?
+if [ "$overall_rc" -eq 0 ] && [ "$exclusion_guard_rc" -ne 0 ]; then
+  overall_rc=$exclusion_guard_rc
+fi
 
 # Close the roots log with completion counts so a mid-run kill leaves
 # begun-but-unfinished roots attributable by name. result_exit is appended

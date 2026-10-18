@@ -436,7 +436,9 @@ show_field_value() {  # <show-output> <field>
 
 origin_exists_here() {  # <origin-id>
   [ -f "$STATE/$1.meta" ] && return 0
-  [ -f "$DATA/$1/report.md" ] && return 0
+  # A zero-byte report is not the durable work product the scout contract
+  # requires, so it cannot stand in as proof the origin exists here.
+  [ -f "$DATA/$1/report.md" ] && [ -s "$DATA/$1/report.md" ] && return 0
   task_show "$1"
 }
 

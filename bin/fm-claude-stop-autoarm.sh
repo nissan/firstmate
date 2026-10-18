@@ -107,7 +107,8 @@
 # exit 0 is silent, and exit 2 carries the rewake banner on stderr.
 # On any uncertainty such as unresolvable ancestry, malformed lock state, or
 # lock contention, it exits 0 and leaves continuity to the synchronous guard and
-# the model.
+# the model. That guard bounds a lock-unavailable episode separately because this
+# hook cannot safely claim the home or publish an ordinary auto-arm failure there.
 #
 # The Stop hook passes no arguments, so any argument means a manual run: -h or
 # --help prints usage and an unknown argument is refused, both before anything

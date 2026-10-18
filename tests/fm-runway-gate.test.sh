@@ -312,6 +312,9 @@ test_no_missing_or_broken_signal_can_refuse() {
 # --- library: reading the tool itself ---------------------------------------
 
 # fake_quota_axi <dir> <version> <mode> [payload-file]
+# Compatible cases must report at or above bin/fm-quota-axi-lib.sh's
+# QUOTA_AXI_MIN, or they silently take the below-floor path instead of the
+# one they are named for.
 # A quota-axi that answers --version and --json separately, so a case can break
 # one without touching the other. Modes: json (print the payload), fail (exit
 # nonzero), garbage (print non-JSON), hang (outlive any sane bound).

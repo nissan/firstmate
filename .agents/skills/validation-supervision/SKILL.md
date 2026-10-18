@@ -29,4 +29,4 @@ Resume fleet supervision immediately after the decision lands.
 Judge validation by the resolved state line from [`bin/fm-crew-state.sh`](../../../bin/fm-crew-state.sh), whose header owns outcome mappings and CI-monitor/daemon exceptions, never by shell liveness, the last status event, or a raw run record.
 Workers parked at approval or fix-review must follow the active gate help.
 A worker hand-editing, committing, aborting, or restarting during an active validation run duplicates pipeline ownership outside the supersession sequence above; steer it back to the gate response flow.
-The worker reports the PR when CI first becomes green rather than waiting for merge monitoring to finish.
+The worker reports the PR at its mode's ready signal, which `ship-landing` owns, rather than waiting for merge monitoring to finish.

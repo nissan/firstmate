@@ -417,10 +417,10 @@ For spawn-capable adapters, the runtime session-provider backend controls where 
 | Runtime backend | Verification status | Reference |
 | --- | --- | --- |
 | `tmux` | Verified reference backend | [`docs/tmux-backend.md`](tmux-backend.md) |
-| `herdr` | Has its own required CI lane | [`docs/herdr-backend.md`](herdr-backend.md) |
-| `zellij` | Experimental; no dedicated real-backend CI lane | [`docs/zellij-backend.md`](zellij-backend.md) |
-| `orca` | Experimental; no dedicated real-backend CI lane | [`docs/orca-backend.md`](orca-backend.md) |
-| `cmux` | Experimental; no dedicated real-backend CI lane | [`docs/cmux-backend.md`](cmux-backend.md) |
+| `herdr` | Has its own real-backend hosted-fallback lane | [`docs/herdr-backend.md`](herdr-backend.md) |
+| `zellij` | Experimental; no dedicated real-backend fallback lane | [`docs/zellij-backend.md`](zellij-backend.md) |
+| `orca` | Experimental; no dedicated real-backend fallback lane | [`docs/orca-backend.md`](orca-backend.md) |
+| `cmux` | Experimental; no dedicated real-backend fallback lane | [`docs/cmux-backend.md`](cmux-backend.md) |
 
 Treehouse remains the worktree provider for tmux, herdr, zellij, and cmux, since herdr, zellij, and cmux are session providers only; Orca provides both the task worktree and terminal endpoint.
 
@@ -651,7 +651,7 @@ The flag is a home-local supervision-noise preference and is not inherited by se
 The tracked `.no-mistakes.yaml` sets `test.evidence.store_in_repo: true` and pins `commands.lint` to `bin/fm-lint.sh`, the same owner CI invokes.
 Storing evidence in the repo publishes each run's test artifacts to the orphan `no-mistakes/evidence` branch and links them from the PR body, instead of keeping them on local disk under the no-mistakes home.
 
-That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and CI rejects tracked entries under that path.
+That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and the repository invariant fallback rejects tracked entries under that path.
 The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-guidelines/SKILL.md#no-mistakes-test-configuration) owns why `commands.test` stays absent and targeted validation belongs to the evidence path.
 
 `commands.test` executes code, so no-mistakes honors it only from the default-branch copy of `.no-mistakes.yaml`; a pushed branch cannot change what the gate runs.

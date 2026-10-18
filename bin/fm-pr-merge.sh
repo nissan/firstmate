@@ -41,6 +41,11 @@
 # source fails, so known missing checks and all read errors are reported together.
 # github_branch_rules_unavailable_on_plan owns the narrow plan-unavailable
 # exception; every other unreadable required source refuses.
+# A task recorded in no-mistakes mode, and every task of any mode merging into
+# the local-validation repositories github.com/nissan/firstmate and
+# github.com/nissan/Work, must additionally carry one locally verified
+# no-mistakes attestation bound to that same live head;
+# bin/fm-no-mistakes-attestation.sh owns the attestation format.
 # Every failing condition is reported, not just the first.
 # The verified head is then passed to gh as
 # --match-head-commit, so a push that lands between that read and the merge
@@ -918,6 +923,48 @@ github_checks_not_green() {
   ' 2>/dev/null || return 1
 }
 
+
+# Prove that every currently red check failed before GitHub assigned a runner or
+# executed a step. This is the one guarded bootstrap path for moving a repository
+# off hosted routine gates when account limits reject jobs at admission time.
+# It never classifies from timing or error prose: each check must resolve to a
+# live Actions job at the exact PR head with runner_id=0 and an empty steps list.
+github_verify_unstarted_action_failures() {
+  local json=$1 red=$2 name rows row url job_id run_id job repo_prefix
+  repo_prefix=$(printf 'https://github.com/%s/actions/runs/' "$PR_PATH" | tr '[:upper:]' '[:lower:]')
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    rows=$(printf '%s' "$json" | jq -r --arg name "$name" '
+      .statusCheckRollup[]
+      | select(.__typename == "CheckRun" and (.name // "") == $name)
+      | select(.status != "COMPLETED" or ((.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED") | not))
+      | [(.detailsUrl // ""), (.status // ""), (.conclusion // "")] | @tsv
+    ' 2>/dev/null) || return 1
+    [ -n "$rows" ] || return 1
+    while IFS= read -r row; do
+      url=$(printf '%s\n' "$row" | cut -f1)
+      case "$row" in "$url"$'\tCOMPLETED\tFAILURE') ;; *) return 1 ;; esac
+      url=$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')
+      case "$url" in
+        "$repo_prefix"*/job/*) run_id=${url#"$repo_prefix"}; run_id=${run_id%%/job/*}; job_id=${url##*/job/} ;;
+        *) return 1 ;;
+      esac
+      case "$run_id:$job_id" in :*|*:|*[!0-9:]*) return 1 ;; esac
+      job=$(gh api "repos/$PR_PATH/actions/jobs/$job_id" 2>/dev/null) || return 1
+      printf '%s' "$job" | jq -e --arg head "$FM_PR_MERGE_HEAD_CANDIDATE" --arg run "$run_id" --arg job "$job_id" '
+        type == "object" and ((.id | tostring) == $job) and ((.run_id | tostring) == $run)
+        and (.head_sha == $head) and (.status == "completed") and (.conclusion == "failure")
+        and (.runner_id == 0) and ((.runner_name // "") == "")
+        and ((.steps | type) == "array") and ((.steps | length) == 0)
+      ' >/dev/null 2>&1 || return 1
+    done <<ROWS
+$rows
+ROWS
+  done <<NAMES
+$red
+NAMES
+}
+
 FM_PR_GITHUB_REQUIRED=
 FM_PR_GITHUB_REQUIRED_ERROR=
 github_read_required_contexts() {
@@ -1006,42 +1053,6 @@ github_required_checks_missing() {
 # Sets FM_PR_MERGE_HEAD to the verified head on success. Returns 3, rather than
 # the usual 1, when mergeable=UNKNOWN is the only failing condition, so the
 # caller can retry a still-computing mergeability read instead of refusing.
-github_verify_unstarted_action_failures() {
-  local json=$1 red=$2 name rows row url job_id run_id job repo_prefix
-  repo_prefix=$(printf 'https://github.com/%s/actions/runs/' "$PR_PATH" | tr '[:upper:]' '[:lower:]')
-  while IFS= read -r name; do
-    [ -n "$name" ] || continue
-    rows=$(printf '%s' "$json" | jq -r --arg name "$name" '
-      .statusCheckRollup[]
-      | select(.__typename == "CheckRun" and (.name // "") == $name)
-      | select(.status != "COMPLETED" or ((.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED") | not))
-      | [(.detailsUrl // ""), (.status // ""), (.conclusion // "")] | @tsv
-    ' 2>/dev/null) || return 1
-    [ -n "$rows" ] || return 1
-    while IFS= read -r row; do
-      url=$(printf '%s\n' "$row" | cut -f1)
-      case "$row" in "$url"$'\tCOMPLETED\tFAILURE') ;; *) return 1 ;; esac
-      url=$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')
-      case "$url" in
-        "$repo_prefix"*/job/*) run_id=${url#"$repo_prefix"}; run_id=${run_id%%/job/*}; job_id=${url##*/job/} ;;
-        *) return 1 ;;
-      esac
-      case "$run_id:$job_id" in :*|*:|*[!0-9:]*) return 1 ;; esac
-      job=$(gh api "repos/$PR_PATH/actions/jobs/$job_id" 2>/dev/null) || return 1
-      printf '%s' "$job" | jq -e --arg head "$FM_PR_MERGE_HEAD_CANDIDATE" --arg run "$run_id" --arg job "$job_id" '
-        type == "object" and ((.id | tostring) == $job) and ((.run_id | tostring) == $run)
-        and (.head_sha == $head) and (.status == "completed") and (.conclusion == "failure")
-        and (.runner_id == 0) and ((.runner_name // "") == "")
-        and ((.steps | type) == "array") and ((.steps | length) == 0)
-      ' >/dev/null 2>&1 || return 1
-    done <<ROWS
-$rows
-ROWS
-  done <<NAMES
-$red
-NAMES
-}
-
 github_verify_mergeable() {
   local json fields line red name covered missing unreported producers runs
   local total=0 named=0 refusals='' mergeable_refusal='' attestation_ok=false
@@ -1211,8 +1222,16 @@ EOF
     [ -z "$unreported" ] || printf 'error: these required checks have not reported: %s\n' "$unreported" >&2
     return 1
   fi
-  printf 'verified: %s is open and mergeable, with every unwaived required check reported and every unwaived check green at head %s\n' \
-    "$URL" "$live_head" >&2
+  # One sentence, so the attestation clause is additive rather than a second
+  # phrasing of the same verdict: the required-check wording is identical on
+  # both paths and only the local-evidence clause is appended.
+  if [ "$attestation_ok" = true ]; then
+    printf 'verified: %s is open and mergeable, with every unwaived required check reported and every unwaived check green at head %s, and local no-mistakes validation bound to that head\n' \
+      "$URL" "$live_head" >&2
+  else
+    printf 'verified: %s is open and mergeable, with every unwaived required check reported and every unwaived check green at head %s\n' \
+      "$URL" "$live_head" >&2
+  fi
   FM_PR_MERGE_HEAD=$live_head
   FM_PR_GITHUB_BASE=$base
 }

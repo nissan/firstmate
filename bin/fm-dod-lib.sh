@@ -7,9 +7,17 @@
 # no-mistakes worker that never received the ask-user escalation rule or the
 # `--yes` ban is the exact delivery hole this single owner exists to close.
 # fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>]
+#              [<base>] <nm-run-helper> [<consent>]
 # prints the block on stdout with no trailing blank line. The caller validates the
 # mode; an unknown mode is refused rather than silently rendered as the pipeline
 # contract.
+# The required sixth argument is the no-mistakes run helper the worker drives the
+# pipeline through (bin/fm-no-mistakes-run.sh); its header owns repository-specific
+# hosted-check routing, which is what lets the canonical local-validation
+# repositories finish without waiting on hosted CI. A missing helper is refused.
+# The optional seventh argument is the one-task upstream publication consent; it
+# follows the helper because a required argument cannot sit after an optional
+# one, and local-only refuses it outright.
 # The optional third argument is the task's full ship-branch name (a project's
 # registered prefix may replace the legacy `fm/` one); it defaults to `fm/<task-id>`
 # and is the immutable task branch rendered in every delivery contract.
@@ -337,7 +345,8 @@ EOF
 # the pipeline, what `--intent` may carry, and the two firstmate-specific rules.
 # Written once; only the two sentences about a green PR depend on the forge,
 # because on gerrit the ci step is skipped and there is no PR to report.
-fm_nm_driving_block() {  # <forge>
+fm_nm_driving_block() {  # <forge> <nm-run-helper>
+  local nm_run_helper=$2
   local pr_return_line='' pr_reattach_clause=';' drive_block wait_cfg
   if [ "$1" != gerrit ]; then
     pr_return_line="Only a drive call's return reports the green PR: \`no-mistakes axi status\` shows progress but never reports \`checks-passed\` while the ci step is still monitoring the PR for merge, so never wait on a status poll for the next gate or outcome.
@@ -363,6 +372,7 @@ ${pr_return_line}Whenever a drive call returns without a gate or an outcome - it
   cat <<EOF
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
+Use \`$nm_run_helper\` in place of \`no-mistakes axi run\` when starting or reattaching; that helper's header owns repository-specific hosted-check routing.
 When starting no-mistakes, pass \`--intent\` as only this brief's \`## Captain's intent\` subsection body, not its heading, plus any later words the captain actually said.
 Preserve the actual words without adding speaker labels or direct address; the subsection heading supplies provenance outside the pipeline input.
 For a legacy brief with no such subsection, include only words on lines marked \`[captain] \`, excluding that metadata prefix; never copy its mixed \`# Task\` wholesale.
@@ -408,9 +418,13 @@ There is no pull request, no \`gh-axi\` call, and no forge CI result to report: 
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
-  local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-}
+fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] <nm-run-helper> [<consent>]
+  local mode=$1 id=$2 forge=${4:-none} base=${5:-} nm_run_helper=${6:-} consent=${7:-}
   local branch=${3:-fm/$id} pr_base='' nm_base='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check
+  if [ -z "$nm_run_helper" ]; then
+    echo "error: fm_dod_block: missing no-mistakes run helper" >&2
+    return 1
+  fi
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
   fm_base_branch_valid "$base" "$mode" "$forge" fm_dod_block || return 1
   if [ -n "$consent" ]; then
@@ -462,7 +476,7 @@ Firstmate will then instruct you to run /no-mistakes to validate.
 That first \`done:\` is the handoff that starts the pipeline; it is not a request to publish.
 
 EOF
-      fm_nm_driving_block "$forge"
+      fm_nm_driving_block "$forge" "$nm_run_helper"
       cat <<EOF
 
 Because \`push\` is skipped, the pipeline's fixes DO NOT arrive in your checkout: each fix round commits onto a branch inside no-mistakes' own local gate repository, and with no push nothing carries those commits back to you.
@@ -520,10 +534,10 @@ Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 That first \`done:\` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
 ${nm_base}
 EOF
-      fm_nm_driving_block "$forge"
+      fm_nm_driving_block "$forge" "$nm_run_helper"
       cat <<EOF
 
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft $draft_check
+After /no-mistakes reports delivery ready (CI green for a hosted-check repository at the CI-ready return point - do not wait for it to keep monitoring in the background until merge - or terminal success after PR publication for a canonical local-validation repository), read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
 That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.

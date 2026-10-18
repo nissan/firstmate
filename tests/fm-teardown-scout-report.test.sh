@@ -19,6 +19,7 @@ TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-teardown-scout-report)
 
 NOTICE='its investigation is being discarded'
+ID_EMPTY_HINT='is empty'
 
 # make_scout_case <name> <id> [--live]: a scout task whose recorded endpoint is
 # structurally gone unless --live is passed, and which has written no report.
@@ -176,9 +177,43 @@ test_forced_scout_teardown_with_a_report_is_silent() {
   pass "fm-teardown: the discard notice is scoped to a scout that actually has no report"
 }
 
+# A zero-byte report is not a work product. The generated scout instructions
+# forbid a terminal status until the report "exists and is non-empty", so the
+# mechanical gates owe the same standard: an existence-only check lets an empty
+# file satisfy cleanup and silently discard the investigation.
+test_zero_byte_report_scout_is_refused_without_force() {
+  local dir out rc
+  dir=$(make_scout_case zero-byte sc5)
+  : > "$dir/home/data/sc5/report.md"
+  [ -f "$dir/home/data/sc5/report.md" ] || fail "fixture did not create the empty report"
+  [ ! -s "$dir/home/data/sc5/report.md" ] || fail "fixture report was not empty"
+  out=$(run_teardown "$dir" sc5); rc=$?
+  expect_code 1 "$rc" "an empty scout report must refuse cleanup like a missing one"$'\n'"$out"
+  case "$out" in
+    *"$ID_EMPTY_HINT"*) ;;
+    *) fail "the refusal did not name the empty report"$'\n'"$out" ;;
+  esac
+  pass "fm-teardown: a zero-byte scout report refuses cleanup without --force"
+}
+
+test_forced_zero_byte_report_teardown_announces_the_discard() {
+  local dir out rc
+  dir=$(make_scout_case zero-byte-forced sc6)
+  : > "$dir/home/data/sc6/report.md"
+  out=$(run_teardown "$dir" sc6 --force); rc=$?
+  expect_code 0 "$rc" "a forced cleanup of an empty-report scout should succeed"$'\n'"$out"
+  case "$out" in
+    *"$NOTICE"*) ;;
+    *) fail "a forced cleanup discarding an empty report must announce the loss"$'\n'"$out" ;;
+  esac
+  pass "fm-teardown: --force announces the discard for a zero-byte report too"
+}
+
 test_reportless_scout_with_a_gone_endpoint_is_refused_without_force
 test_reportless_scout_with_a_live_endpoint_is_refused_without_force
 test_forced_reportless_scout_teardown_announces_the_discard
 test_a_later_refusal_never_prints_the_discard_notice
 test_a_later_refusal_after_the_report_gate_never_prints_the_notice
 test_forced_scout_teardown_with_a_report_is_silent
+test_zero_byte_report_scout_is_refused_without_force
+test_forced_zero_byte_report_teardown_announces_the_discard

@@ -3148,6 +3148,10 @@ SH
   assert_grep "nothing was changed" "$case_dir/stderr" \
     "herdr-preflight-$mode: the retryable pre-return refusal was not explained visibly"
   if [ "$mode" = missing-adapter ]; then
+    # An absent adapter file is caught by the shared backend-source preflight,
+    # which names the backend it could not source. Teardown's herdr-specific
+    # prerequisites refusal covers the adapter-present modes, where a required
+    # function is missing instead, so the two paths stay separable.
     assert_grep "required herdr source is missing or unreadable" "$case_dir/stderr" \
       "herdr-preflight-missing-adapter: teardown did not exercise the absent adapter path"
     [ ! -e "$teardown_root/bin/backends/herdr.sh" ] \

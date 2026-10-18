@@ -2,7 +2,7 @@
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
 # Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait] [--claude-review]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -93,6 +93,20 @@
 #   from that harness's launch rather than guessed. Ultra is the explicit
 #   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
+#   --claude-review is an opt-in task launch posture for an independent Claude
+#   reviewer. It replaces Claude's ordinary permission bypass with
+#   `--permission-mode default` plus exact `--allowedTools` rules naming only
+#   this scout's status, report, and own inbox intake/acknowledgement paths.
+#   Those durable outputs proceed while every project edit, unrelated task
+#   path, other mutating command, or push still waits on Claude's own permission
+#   prompt. It preserves the launch's trust registration, feedback controls,
+#   hooks, model, effort, environment, and backend behavior. It is accepted
+#   only for a canonical Claude scout launch (never a ship, secondmate, or raw
+#   launch command), recorded as claude_review=on, and preserved by a same-
+#   harness relaunch. A relaunch may opt an existing Claude scout in explicitly;
+#   switching a recorded review task
+#   to another harness is refused before launch rather than silently weakening
+#   its permissions. Ordinary Claude launches remain unchanged.
 #   OpenCode has no interactive effort flag, so its effort is written as the
 #   build agent's variant, keyed to the resolved model, inside the
 #   OPENCODE_CONFIG_CONTENT JSON its launch already carries (config schema
@@ -380,7 +394,8 @@
 #   bin/fm-worker-account-lib.sh owns parsing, the check, and the shed list.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
-#     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
+#     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode,
+#                        or the narrower allowlist a --claude-review scout launches under
 #     __CLAUDEADDDIRS__ quoted --add-dir flags granting exactly this task's
 #                  Firstmate channel directories (claude_add_dirs_flag below;
 #                  supplies its own trailing space, empty never used)
@@ -1345,16 +1360,6 @@ HERDR_PROJECTION_ABORT_TASK_PANE=
 HERDR_PROJECTION_ABORT_SEEDED_PANE=
 HERDR_PRESENTATION_ORDER_LOCK=
 HERDR_PRESENTATION_ORDER_LOCK_HELD=0
-# How long a waiter may queue behind the presentation-ordering lock. The holder
-# runs a whole recovery under it, so this covers work, not a guessed constant;
-# see spawn_herdr_presentation_order_lock_acquire below.
-HERDR_PRESENTATION_ORDER_LOCK_TIMEOUT=${FM_HERDR_PRESENTATION_LOCK_TIMEOUT:-120}
-case "$HERDR_PRESENTATION_ORDER_LOCK_TIMEOUT" in
-  '' | *[!0-9]* | 0) HERDR_PRESENTATION_ORDER_LOCK_TIMEOUT=120 ;;
-esac
-# Abort cleanup runs from the EXIT trap, where degrading beats stalling the exit
-# behind another home's recovery, so it queues only briefly.
-HERDR_PRESENTATION_ORDER_ABORT_TIMEOUT=5
 SPAWN_TASK_LOCK=
 SPAWN_TASK_LOCK_HELD=0
 SPAWN_CONTROL_LOCK=
@@ -1438,8 +1443,7 @@ spawn_abort_cleanup() {
   fi
   if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] &&
     [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
-    if ! spawn_herdr_presentation_order_lock_acquire \
-      "${HERDR_PROJECTION_ABORT_SESSION:-}" "$HERDR_PRESENTATION_ORDER_ABORT_TIMEOUT"; then
+    if ! spawn_herdr_presentation_order_lock_acquire "${HERDR_PROJECTION_ABORT_SESSION:-}"; then
       echo "warning: herdr presentation focus lock unavailable; retaining the projection journal and refusing concurrent abort cleanup" >&2
       HERDR_PROJECTION_ABORT_CLEANUP=0
     fi
@@ -2226,7 +2230,8 @@ launch_template() {
   # stay in force.
   # __CLAUDEPERMFLAG__ is the permission flag config/claude-permission-mode
   # selects (header above): --dangerously-skip-permissions by default, or
-  # --permission-mode auto for a captain who refuses bypass mode.
+  # --permission-mode auto for a captain who refuses bypass mode. A
+  # --claude-review scout replaces it with its own narrower allowlist.
   # __CLAUDEADDDIRS__ is the task-channel directory grant
   # claude_add_dirs_flag below builds: Claude path-checks Read/Glob/Grep (and
   # an Edit's mandatory prior Read) against cwd plus --add-dir, and since

@@ -52,6 +52,14 @@
 # on a remote yet the change is fully in main. A task whose meta records
 # base_branch= (bin/fm-spawn.sh) runs that content check against origin's copy of
 # its base branch instead of the default branch.
+# "Reachable from any remote-tracking branch" is checked against the ACTUAL
+# remote, not just this worktree's cached refs/remotes/* - a no-mistakes run
+# commits and pushes from its own pipeline copy, never fetching back into this
+# worktree, so the cache alone can look unpushed for a branch that is genuinely
+# on the remote. branch_confirmed_on_remote asks the remote directly (git
+# ls-remote) before trusting that cache, and fails safe: a remote it cannot
+# verify at all refuses exactly like genuinely unlanded work, never like landed
+# work.
 # Squash merges collapse the branch's commits, so per-commit patch ids against main
 # no longer match, and a pipeline rebase can leave the local worktree diverged from
 # the PR head. A diverged copy is not treated as landed: path-set coverage, git
@@ -74,8 +82,8 @@
 # for the common case where there is no remote at all.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
-# product. Teardown proceeds only once the report exists and the shared
-# unresolved-decision completion gate verifies its captain-held inventory.
+# product. Teardown proceeds only once the report exists, is non-empty, and the
+# shared unresolved-decision completion gate verifies its captain-held inventory.
 # A scratch copy (kind=scout) and a --force run discard untracked content.
 # Treehouse's return resets with `git clean -fd`, which never deletes a nested
 # git repository, so the pool slot stays dirty and later checkouts skip it.
@@ -3974,6 +3982,14 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
     echo "The report is the work product. Have the crewmate write it, or use --force after explicit discard approval." >&2
     exit 1
   fi
+  # The generated scout instructions forbid a terminal status until the report
+  # exists AND is non-empty, so an existence-only gate here would accept a
+  # zero-byte file as the deliverable and let the investigation be discarded.
+  if [ ! -s "$REPORT" ]; then
+    echo "REFUSED: scout task $ID has a report at $REPORT but it is empty." >&2
+    echo "The scout contract requires a non-empty report before any terminal status. Have the crewmate write it, or use --force after explicit discard approval." >&2
+    exit 1
+  fi
   if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
       FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-captain-hold.sh" verify "$ID" >/dev/null; then
     echo "REFUSED: scout task $ID has not passed the captain-call completion gate." >&2
@@ -4232,12 +4248,18 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fm_treehouse_slot_owner_release "$WT" "$ID"
 fi
 
-if [ "$KIND" = scout ] && [ "$FORCE" = "--force" ] && [ ! -f "$DATA/$ID/report.md" ]; then
-  # A forced teardown of a report-less scout is the explicit escape for an
-  # abandoned investigation. Announce the irreversible loss only after every
-  # refusal that could preserve the worktree has passed and its return has
-  # succeeded, so a failed cleanup never claims it discarded findings.
-  echo "NOTICE: FORCED teardown of scout task $ID with NO report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
+if [ "$KIND" = scout ] && [ "$FORCE" = "--force" ]; then
+  # A forced teardown of a scout with no usable report is the explicit escape
+  # for an abandoned investigation. Announce the irreversible loss only after
+  # every refusal that could preserve the worktree has passed and its return has
+  # succeeded, so a failed cleanup never claims it discarded findings. A
+  # zero-byte report is no work product either, so it is announced the same way
+  # rather than passing silently as a kept deliverable.
+  if [ ! -f "$DATA/$ID/report.md" ]; then
+    echo "NOTICE: FORCED teardown of scout task $ID with NO report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
+  elif [ ! -s "$DATA/$ID/report.md" ]; then
+    echo "NOTICE: FORCED teardown of scout task $ID with an EMPTY report at $DATA/$ID/report.md - its investigation is being discarded and cannot be recovered." >&2
+  fi
 fi
 
 HERDR_PRESENTATION_JOURNAL="$STATE/$ID.herdr-presentation"
