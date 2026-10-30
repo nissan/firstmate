@@ -33,6 +33,8 @@ raise "manual CI lost a fallback validation job" unless ci.fetch("jobs").keys.so
 ci.fetch("jobs").each do |name, job|
   timeout = job["timeout-minutes"]
   raise "#{name} has no finite timeout" unless timeout.is_a?(Integer) && timeout.positive?
+  condition = job["if"].to_s
+  raise "manual job #{name} depends on a PR or push event" if condition.include?("github.event") || condition.include?("github.repository")
 end
 fast = %w[test-coverage invariants tests-timing-aggregate]
 normal = %w[lint tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial macos-stock-bash]
@@ -56,6 +58,7 @@ expected = shards.map { |shard| "portable-serial-#{shard}of#{shards.length}" }
 raise "hosted fallback matrix and local runner disagree" unless actual.sort == expected.sort
 
 attestation_triggers = triggers(attestation)
+raise "attestation must be manual-only" unless attestation_triggers.keys == ["workflow_dispatch"]
 manual = attestation_triggers.fetch("workflow_dispatch")
 input = manual.fetch("inputs").fetch("pull_request")
 raise "manual attestation needs a required numeric PR input" unless input["required"] == true && input["type"] == "number"
@@ -85,8 +88,7 @@ attestation_run_script() {
   ' "$ATTESTATION_WORKFLOW"
 }
 
-# A realistic `GET /repos/{owner}/{repo}/pulls/{n}` payload whose body carries
-# a no-mistakes attestation bound to attested_head.
+# A realistic GET pull-request payload whose body carries an exact-head attestation.
 write_pull_payload() {
   local file=$1 live_head=$2 attested_head=$3
   jq -n --arg live "$live_head" --arg attested "$attested_head" '{
@@ -158,7 +160,7 @@ GH
 # CONTRIBUTING.md is the public interface under test, not implementation source.
 # Execute its copyable verifier command against real attestation bytes and keep
 # its policy from directing operators to recreate automatic hosted requirements.
-contributor_guidance_contract() {  # <document>
+contributor_guidance_contract() {
   ruby - "$1" <<'RUBY'
 text = File.read(ARGV[0])
 section = text.split("## Fork-local validation\n", 2).fetch(1).split(/^## /, 2).first
@@ -195,8 +197,6 @@ test_contributor_guidance_executes_local_validation() {
   [ "$rc" -ne 0 ] || fail "documented verifier accepted a stale attestation"
   grep -q 'attestation is malformed, stale' "$tmp/stale-err" \
     || fail "documented stale refusal was not the attestation check"
-  # A contradictory public document must be rejected even if its new section
-  # still exists. No production code is read or changed by these mutations.
   cp "$ROOT/CONTRIBUTING.md" "$tmp/contradictory.md"
   printf '\nRequire the actual job contexts: Lint 1\n' >> "$tmp/contradictory.md"
   if contributor_guidance_contract "$tmp/contradictory.md" >/dev/null 2>&1; then

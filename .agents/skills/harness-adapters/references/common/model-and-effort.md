@@ -6,7 +6,8 @@ Add `references/common/dispatch.md` for configured profile precedence.
 ## Axes and precedence
 
 `../../../bin/fm-spawn.sh` accepts concrete `--harness`, `--model`, and `--effort` values selected at intake; scripts never parse natural-language dispatch rules.
-The tool reference records verified flags, accepted values, omission behavior, and discovery.
+The tool reference records verified flags, accepted values, omission behavior, and discovery for pane-backed launches.
+For T3 Code, resolve both axes through the [provider catalog contract](../../../../../docs/t3code-backend.md#provider-instances-and-models) before selecting a profile.
 
 Effort precedence is a per-task captain instruction, then applicable dispatch profile or secondmate pin, then the fallback below.
 Never replace either higher-precedence value.
@@ -19,9 +20,8 @@ Never select `max` through this fallback; only an explicit per-task or standing 
 
 The explicit native `ultra` value follows the model-scoped refusal contract in `../../../bin/fm-harness.sh validate-native-effort`; it is never silently omitted or mapped to a Pi level.
 The omp-only `auto` value hands the level to omp's per-prompt difficulty classifier; as a configured profile or pin it is a standing configured effort, so never replace it with a fallback level, and `../../../bin/fm-spawn.sh` refuses it for every other harness and for raw launch commands.
-For other values, if requested effort is outside the adapter's accepted set, the spawn records `effort=` in task metadata but emits no effort flag.
-This preserves launch success instead of passing a known-bad value.
-A harness with no verified interactive effort flag follows the same record-and-omit contract.
+[`configuration.md`](../../../../../docs/configuration.md#crew-dispatch-profiles-configcrew-dispatchjson) owns backend-specific refusal or omission behavior for other effort values, including harnesses with no verified interactive effort flag.
+Polytoken uses its [model-scoped selectable-reference contract](../harness/polytoken.md) instead of record-and-omit.
 
 ## Harness and provider identity
 

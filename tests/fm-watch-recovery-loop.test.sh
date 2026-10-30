@@ -269,9 +269,12 @@ test_successor_notifies_independent_inbox_arrivals() {
     # A later independent arrival must still notify on this same live process.
     "${fixture[@]}" bash "$ROOT/bin/fm-inbox.sh" note --request-id later --json 'synthetic later arrival' >/dev/null
     i=0
-    while [ "$i" -lt 100 ] && ! grep -q '^check: inbox-pending$' "$out"; do sleep 0.1; i=$((i+1)); done
-    grep -q '^check: inbox-pending$' "$out" || { kill -TERM "$child" 2>/dev/null || true; fail "later request not notified ($posture): $(cat "$out")"; }
+    # Upstream's durable append recovery may deliver this independent arrival
+    # first; both check kinds reach main and capture notification, not consumption.
+    while [ "$i" -lt 100 ] && ! grep -Eq '^check: (inbox-pending|rearm-resurface)$' "$out"; do sleep 0.1; i=$((i+1)); done
+    grep -Eq '^check: (inbox-pending|rearm-resurface)$' "$out" || { kill -TERM "$child" 2>/dev/null || true; fail "later request not notified ($posture): $(cat "$out")"; }
     wait "$child" || fail "later watcher failed"
+    assert_equals 1 "$(grep -Ec '^check: (inbox-pending|rearm-resurface)$' "$out")" "independent arrival delivers exactly once"
     assert_equals 3 "$(wc -l < "$state/.wake-queue" | tr -d ' ')" "later close loses no requests"
     # A real non-successor restart replays unacknowledged delivery via recovery,
     # not another new-inbox notification. No new row is manufactured.
@@ -289,5 +292,92 @@ test_successor_notifies_independent_inbox_arrivals() {
 }
 
 test_successor_notifies_independent_inbox_arrivals
+
+# T3: a row appended after the predecessor closes but before its handling
+# successor can inspect the queue must survive the handoff and reach main.
+test_handling_successor_resurfaces_a_row_appended_during_startup() {
+  local dir home state fakebin child blocker now out
+  dir=$(make_case recovery-startup-append)
+  home="$dir/home"
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  mkdir -p "$home/data"
+  printf 'pending:downtime:later.1.aaa\n' > "$state/.watcher-down"
+  chmod 600 "$state/.watcher-down"
+  printf '%s\t1\tstale\tfm-demo\tstale: fm-demo (the delivered wake)\n' "$(date +%s)" > "$state/.wake-queue"
+  printf '1\n' > "$state/.wake-queue.seq"
+  out="$dir/watch.out"
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
+    : > "$2/queue-held"
+    while [ ! -e "$2/append-now" ]; do sleep 0.02; done
+    fm_wake_append_locked check inbox:n1 "check: captain inbox note n1 - from Basecamp" || exit 1
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" &
+  blocker=$!
+  now=0
+  while [ "$now" -lt 100 ] && [ ! -e "$state/queue-held" ]; do
+    sleep 0.02
+    now=$((now + 1))
+  done
+  [ -e "$state/queue-held" ] || { kill "$blocker" 2>/dev/null || true; fail "fixture: queue lock was not held"; }
+
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=600 \
+    FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" > "$out" 2>&1 &
+  child=$!
+  now=0
+  while [ "$now" -lt 40 ]; do
+    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$child" ] && break
+    sleep 0.1
+    now=$((now + 1))
+  done
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$child" ] \
+    || { kill -TERM "$child" "$blocker" 2>/dev/null || true; fail "handling successor did not take the watcher lock"; }
+  : > "$state/append-now"
+  wait "$blocker" || { kill -TERM "$child" 2>/dev/null || true; fail "fixture: startup append failed"; }
+  now=0
+  while [ "$now" -lt 40 ] && [ ! -e "$state/.last-watcher-beat" ]; do
+    sleep 0.1
+    now=$((now + 1))
+  done
+  [ -e "$state/.last-watcher-beat" ] \
+    || { kill -TERM "$child" 2>/dev/null || true; fail "fixture: handling successor never finished startup"; }
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_recovery_marker_begin_handling "$2/.watcher-down" later.1.aaa || exit 1
+    fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
+    awk -F "\t" "\$2 != 1" "$FM_WAKE_QUEUE" > "$FM_WAKE_QUEUE.tmp" \
+      && mv -f "$FM_WAKE_QUEUE.tmp" "$FM_WAKE_QUEUE" || exit 1
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    fm_recovery_marker_handling_settled "$2/.watcher-down"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" \
+    || { kill -TERM "$child" 2>/dev/null || true; fail "fixture: handled-turn settlement failed"; }
+
+  now=0
+  while [ "$now" -lt 40 ] && kill -0 "$child" 2>/dev/null; do
+    sleep 0.25
+    now=$((now + 1))
+  done
+  if kill -0 "$child" 2>/dev/null; then
+    kill -TERM "$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
+    fail "handling successor never resurfaced the startup-window row: $(cat "$out"; cat "$state/.watcher-down")"
+  fi
+  wait "$child" 2>/dev/null || true
+  # The retained inbox-notification owner may win the race with the upstream
+  # recovery owner. Either check must deliver this row once to main, never eat it.
+  [ "$(grep -Ec '^check: (rearm-resurface|inbox-pending)$' "$out")" -eq 1 ] \
+    || fail "handling successor did not close once with the queued-row notification: $(cat "$out")"
+  grep "$(printf '\tcheck\tinbox:n1\t')" "$state/.wake-queue" >/dev/null \
+    || fail "the resurfaced inbox row must stay queued for main"
+  grep -E '^(pending|announced):downtime:' "$state/.watcher-down" >/dev/null \
+    || fail "the resurfaced close must leave a deliverable downtime episode: $(cat "$state/.watcher-down")"
+  pass "a handling successor resurfaces a row appended during startup"
+}
+
 test_handling_successor_does_not_go_blind
+test_handling_successor_resurfaces_a_row_appended_during_startup
 test_unacknowledged_recovery_is_announced_once_per_generation
