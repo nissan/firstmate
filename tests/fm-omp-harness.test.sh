@@ -209,6 +209,29 @@ test_spawn_model_validation_scoped_to_listed_providers() {
   pass "fm-spawn: omp model validation is scoped to providers the listing can prove"
 }
 
+test_spawn_auto_effort_and_role_model() {
+  local rec id out status launch
+  rec=$(make_spawn_case auto-role omp omp-auto-role-q5)
+  read_case_record "$rec"
+  id=omp-auto-role-q5
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness omp --model @mid_claude --effort auto)
+  status=$?
+  expect_code 0 "$status" "an omp role model with auto effort must spawn: $out"
+  assert_grep "effort=auto" "$HOME_DIR/state/$id.meta" "meta missing the auto effort"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--model '@mid_claude' --thinking 'auto' -e" "omp launch did not pass the role model and --thinking auto"
+
+  rec=$(make_spawn_case auto-refused pi omp-auto-refused-q6)
+  read_case_record "$rec"
+  id=omp-auto-refused-q6
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness pi --model openai-codex/gpt-6.1-sol --effort auto)
+  status=$?
+  expect_code 1 "$status" "auto effort on a non-omp harness must refuse"
+  assert_contains "$out" "--effort auto is omp-only" "refusal did not name the omp-only contract"
+  assert_absent "$HOME_DIR/state/$id.meta" "a refused auto spawn must publish no record"
+  pass "fm-spawn: omp takes a role model with --thinking auto; auto on any other harness refuses before a record"
+}
+
 test_secondmate_launch_relies_on_discovery() {
   # A seeded secondmate home, launched for real through fm-spawn on omp: the
   # launch must carry the posture overlay and pin --cwd to the home. Its only
@@ -875,6 +898,7 @@ test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_spawn_launch_line_and_worker_wiring
 test_spawn_model_validation_scoped_to_listed_providers
+test_spawn_auto_effort_and_role_model
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated
 test_busy_extension_lifecycle

@@ -18,6 +18,7 @@ If an adapter lacks `xhigh`, cap at its highest supported non-`max` level rather
 Never select `max` through this fallback; only an explicit per-task or standing captain preference permits it.
 
 The explicit native `ultra` value follows the model-scoped refusal contract in `../../../bin/fm-harness.sh validate-native-effort`; it is never silently omitted or mapped to a Pi level.
+The omp-only `auto` value hands the level to omp's per-prompt difficulty classifier; as a configured profile or pin it is a standing configured effort, so never replace it with a fallback level, and `../../../bin/fm-spawn.sh` refuses it for every other harness.
 For other values, if requested effort is outside the adapter's accepted set, the spawn records `effort=` in task metadata but emits no effort flag.
 This preserves launch success instead of passing a known-bad value.
 A harness with no verified interactive effort flag follows the same record-and-omit contract.
