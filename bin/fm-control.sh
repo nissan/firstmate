@@ -301,8 +301,8 @@ fi
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
 case "$NEW_EFFORT" in
-  ''|default|low|medium|high|xhigh|max|ultra) ;;
-  *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra" ;;
+  ''|default|low|medium|high|xhigh|max|ultra|auto) ;;
+  *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra, auto" ;;
 esac
 
 # --- exact task-id resolution ----------------------------------------------
@@ -908,9 +908,9 @@ resolve_relaunch_profile() {
     CONFIG_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     CONFIG_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
     case "$CONFIG_EFFORT" in
-      ''|low|medium|high|xhigh|max|ultra) ;;
+      ''|low|medium|high|xhigh|max|ultra|auto) ;;
       *)
-        echo "warning: config/secondmate-harness effort token '$CONFIG_EFFORT' is not one of low, medium, high, xhigh, max, ultra; ignoring" >&2
+        echo "warning: config/secondmate-harness effort token '$CONFIG_EFFORT' is not one of low, medium, high, xhigh, max, ultra, auto; ignoring" >&2
         CONFIG_EFFORT=
         ;;
     esac
@@ -955,6 +955,9 @@ resolve_relaunch_profile() {
   fi
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
+  fi
+  if [ "$TARGET_EFFORT" = auto ] && [ "$TARGET_HARNESS" != omp ]; then
+    die "--effort auto is omp-only (its per-prompt classifier picks the level); choose a concrete effort for harness '$TARGET_HARNESS'"
   fi
   # The launch owner applies this home's worker account pin too, but only after
   # the old agent has been stopped, so a pin that no longer resolves or is
