@@ -1302,6 +1302,102 @@ EOF
   pass "fm-control-lib: only a runtime's own recorded session has a relaunch resume form"
 }
 
+test_exit_receipt_private_writer() {
+  # Public receipt APIs only; malformed text must never become a receipt field.
+  . "$ROOT/bin/fm-exit-check-lib.sh"
+  . "$ROOT/bin/fm-composer-lib.sh"
+  local dir stage before rc secret='SYNTHETIC_CREDENTIAL_DO_NOT_LOG' victim
+  dir="$TMP_ROOT/receipt-private"; mkdir -p "$dir"
+  stage=$(fm_exit_check_begin "$dir" task1) || fail "receipt staging failed"
+  fm_exit_check_open "$stage" || fail "exclusive receipt open failed"
+  FM_EXIT_CHECK_FD=9 fm_composer_diagnostic capture ansi
+  FM_EXIT_CHECK_FD=9 fm_composer_diagnostic shape pi
+  FM_EXIT_CHECK_FD=9 fm_composer_diagnostic input blank
+  FM_EXIT_CHECK_FD=9 fm_composer_diagnostic native_status 'done'
+  FM_EXIT_CHECK_FD=9 fm_composer_diagnostic native_status "$secret"$'\ninvalid=field'
+  exec 9>&-
+  fm_exit_check_finish "$stage" "$dir" task1 empty no 123 0 || fail "receipt publish failed"
+  assert_grep 'outcome=pass' "$dir/task1.exit-check" "empty check should record pass"
+  assert_grep 'native_status=done' "$dir/task1.exit-check" "typed native state was lost"
+  assert_no_grep "$secret" "$dir/task1.exit-check" "receipt leaked synthetic secret"
+  [ "$(stat -c %a "$dir/task1.exit-check" 2>/dev/null || stat -f %Lp "$dir/task1.exit-check")" = 600 ] || fail "receipt mode is not 0600"
+  before=$(cksum < "$dir/task1.exit-check")
+  printf 'native_status=done\nraw=%s\n' "$secret" > "$stage"
+  rc=0; fm_exit_check_finish "$stage" "$dir" task1 unknown no 124 1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "unknown receipt field was accepted"
+  [ "$(cksum < "$dir/task1.exit-check")" = "$before" ] || fail "invalid receipt replaced good evidence"
+  printf 'native_status=done\r%s\n' "$secret" > "$stage"
+  rc=0; fm_exit_check_finish "$stage" "$dir" task1 unknown no 124 1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "control characters were accepted"
+  printf 'capture=failed\n' > "$stage"
+  fm_exit_check_finish "$stage" "$dir" task1 unknown no 124 1 || fail "atomic receipt replacement failed"
+  assert_grep 'outcome=refuse' "$dir/task1.exit-check" "unknown check should record refusal"
+  assert_grep 'capture=failed' "$dir/task1.exit-check" "capture failure was lost"
+  assert_no_grep 'native_status=done' "$dir/task1.exit-check" "replacement retained stale fields"
+  victim="$dir/victim"; printf 'keep\n' > "$victim"
+  rm -f "$stage" "$dir/task1.exit-check"
+  ln -s "$victim" "$dir/task1.exit-check"
+  rc=0; fm_exit_check_begin "$dir" task1 >/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "receipt symlink was accepted"
+  rm "$dir/task1.exit-check"; ln "$victim" "$dir/task1.exit-check"; chmod 600 "$victim"
+  rc=0; fm_exit_check_begin "$dir" task1 >/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "hardlinked receipt was accepted"
+  rm "$dir/task1.exit-check"
+  ln -s "$victim" "$stage"
+  rc=0; fm_exit_check_open "$stage" || rc=$?
+  [ "$rc" -ne 0 ] || fail "staging symlink was followed"
+  assert_grep 'keep' "$victim" "staging open truncated a symlink target"
+  ln -s "$dir" "$dir-link"
+  rc=0; fm_exit_check_begin "$dir-link" task1 >/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "symlinked state path was accepted"
+  chmod 777 "$dir"
+  rc=0; fm_exit_check_begin "$dir" task1 >/dev/null || rc=$?
+  [ "$rc" -ne 0 ] || fail "writable state directory was accepted"
+  chmod 755 "$dir"
+  mkdir "$dir/io"
+  stage=$(fm_exit_check_begin "$dir/io" task1) || fail "I/O fixture staging failed"
+  fm_exit_check_open "$stage" || fail "I/O fixture open failed"
+  FM_EXIT_CHECK_FD=9 fm_composer_diagnostic capture ansi
+  exec 9>&-
+  mkdir "$dir/io/task1.exit-check"
+  rc=0; fm_exit_check_finish "$stage" "$dir/io" task1 empty no 125 0 || rc=$?
+  [ "$rc" -ne 0 ] && [ -d "$dir/io/task1.exit-check" ] || fail "publication collision was not preserved"
+  pass "exit receipts: atomic typed private output rejects malformed fields and unsafe paths"
+}
+
+test_exit_receipt_does_not_change_guard_outcomes() {
+  local dir out rc mode
+  for mode in empty pending receipt-failed pending-receipt-failed; do
+    dir=$(new_case "receipt-$mode")
+    add_task "$dir" t1 pi
+    alive_as "$dir" pi
+    case "$mode" in pending*) printf '╭────╮\n│ SYNTHETIC_DRAFT_SECRET │\n╰────╯\n' > "$dir/fake/pane" ;; esac
+    case "$mode" in *receipt-failed) mkdir "$dir/home/state/t1.exit-check" ;; esac
+    rc=0; out=$(run_control "$dir" t1 exit) || rc=$?
+    if [ "$mode" = pending ] || [ "$mode" = pending-receipt-failed ]; then
+      expect_code 1 "$rc" "pending guard must still refuse"
+      [ -z "$(literals "$dir")" ] || fail "receipt caused exit input on a pending composer"
+      if [ "$mode" = pending ]; then
+        assert_grep 'outcome=refuse' "$dir/home/state/t1.exit-check" "refusal receipt missing"
+        assert_no_grep 'SYNTHETIC_DRAFT_SECRET' "$dir/home/state/t1.exit-check" "receipt leaked draft"
+      else
+        [ -d "$dir/home/state/t1.exit-check" ] || fail "receipt failure changed pending guard evidence"
+      fi
+    else
+      expect_code 0 "$rc" "empty guard must still succeed with failed receipt I/O"
+      [ "$(literals "$dir")" = /quit ] || fail "receipt changed original exit command"
+      if [ "$mode" = empty ]; then
+        assert_grep 'outcome=pass' "$dir/home/state/t1.exit-check" "success receipt missing"
+      else
+        [ -d "$dir/home/state/t1.exit-check" ] || fail "receipt failure overwrote unsafe destination"
+      fi
+    fi
+  done
+  pass "fm-control: receipt success and failure leave original input guards unchanged"
+}
+
+test_exit_receipt_private_writer
+test_exit_receipt_does_not_change_guard_outcomes
 test_exit_types_each_harness_verified_command
 test_opencode_exit_matches_recorded_major
 test_opencode2_exit_retries_ctrl_c_once

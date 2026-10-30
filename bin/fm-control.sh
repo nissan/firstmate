@@ -203,6 +203,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-omp-profile-lib.sh"
 # shellcheck source=bin/fm-exclude-tools-lib.sh
 . "$SCRIPT_DIR/fm-exclude-tools-lib.sh"
+# shellcheck source=bin/fm-exit-check-lib.sh
+. "$SCRIPT_DIR/fm-exit-check-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -699,6 +701,7 @@ retire_busy_incarnation() {
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
   local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog
+  local receipt_stage='' receipt_started receipt_seconds receipt_dialog=no receipt_class
   require_state_verified_backend exit
   fm_control_backend_exit_supported "$BACKEND" \
     || die "task $ID runs on the $BACKEND backend, whose T3 Orchestrator V2 tools have no session stop, so 'exit' cannot stop its agent; 'interrupt' ends the running turn and teardown archives the thread"
@@ -770,14 +773,33 @@ do_exit() {
   fi
   : > "$FM_COMPOSER_DIALOG_SINK" \
     || die "task $ID's dialog check could not be recorded"
-  composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
-    || composer_state=unknown
+  # Receipt failure is observational only: always make the original single read.
+  receipt_started=$(date +%s 2>/dev/null) || receipt_started=0
+  receipt_seconds=$SECONDS
+  receipt_stage=$(fm_exit_check_begin "$STATE" "$ID" 2>/dev/null) || receipt_stage=''
+  if [ -n "$receipt_stage" ] && fm_exit_check_open "$receipt_stage"; then
+    composer_state=$(FM_EXIT_CHECK_FD=9 fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
+      || composer_state=unknown
+    exec 9>&-
+  else
+    composer_state=$(FM_EXIT_CHECK_FD='' fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
+      || composer_state=unknown
+  fi
   # The classify that filled the sink ran in a subshell, so read the file
   # rather than a function that subshell sourced.
+  dialog=''
   if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
     dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
-    refuse_blocking_prompt "$dialog"
+    receipt_dialog=yes
   fi
+  receipt_class=$composer_state
+  case "$receipt_class" in empty|pending|pending-unproven|unknown) ;; *) receipt_class=unknown ;; esac
+  if [ -n "$receipt_stage" ]; then
+    fm_exit_check_finish "$receipt_stage" "$STATE" "$ID" "$receipt_class" "$receipt_dialog" \
+      "$receipt_started" "$((SECONDS - receipt_seconds))" || true
+    rm -f -- "$receipt_stage" 2>/dev/null || true
+  fi
+  [ "$receipt_dialog" = no ] || refuse_blocking_prompt "$dialog"
   case "$composer_state" in
     empty) ;;
     pending)

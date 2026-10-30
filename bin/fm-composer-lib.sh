@@ -185,6 +185,23 @@
 # plain text (stdin-only, matching fm_composer_strip_ghost). The character class
 # includes ':' so an ITU colon-form SGR (38:2::r:g:b) is stripped whole, not left
 # with a dangling tail.
+# Typed same-read metadata for the control owner's private receipt fd only.
+# Never accept rendered text, identity strings, or arbitrary keys here.
+fm_composer_diagnostic() {
+  local key=$1 value=$2
+  [ "${FM_EXIT_CHECK_FD:-}" = 9 ] || return 0
+  case "$key:$value" in
+    capture:ansi|capture:plain|capture:failed|shape:pi|shape:box|shape:bare|shape:leftbar|shape:unrecognized|input:blank|input:nonblank|input:unrecognized|native_agent:pi|native_agent:polytoken|native_agent:other|native_status:idle|native_status:done|native_status:working|native_status:blocked|native_status:other|native_status:error|pair_valid:0|pair_valid:1) ;;
+    capture_seconds:*|identity_seconds:*)
+      case "$value" in ''|*[!0-9]*) return 0 ;; esac
+      [ "${#value}" -le 5 ] && [ "$value" -le 86400 ] || return 0
+      ;;
+    *) return 0 ;;
+  esac
+  { printf '%s=%s\n' "$key" "$value" >&9; } 2>/dev/null || true
+  return 0
+}
+
 fm_composer_strip_ansi() {
   local esc; esc=$(printf '\033')
   LC_ALL=C sed "s/${esc}\\[[0-9;:?]*[[:alpha:]]//g"
@@ -2209,9 +2226,12 @@ EOF
   # rules layered on (a live pi composer pair below the generic candidate
   # proves that candidate stale).
   if ! _fm_composer_select_cursorless "$plain"; then
+    fm_composer_diagnostic shape unrecognized
     printf 'unknown'
     return 0
   fi
+  fm_composer_diagnostic shape "$FM_COMPOSER_SELECTED_KIND"
+  fm_composer_diagnostic pair_valid "$FM_COMPOSER_SCAN_PI_PAIR_VALID"
   case "$FM_COMPOSER_SELECTED_KIND" in
     pi)
       _fm_composer_pi_verdict "$screen" "$styled" "$has_identity" "$identity"
@@ -2368,6 +2388,10 @@ _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
     return 0
   fi
   state=$(_fm_composer_classify_pi_rows "$screen" "$styled")
+  case "$state" in
+    empty) fm_composer_diagnostic input blank ;;
+    pending) fm_composer_diagnostic input nonblank ;;
+  esac
   if [ "$state" = pending ]; then
     printf 'pending'
     return 0

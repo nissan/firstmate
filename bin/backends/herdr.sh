@@ -3287,24 +3287,40 @@ fm_backend_herdr_composer_identity() {  # <target> -> "<agent>\t<status>"
 # by definition inside the viewport, and `--source visible` needs none of the
 # small-N --lines workaround.
 fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unproven|unknown
-  local target=$1 cap caps verdict identity
+  local target=$1 cap caps verdict identity diagnostic_start diagnostic_agent diagnostic_status
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   # cortex=ask: a titled rounded composer box is the one shape a Cortex agent
   # identity changes, so the classifier answers need-identity for it and the
   # lazy probe below runs; no other verdict pays for it.
-  if cap=$(fm_backend_herdr_visible_capture_ansi "$target" 2>/dev/null); then
+  diagnostic_start=$SECONDS
+  if cap=$(fm_backend_herdr_visible_capture_ansi "$target" 9>&- 2>/dev/null); then
     caps=$(printf 'styled=1\ncursor=0\nidentity=1\ncortex=ask')
-  elif cap=$(fm_backend_herdr_visible_capture "$target"); then
+    fm_composer_diagnostic capture ansi
+  elif cap=$(fm_backend_herdr_visible_capture "$target" 9>&-); then
     caps=$(printf 'styled=0\ncursor=0\nidentity=1\ncortex=ask')
+    fm_composer_diagnostic capture plain
   else
+    fm_composer_diagnostic capture failed
+    fm_composer_diagnostic capture_seconds "$((SECONDS - diagnostic_start))"
     printf 'unknown'
     return 0
   fi
+  fm_composer_diagnostic capture_seconds "$((SECONDS - diagnostic_start))"
   verdict=$(fm_composer_classify_screen "$caps" "$cap")
   if [ "$verdict" = need-identity ]; then
-    if ! identity=$(fm_backend_herdr_composer_identity "$target" 2>/dev/null) || [ -z "$identity" ]; then
+    diagnostic_start=$SECONDS
+    if ! identity=$(fm_backend_herdr_composer_identity "$target" 9>&- 2>/dev/null) || [ -z "$identity" ]; then
       identity='probe-absent'
+      fm_composer_diagnostic native_status error
+    else
+      diagnostic_agent=${identity%%$'\t'*}
+      diagnostic_status=${identity#*$'\t'}
+      case "$diagnostic_agent" in pi|polytoken) ;; *) diagnostic_agent=other ;; esac
+      case "$diagnostic_status" in idle|done|working|blocked) ;; *) diagnostic_status=other ;; esac
+      fm_composer_diagnostic native_agent "$diagnostic_agent"
+      fm_composer_diagnostic native_status "$diagnostic_status"
     fi
+    fm_composer_diagnostic identity_seconds "$((SECONDS - diagnostic_start))"
     verdict=$(fm_composer_classify_screen "$caps" "$cap" '' "$identity")
     [ "$verdict" != need-identity ] || verdict=unknown
   fi

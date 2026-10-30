@@ -53,6 +53,11 @@ set -u
 LOG="${FM_HERDR_LOG:?}"
 RESP="${FM_HERDR_RESPONSES:?}"
 COUNT_FILE="$RESP/.count"
+# Private diagnostic descriptors must never reach the native client.
+if [ "${FM_EXIT_CHECK_FD:-}" = 9 ] && [ -e /dev/fd/9 ]; then
+  echo 'unexpected diagnostic descriptor in native client' >&2
+  exit 75
+fi
 next=$(( $(cat "$COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
 {
   printf 'HERDR_SESSION=%s' "${HERDR_SESSION:-}"
@@ -1297,7 +1302,7 @@ test_server_ensure_starts_a_firstmate_owned_server() {
   dir="$TMP_ROOT/server-owned-default"; mkdir -p "$dir/session"
   out=$(run_owned_server_ensure "$dir")
   status=$?
-  expect_code 0 $status "server_ensure should start a stopped server the session directory does not mark as externally owned"
+  expect_code 0 "$status" "server_ensure should start a stopped server the session directory does not mark as externally owned"
   [ "$(cat "$dir/starts" 2>/dev/null)" = started ] || fail "server_ensure did not start exactly one Firstmate-owned server: $out"
   pass "fm_backend_herdr_server_ensure: still starts a stopped server when no ownership marker is present"
 }
@@ -1324,7 +1329,7 @@ test_server_ensure_uses_a_running_externally_managed_server() {
   : > "$dir/running"
   out=$(run_owned_server_ensure "$dir")
   status=$?
-  expect_code 0 $status "server_ensure should use a running externally managed server: $out"
+  expect_code 0 "$status" "server_ensure should use a running externally managed server: $out"
   [ ! -e "$dir/sleep-count" ] || fail "server_ensure waited on a running externally managed server with no replacement in progress"
   [ ! -e "$dir/starts" ] || fail "server_ensure started a server that an external owner manages"
   pass "fm_backend_herdr_server_ensure: a running externally managed server is used at once"
@@ -1336,7 +1341,7 @@ test_server_ensure_waits_out_a_server_replacement() {
   : > "$dir/session/firstmate-server-replacing"
   out=$(run_owned_server_ensure "$dir" FM_HERDR_FLIP_AFTER=3 FM_HERDR_FLIP=up)
   status=$?
-  expect_code 0 $status "server_ensure should proceed once the replaced server reports running: $out"
+  expect_code 0 "$status" "server_ensure should proceed once the replaced server reports running: $out"
   [ ! -e "$dir/starts" ] || fail "server_ensure started a server during a replacement"
   [ "$(cat "$dir/sleep-count")" = 3 ] || fail "server_ensure should have waited until the replacement ended on the third wait, got $(cat "$dir/sleep-count")"
   pass "fm_backend_herdr_server_ensure: a replacement marker makes it wait without starting, then proceed once the server is running"
@@ -1349,7 +1354,7 @@ test_server_ensure_holds_callers_off_a_running_server_during_a_replacement() {
   : > "$dir/running"
   out=$(run_owned_server_ensure "$dir" FM_HERDR_FLIP_AFTER=4 FM_HERDR_FLIP=clear)
   status=$?
-  expect_code 0 $status "server_ensure should proceed once the replacement marker clears: $out"
+  expect_code 0 "$status" "server_ensure should proceed once the replacement marker clears: $out"
   [ ! -e "$dir/starts" ] || fail "server_ensure started a server during a replacement"
   [ "$(cat "$dir/sleep-count" 2>/dev/null)" = 4 ] || fail "server_ensure released its caller to a running server while the replacement marker remained: $(cat "$dir/sleep-count" 2>/dev/null) waits"
   pass "fm_backend_herdr_server_ensure: a running server is not used while a replacement marker remains"
@@ -1361,7 +1366,7 @@ test_server_ensure_resumes_ownership_after_a_replacement_clears() {
   : > "$dir/session/firstmate-server-replacing"
   out=$(run_owned_server_ensure "$dir" FM_HERDR_FLIP_AFTER=2 FM_HERDR_FLIP=clear)
   status=$?
-  expect_code 0 $status "server_ensure should start its own server once a replacement ends with the server down: $out"
+  expect_code 0 "$status" "server_ensure should start its own server once a replacement ends with the server down: $out"
   [ "$(cat "$dir/starts" 2>/dev/null)" = started ] || fail "server_ensure did not start its own server after the replacement marker cleared"
   pass "fm_backend_herdr_server_ensure: with no owner marker, a cleared replacement hands back to the Firstmate-owned start"
 }
@@ -6318,6 +6323,51 @@ test_composer_state_inactive_session_fails_fast_without_server_autostart
 test_composer_state_piped_reader_does_not_hang
 test_composer_state_unknown_when_no_composer_row_found
 test_composer_state_pi_parked_prompt_is_not_empty
+test_composer_same_read_exit_diagnostics() {
+  local kind dir resp log fb out before calls stage expected rc status
+  . "$ROOT/bin/fm-exit-check-lib.sh"
+  for kind in empty working pending capture-failed unrecognized malformed-identity; do
+    dir="$TMP_ROOT/exit-diagnostic-$kind"; mkdir -p "$dir/responses" "$dir/state"
+    resp="$dir/responses"; log="$dir/log"; : > "$log"
+    status=idle; expected=empty
+    printf '────────────────────────\n\n────────────────────────\n' > "$resp/1.out"
+    case "$kind" in
+      working) status=working; expected=unknown ;;
+      pending) printf '────────────────────────\nSYNTHETIC_DRAFT_SECRET\n────────────────────────\n' > "$resp/1.out"; expected=pending ;;
+      capture-failed) printf '1\n' > "$resp/1.exit"; printf '1\n' > "$resp/2.exit"; expected=unknown ;;
+      unrecognized) printf 'SYNTHETIC_UNRECOGNIZED_SECRET\n' > "$resp/1.out"; expected=unknown ;;
+      malformed-identity) status='idle\nSYNTHETIC_IDENTITY_SECRET'; expected=unknown ;;
+    esac
+    printf '{"result":{"agent":{"agent":"pi","agent_status":"%s"}}}\n' "$status" > "$resp/2.out"
+    fb=$(make_herdr_fakebin "$dir")
+    before=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+      bash -c '. "$1/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2' _ "$ROOT")
+    calls=$(cat "$log"); : > "$log"; rm -f "$resp/.count"
+    stage=$(fm_exit_check_begin "$dir/state" task1) || fail "diagnostic staging failed"
+    fm_exit_check_open "$stage" || fail "diagnostic fd open failed"
+    out=$(PATH="$fb:$PATH" FM_EXIT_CHECK_FD=9 FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+      bash -c '. "$1/bin/backends/herdr.sh"; fm_backend_herdr_composer_state lab:w1:p2' _ "$ROOT")
+    exec 9>&-
+    [ "$out" = "$expected" ] && [ "$out" = "$before" ] || fail "diagnostics changed $kind classification: $before / $out"
+    [ "$(cat "$log")" = "$calls" ] || fail "diagnostics changed $kind native call order/count"
+    fm_exit_check_finish "$stage" "$dir/state" task1 "$out" no 123 0 || fail "diagnostic receipt refused for $kind"
+    assert_no_grep 'SYNTHETIC_' "$dir/state/task1.exit-check" "diagnostic receipt leaked rendered/native data"
+    case "$kind" in
+      empty) assert_grep 'input=blank' "$dir/state/task1.exit-check" "blank input metadata missing" ;;
+      working)
+        assert_grep 'input=blank' "$dir/state/task1.exit-check" "unknown native state lost known blank input"
+        assert_grep 'native_status=working' "$dir/state/task1.exit-check" "native-state distinction missing" ;;
+      pending) assert_grep 'input=nonblank' "$dir/state/task1.exit-check" "pending input distinction missing" ;;
+      capture-failed) assert_grep 'capture=failed' "$dir/state/task1.exit-check" "capture failure distinction missing" ;;
+      unrecognized) assert_grep 'shape=unrecognized' "$dir/state/task1.exit-check" "unrecognized shape distinction missing" ;;
+      malformed-identity) assert_grep 'native_status=other' "$dir/state/task1.exit-check" "malformed native field was not normalized" ;;
+    esac
+    rm -f "$stage"
+  done
+  pass "Herdr exit diagnostics reuse the same read, redact data and preserve lazy identity/call counts"
+}
+
+test_composer_same_read_exit_diagnostics
 test_composer_state_pi_separator_idle_is_empty
 test_composer_state_pi_dollar_status_footer_is_empty
 test_composer_state_pi_separator_real_text_is_pending
