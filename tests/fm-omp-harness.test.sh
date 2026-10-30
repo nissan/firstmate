@@ -232,6 +232,19 @@ test_spawn_auto_effort_and_role_model() {
   pass "fm-spawn: omp takes a role model with --thinking auto; auto on any other harness refuses before a record"
 }
 
+test_spawn_raw_omp_auto_effort_refuses() {
+  local rec id=omp-raw-auto-refused-q7 out status
+  rec=$(make_spawn_case raw-auto-refused omp "$id")
+  read_case_record "$rec"
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" 'omp --auto-approve' --effort auto)
+  status=$?
+  expect_code 1 "$status" "auto effort on a raw omp launch must refuse"
+  assert_contains "$out" "raw launch commands must carry --thinking auto themselves" "refusal did not name the raw-command contract"
+  assert_absent "$HOME_DIR/state/$id.meta" "a refused raw auto spawn must publish no record"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a refused raw auto spawn must record no launch: $(cat "$LAUNCH_LOG")"
+  pass "fm-spawn: raw omp commands must carry --thinking auto themselves"
+}
+
 test_secondmate_launch_relies_on_discovery() {
   # A seeded secondmate home, launched for real through fm-spawn on omp: the
   # launch must carry the posture overlay and pin --cwd to the home. Its only
@@ -899,6 +912,7 @@ test_lock_identity_and_liveness_classification
 test_spawn_launch_line_and_worker_wiring
 test_spawn_model_validation_scoped_to_listed_providers
 test_spawn_auto_effort_and_role_model
+test_spawn_raw_omp_auto_effort_refuses
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated
 test_busy_extension_lifecycle

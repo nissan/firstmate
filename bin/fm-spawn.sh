@@ -94,7 +94,8 @@
 #   exceptions: bin/fm-harness.sh validate-native-effort owns ultra's model scope and
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra; auto
 #   hands the level to omp's own per-prompt classifier (--thinking auto) and any
-#   other harness refuses it before provisioning rather than dropping it.
+#   other harness refuses it before provisioning rather than dropping it. Raw
+#   launch commands must carry --thinking auto themselves and refuse --effort auto.
 #   --claude-review is an opt-in task launch posture for an independent Claude
 #   reviewer. It replaces Claude's ordinary permission bypass with
 #   `--permission-mode default` plus exact `--allowedTools` rules naming only
@@ -2673,9 +2674,15 @@ if [ "$EFFORT" = ultra ]; then
 fi
 # Auto is omp's native per-prompt effort classifier, not a shared level; no
 # other harness has an equivalent, so refuse it instead of omitting the axis.
-if [ "$EFFORT" = auto ] && [ "$HARNESS" != omp ]; then
-  echo "error: --effort auto is omp-only (its per-prompt classifier picks the level); choose a concrete effort for harness '$HARNESS'" >&2
-  exit 1
+if [ "$EFFORT" = auto ]; then
+  if [ "$HARNESS" != omp ]; then
+    echo "error: --effort auto is omp-only (its per-prompt classifier picks the level); choose a concrete effort for harness '$HARNESS'" >&2
+    exit 1
+  fi
+  [ "$RAW_LAUNCH" = 0 ] || {
+    echo "error: raw launch commands must carry --thinking auto themselves; --effort auto requires the canonical --harness omp launch" >&2
+    exit 1
+  }
 fi
 if [ "$HARNESS" = omp ]; then
   omp_model_validate "$OMP_BIN" "$MODEL" || exit 1
