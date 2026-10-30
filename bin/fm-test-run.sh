@@ -23,6 +23,7 @@
 #   fm-test-run.sh --list-concurrent-safe-families
 #   fm-test-run.sh --concurrent-safe-family-jobs-max <name>
 #   fm-test-run.sh --list-lanes
+#   fm-test-run.sh --serial-shard-plan
 #   fm-test-run.sh --check-coverage
 #
 # Aggregation (no suite execution):
@@ -172,6 +173,7 @@ LIST_SCHEDULED=0
 LIST_FAMILIES=0
 LIST_CONCURRENT_SAFE_FAMILIES=0
 LIST_LANES=0
+SERIAL_SHARD_PLAN=0
 CHECK_COVERAGE=0
 AGGREGATE_OUT=
 FAMILY=
@@ -1047,6 +1049,28 @@ portable_serial_assignments() {
   )
 }
 
+# Print the existing serial assignment as
+# "lane<TAB>script_count<TAB>estimated_ms", without a second packing algorithm.
+portable_serial_shard_plan() {
+  local tmp shard count total assigned script
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-serial-plan.XXXXXX") || return 1
+  portable_serial_assignments >"$tmp/assignments"
+  shard=1
+  while [ "$shard" -le "$PORTABLE_SERIAL_SHARDS" ]; do
+    count=0
+    total=0
+    while IFS=$'\t' read -r assigned script; do
+      [ "$assigned" = "$shard" ] || continue
+      count=$((count + 1))
+      total=$((total + $(portable_serial_weight_for "$script")))
+    done <"$tmp/assignments"
+    printf 'portable-serial-%sof%s\t%s\t%s\n' \
+      "$shard" "$PORTABLE_SERIAL_SHARDS" "$count" "$total"
+    shard=$((shard + 1))
+  done
+  rm -rf "$tmp"
+}
+
 # Parse "<k>of<n>" from a portable-serial shard lane and echo <k>, refusing when
 # <n> disagrees with this script's configured count so a CI matrix built for a
 # different shard count fails loudly instead of dropping tests.
@@ -1607,6 +1631,11 @@ families_for_changed_path() {
       printf '%s\n' secondmate
       printf '%s\n' "__script__:fm-backend-t3code.test.sh"
       ;;
+    bin/fm-shared-brain-skill.sh)
+      # Must precede the broad fm-shared* secondmate-inheritance arm below.
+      printf '%s\n' __script__:fm-shared-brain-skill.test.sh
+      printf '%s\n' __script__:fm-pause-and-learn-inventory.test.sh
+      ;;
     bin/fm-remote*|bin/fm-on.sh|bin/fm-home-seed.sh|\
     bin/fm-backlog-handoff.sh|bin/fm-backlog-receive.sh|bin/fm-procevent-remote-reply.sh|\
     bin/fm-config-inherit-lib.sh|bin/fm-config-push.sh|bin/fm-shared*|\
@@ -1808,6 +1837,11 @@ families_for_changed_path() {
     .agents/skills/harness-adapters/SKILL.md|.agents/skills/harness-adapters/references/*)
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
+      ;;
+    .agents/skills/pause-and-learn/SKILL.md)
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' __script__:fm-shared-brain-skill.test.sh
+      printf '%s\n' __script__:fm-pause-and-learn-inventory.test.sh
       ;;
     .agents/skills/*/SKILL.md)
       printf '%s\n' pure-contract-unit
@@ -2188,6 +2222,10 @@ while [ "$#" -gt 0 ]; do
       LIST_LANES=1
       shift
       ;;
+    --serial-shard-plan)
+      SERIAL_SHARD_PLAN=1
+      shift
+      ;;
     --check-coverage)
       CHECK_COVERAGE=1
       shift
@@ -2261,6 +2299,11 @@ if [ "$LIST_LANES" -eq 1 ]; then
   exit 0
 fi
 
+if [ "$SERIAL_SHARD_PLAN" -eq 1 ]; then
+  portable_serial_shard_plan
+  exit $?
+fi
+
 if [ "$CHECK_COVERAGE" -eq 1 ]; then
   run_coverage_guard
   exit $?
@@ -2295,7 +2338,7 @@ esac
 
 # Refuse before any suite is selected or run. The inspection modes execute
 # nothing: --list-families, --list-concurrent-safe-families, --list-lanes,
-# --check-coverage, --concurrent-safe-family-jobs-max and --aggregate-json have
+# --serial-shard-plan, --check-coverage, --concurrent-safe-family-jobs-max and --aggregate-json have
 # already exited above, and --list/--list-scheduled print their selection and
 # exit below. An unset MODE still falls through to the usage error, so a caller
 # who named no selection mode is told that rather than this.
