@@ -474,6 +474,10 @@ SH
 case "$*" in *fm-watch-arm.sh*'&'*) printf 'fm watcher-arm seatbelt: blocked\n' >&2; exit 2 ;; esac; exit 0
 SH
   printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/bin/fm-cd-pretool-check.sh"
+  cat > "$repo/bin/fm-subagent-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+case "$2" in task|subagent) printf 'fm delegation seatbelt: use bin/fm-spawn.sh\n' >&2; exit 2 ;; esac; exit 0
+SH
   # shellcheck disable=SC2016 # $2 expands in the generated script
   printf '#!/usr/bin/env bash\nprintf "OMP DIGEST source=%%s\\n" "$2"\n' > "$repo/bin/fm-sessionstart-run.sh"
   chmod +x "$repo/bin/"*.sh
@@ -484,7 +488,7 @@ const handlers = new Map();
 const pi = { on(e, h) { handlers.set(e, h); }, sendMessage() {} };
 const mod = await import(pathToFileURL(process.env.EXT).href);
 mod.default(pi);
-for (const name of ["session_start", "before_agent_start", "session_compact", "session_shutdown", "tool_call", "session_stop"]) {
+for (const name of ["session_start", "before_agent_start", "session_compact", "session_shutdown", "tool_call", "before_subagent_spawn", "session_stop"]) {
   if (!handlers.has(name)) throw new Error(`${name} handler was not registered`);
 }
 if (handlers.has("agent_settled")) throw new Error("omp guard must not listen for agent_settled");
@@ -501,6 +505,12 @@ const allowed = await handlers.get("tool_call")({ type: "tool_call", toolName: "
 if (allowed.block) throw new Error("an ordinary command was blocked");
 const blocked = await handlers.get("tool_call")({ type: "tool_call", toolName: "bash", input: { command: "bin/fm-watch-arm.sh &" } }, {});
 if (blocked.block !== true || !blocked.reason.includes("seatbelt")) throw new Error(`backgrounded arm was not blocked: ${JSON.stringify(blocked)}`);
+const delegated = await handlers.get("tool_call")({ type: "tool_call", toolName: "task", input: { tasks: [] } }, {});
+if (delegated.block !== true || !delegated.reason.includes("fm-spawn.sh")) throw new Error(`task delegation was not blocked: ${JSON.stringify(delegated)}`);
+const reader = await handlers.get("tool_call")({ type: "tool_call", toolName: "read", input: { path: "x" } }, {});
+if (reader.block) throw new Error("a non-delegation tool was blocked by the delegation seatbelt");
+const spawned = await handlers.get("before_subagent_spawn")({ type: "before_subagent_spawn", agent: "task", invocationKind: "eval" }, {});
+if (spawned?.block !== true || !spawned.reason.includes("fm-spawn.sh")) throw new Error(`an eval-originated subagent spawn was not blocked: ${JSON.stringify(spawned)}`);
 const r1 = await handlers.get("session_stop")({ type: "session_stop", stop_hook_active: false }, {});
 if (r1?.continue !== true) throw new Error(`guard exit 2 did not compel a continuation: ${JSON.stringify(r1)}`);
 if (!r1.additionalContext.startsWith("⁣FIRSTMATE_OP: v1 turn-end-guard: ")) throw new Error(`continuation context is not typed operational input: ${r1.additionalContext}`);
@@ -516,7 +526,7 @@ EOF
   status=$?
   expect_code 0 "$status" "omp turn-end guard extension contract: $out"
   [ -z "$out" ] || fail "omp guard extension test printed output: $out"
-  pass ".omp turn-end guard: digest delivery, seatbelt block, one compelled continuation, flagged stop stands down"
+  pass ".omp turn-end guard: digest delivery, arm and delegation seatbelts (tool and spawn), one compelled continuation, flagged stop stands down"
 }
 
 test_watch_extension_arms_and_delivers() {
