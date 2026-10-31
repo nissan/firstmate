@@ -1,0 +1,22 @@
+LIVE OMP AUTO VALIDATION (omp 18.14.0, disposable fm-lab home/private tmux socket)
+
+SCENARIO 1 — canonical omp role + auto
+spawn_rc=0
+harness=omp
+model=@mid_claude
+effort=auto
+process_argv=/home/nissan/.local/share/mise/installs/github-can1357-oh-my-pi/latest/omp --config /home/nissan/.no-mistakes/worktrees/17d09ac59434/01M67JXQBET0VJSQQ1JG7GG1DF/.omp/fm-worker-overlay.yml --auto-approve --cwd /home/nissan/.treehouse/project-e17de3/1/project --model @mid_claude --thinking auto -e /tmp/fm-lab.UjEJlb/state/auto-role.omp-ext.ts
+
+SCENARIO 2 — raw omp and non-omp refusal before provisioning
+error: raw launch commands must carry --thinking auto themselves; --effort auto requires the canonical --harness omp launch
+error: --effort auto is omp-only (its per-prompt classifier picks the level); choose a concrete effort for harness 'claude'
+raw_rc=1 nonomp_rc=1 worktrees_before=2 worktrees_after=2
+no_meta raw-auto
+no_meta nonomp-auto
+
+SCENARIO 3 — pinned secondmate relaunch
+spawned sm-auto harness=omp kind=secondmate mode=secondmate yolo=off window=primary:fm-sm-auto worktree=/tmp/fm-lab.ZKoaDg-mate
+relaunched sm-auto harness=omp from=omp model=@mid_claude effort=auto backend=tmux endpoint=primary:fm-sm-auto worktree=/tmp/fm-lab.ZKoaDg-mate
+initial_argv=/home/nissan/.local/share/mise/installs/github-can1357-oh-my-pi/latest/omp --config /home/nissan/.no-mistakes/worktrees/17d09ac59434/01M67JXQBET0VJSQQ1JG7GG1DF/.omp/fm-worker-overlay.yml --auto-approve --cwd /tmp/fm-lab.ZKoaDg-mate --model @mid_claude --thinking auto -e /tmp/fm-lab.ZKoaDg/state/sm-auto.omp-ext.ts
+relaunch_argv=/home/nissan/.local/share/mise/installs/github-can1357-oh-my-pi/latest/omp --config /home/nissan/.no-mistakes/worktrees/17d09ac59434/01M67JXQBET0VJSQQ1JG7GG1DF/.omp/fm-worker-overlay.yml --auto-approve --cwd /tmp/fm-lab.ZKoaDg-mate --model @mid_claude --thinking auto -e /tmp/fm-lab.ZKoaDg/state/sm-auto.omp-ext.ts
+meta=window=primary:fm-sm-auto endpoint_task_id=sm-auto worktree=/tmp/fm-lab.ZKoaDg-mate project=/tmp/fm-lab.ZKoaDg-mate harness=omp kind=secondmate mode=secondmate yolo=off tasktmp=/tmp/fm-sm-auto model=@mid_claude effort=auto busy_gen=g1793405158.1265671.17101 spawn_gen=s1793405158.1265132.18611 home=/tmp/fm-lab.ZKoaDg-mate projects= control_relaunch_tx=1264305.20261031T000557Z.22952 

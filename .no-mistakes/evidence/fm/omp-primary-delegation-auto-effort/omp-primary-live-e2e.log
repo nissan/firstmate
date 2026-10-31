@@ -1,0 +1,7 @@
+ok - omp omp/18.14.0: both tracked .omp/extensions loaded by auto-discovery with no -e and no trust dialog
+ok - omp omp/18.14.0: before_agent_start delivered the digest into model context and the lock names the omp process
+ok - omp omp/18.14.0: fm_watch_arm_omp started a live watcher through the extension
+ok - omp omp/18.14.0: an actionable close spawned a ledger-linked successor and woke main exactly once
+ok - omp omp/18.14.0: session_stop compelled the guard continuation (guard rc=2, then a stop_hook_active stop) and the model reached for fm_watch_arm_omp
+# omp omp/18.14.0 exited on its own after its rpc stdin closed
+# omp omp/18.14.0 model=openai-codex/gpt-6-astra: every live omp primary assertion passed

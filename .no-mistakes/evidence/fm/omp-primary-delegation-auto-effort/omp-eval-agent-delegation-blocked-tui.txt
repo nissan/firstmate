@@ -1,0 +1,50 @@
+
+                        ████████████
+                           ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                           ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                           ▒▒  ██                  █
+                               ██       v18.14.0
+
+                          Tip: Please use nerdfont 😭.
+
+
+
+ Use the eval tool with agent() to ask a subagent to reply HELLO. Do not use
+ task and do not answer it yourself. Report the exact spawn error you receive.
+
+
+ ● Read xd://eval/agents
+
+╭─── 🐍 • Attempting requested agent spawn · (133ms) ──────────────────────────╮
+│ h = agent('Reply exactly HELLO.', label='Hello')                             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭─── 🐍 ✘ Reading exact spawn result · (2ms) ──────────────────────────────────╮
+│ print(h.wait())                                                              │
+├─── Output ───────────────────────────────────────────────────────────────────┤
+│ through the fleet, not the harness's own delegation tools: work started that │
+│ way has no durable fleet record, leaves every firstmate guard inert, and     │
+│ dies with this session. Instead, first classify the work under the AGENTS.md │
+│ intake contract, then use bin/fm-brief.sh followed by bin/fm-spawn.sh for    │
+│ dispatched work (blocked tool: subagent, delegation-shaped on \"agent\").    │
+│ Launch the session with FM_ALLOW_SUBAGENT=1 for a deliberate exception."}    │
+│ … 9 more lines (Ctrl+O to expand)                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ Captain, the exact spawn error was:
+
+ ```text
+RuntimeError:
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny
+"},"systemMessage":"[subagent-dispatch] the firstmate primary dispatches
+through the fleet, not the harness's own delegation tools: work started that
+way has no durable fleet record, leaves every firstmate guard inert, and dies
+with this session. Instead, first classify the work under the AGENTS.md intake
+contract, then use bin/fm-brief.sh followed by bin/fm-spawn.sh for dispatched
+work (blocked tool: subagent, delegation-shaped on \"agent\"). Launch the
+session with FM_ALLOW_SUBAGENT=1 for a deliberate exception."}
+ ```
+
+                                        🥚 SPAWN: Report exact agent spawn error
+ π > ◔ GPT-6.1 Sol > 📁 …elegation-live.1049593 > ⑂ detached > S0.06 ▶─5%─┃500K─
+╰─
