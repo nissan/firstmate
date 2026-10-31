@@ -482,9 +482,9 @@ function runGuard(stopHookActive: boolean): Promise<{ code: number; stderr: stri
 // omp 18.1.2: returning {block: true, reason} refused the bash command and
 // surfaced the reason verbatim to the model). Each owner script owns its own
 // decision and is inert outside the real primary checkout.
-function runChecker(script: string, command: string): Promise<{ code: number; stderr: string }> {
+function runChecker(script: string, args: string[]): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const child = spawn(`${root}/bin/${script}`, ["--command", command], {
+    const child = spawn(`${root}/bin/${script}`, args, {
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
@@ -497,11 +497,11 @@ function runChecker(script: string, command: string): Promise<{ code: number; st
 }
 
 function runPretoolCheck(command: string): Promise<{ code: number; stderr: string }> {
-  return runChecker("fm-arm-pretool-check.sh", command);
+  return runChecker("fm-arm-pretool-check.sh", ["--command", command]);
 }
 
 function runCdCheck(command: string): Promise<{ code: number; stderr: string }> {
-  return runChecker("fm-cd-pretool-check.sh", command);
+  return runChecker("fm-cd-pretool-check.sh", ["--command", command]);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -580,8 +580,25 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
+  // Delegation seatbelt (bin/fm-subagent-pretool-check.sh, docs/subagent-guard.md).
+  // omp ships built-in delegation: the `task` tool, and eval's `agent()` /
+  // `workpool()` helpers, which spawn subagents without a tool name of their
+  // own. Two fences, both answered by the one classification owner, which is
+  // inert outside a genuine primary home so crewmates keep their delegation:
+  // - tool_call: every tool name goes to `--tool`, like Claude's `.*` matcher,
+  //   so a future delegation-shaped tool is refused without enumerating it here.
+  // - before_subagent_spawn: fires once per child for task, eval agent() and
+  //   workpool() at dispatch, before the child resolves a model and including
+  //   speculative batch launches, so it is the only fence that sees eval
+  //   spawns. The spawn itself is the delegation, so it is classified as
+  //   `subagent`.
   pi.on?.("tool_call", async (event) => {
-    if (!event || event.type !== "tool_call" || event.toolName !== "bash") return {};
+    if (!event || event.type !== "tool_call" || !event.toolName) return {};
+    const subagentResult = await runChecker("fm-subagent-pretool-check.sh", ["--tool", event.toolName]);
+    if (subagentResult.code === 2) {
+      return { block: true, reason: subagentResult.stderr.trim() || "denied by the delegation PreToolUse seatbelt" };
+    }
+    if (event.toolName !== "bash") return {};
     const command = String((event.input as { command?: unknown })?.command ?? "");
     if (!command) return {};
     const cdResult = await runCdCheck(command);
@@ -591,6 +608,12 @@ export default function (pi: ExtensionAPI) {
     const result = await runPretoolCheck(command);
     if (result.code !== 2) return {};
     return { block: true, reason: result.stderr.trim() || "denied by the watcher-arm PreToolUse seatbelt" };
+  });
+
+  pi.on?.("before_subagent_spawn", async () => {
+    const result = await runChecker("fm-subagent-pretool-check.sh", ["--tool", "subagent"]);
+    if (result.code !== 2) return undefined;
+    return { block: true, reason: result.stderr.trim() || "denied by the delegation seatbelt" };
   });
 
   // The blocking turn boundary. Returning undefined lets the session settle;

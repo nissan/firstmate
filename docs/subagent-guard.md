@@ -175,7 +175,7 @@ When that script is absent the message still defers to intake classification and
 
 ## Harness wiring
 
-Every supported primary harness was reviewed except omp, whose row below rests on its bundled material rather than a live enumeration.
+Every supported primary harness was reviewed; the omp row records its live-verified routes and remaining verification limits.
 Applicability turns on one question: does the harness expose built-in delegation tools that a primary session could use instead of `bin/fm-spawn.sh`?
 
 | Harness | Delegation surface | Status |
@@ -183,7 +183,7 @@ Applicability turns on one question: does the harness expose built-in delegation
 | Claude | 16 known tools, listed above | Scoped guard wired and live-verified; untracked local deny list verified and recommended. |
 | Codex | none | Not applicable, verified empirically below. Codex 0.144.1 exposes no subagent, sub-task, or delegated-agent tool, so there is nothing to remove or intercept. `.codex/hooks.json` is unchanged. |
 | Grok | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
-| omp | present, per bundled material | Not wired and unverified. omp ships a built-in task delegation tool: its bundled docs list `tools/task.md` and the captain-level `task.maxConcurrency` setting governs it. No Firstmate delegation seatbelt is wired for it yet, and its status stays unverified until a live tool enumeration is recorded the way the Codex row was. |
+| omp | present: the `task` tool, plus eval's `agent()` and `workpool()` helpers, which spawn subagents without a tool name of their own | Wired through `.omp/extensions/fm-primary-turnend-guard.ts`, with every `tool_call` name reaching `bin/fm-subagent-pretool-check.sh --tool` and `before_subagent_spawn` classifying task, eval `agent()`, and `workpool()` child creation as `subagent`; the `task` and eval `agent()` routes were live-verified on omp 18.14.0, `tests/fm-omp-harness.test.sh` pins both fences over the fake omp API, and `workpool()` plus a full tool enumeration remain unverified live. |
 | OpenCode | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
 | Pi | none reported | Not wired pending live verification. See below. |
 

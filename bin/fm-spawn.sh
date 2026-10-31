@@ -87,12 +87,15 @@
 #   only a shell that will not go refuses.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
-#   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
+#   --model <name> and --effort <low|medium|high|xhigh|max|ultra|auto> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed. Ultra is the explicit
-#   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
-#   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
+#   from that harness's launch rather than guessed. Ultra and auto are the explicit
+#   exceptions: bin/fm-harness.sh validate-native-effort owns ultra's model scope and
+#   supported Pi launches receive --codex-effort ultra, never --thinking ultra; auto
+#   hands the level to omp's own per-prompt classifier (--thinking auto) and any
+#   other harness refuses it before provisioning rather than dropping it. Raw
+#   launch commands must carry --thinking auto themselves and refuse --effort auto.
 #   --claude-review is an opt-in task launch posture for an independent Claude
 #   reviewer. It replaces Claude's ordinary permission bypass with
 #   `--permission-mode default` plus exact `--allowedTools` rules naming only
@@ -953,9 +956,9 @@ if [ "$TRACEPARENT_SET" -eq 1 ]; then
   }
 fi
 case "$EFFORT" in
-'' | low | medium | high | xhigh | max | ultra) ;;
+'' | low | medium | high | xhigh | max | ultra | auto) ;;
 *)
-  echo "error: --effort must be one of low, medium, high, xhigh, max, ultra" >&2
+  echo "error: --effort must be one of low, medium, high, xhigh, max, ultra, auto" >&2
   exit 1
   ;;
 esac
@@ -2654,8 +2657,8 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
     SM_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
     if [ -n "$SM_EFFORT" ]; then
       case "$SM_EFFORT" in
-      low | medium | high | xhigh | max | ultra) EFFORT=$SM_EFFORT ;;
-      *) echo "warning: config/secondmate-harness effort token '$SM_EFFORT' is not one of low, medium, high, xhigh, max, ultra; ignoring" >&2 ;;
+      low | medium | high | xhigh | max | ultra | auto) EFFORT=$SM_EFFORT ;;
+      *) echo "warning: config/secondmate-harness effort token '$SM_EFFORT' is not one of low, medium, high, xhigh, max, ultra, auto; ignoring" >&2 ;;
       esac
     fi
   fi
@@ -2666,6 +2669,18 @@ if [ "$EFFORT" = ultra ]; then
   "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$HARNESS" "$MODEL" "$EFFORT" || exit 1
   [ "$RAW_LAUNCH" = 0 ] || {
     echo "error: --effort ultra requires the canonical --harness pi or pi-signed launch so its native flag cannot be omitted" >&2
+    exit 1
+  }
+fi
+# Auto is omp's native per-prompt effort classifier, not a shared level; no
+# other harness has an equivalent, so refuse it instead of omitting the axis.
+if [ "$EFFORT" = auto ]; then
+  if [ "$HARNESS" != omp ]; then
+    echo "error: --effort auto is omp-only (its per-prompt classifier picks the level); choose a concrete effort for harness '$HARNESS'" >&2
+    exit 1
+  fi
+  [ "$RAW_LAUNCH" = 0 ] || {
+    echo "error: raw launch commands must carry --thinking auto themselves; --effort auto requires the canonical --harness omp launch" >&2
     exit 1
   }
 fi
@@ -2932,10 +2947,11 @@ effort_flag_for_harness() {
     esac
     ;;
   omp)
-    # omp 18.1.11 --thinking accepts off|minimal|low|medium|high|xhigh|max|auto,
-    # a superset of the shared vocabulary, so every level maps straight across.
+    # omp --thinking accepts off|minimal|low|medium|high|xhigh|max|auto, a
+    # superset of the shared vocabulary, so every level maps straight across;
+    # auto lets omp's classifier pick the level per prompt (verified 18.14.0).
     case "$effort" in
-    low | medium | high | xhigh | max) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
+    low | medium | high | xhigh | max | auto) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
     esac
     ;;
   opencode)

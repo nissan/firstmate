@@ -1077,7 +1077,8 @@ crew_dispatch_validate() {
       elif $h == "codex" then ((["low","medium","high","xhigh"] | index($e)) != null or ($e == "max" and $m == "gpt-5.6-luna"))
       elif $h == "grok" then (["low","medium","high"] | index($e))
       elif $h == "agy" then (["low","medium","high"] | index($e))
-      elif $h == "pi" or $h == "pi-signed" or $h == "omp" then (["low","medium","high","xhigh","max"] | index($e))
+      elif $h == "pi" or $h == "pi-signed" then (["low","medium","high","xhigh","max"] | index($e))
+      elif $h == "omp" then (["low","medium","high","xhigh","max","auto"] | index($e))
       elif $h == "muse" then (["low","medium","high","xhigh","max"] | index($e))
       elif $h == "rovo" then (["low","medium","high","max"] | index($e))
       elif $h == "opencode" or $h == "kimi" or $h == "cursor" then false

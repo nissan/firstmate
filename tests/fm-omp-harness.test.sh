@@ -209,6 +209,42 @@ test_spawn_model_validation_scoped_to_listed_providers() {
   pass "fm-spawn: omp model validation is scoped to providers the listing can prove"
 }
 
+test_spawn_auto_effort_and_role_model() {
+  local rec id out status launch
+  rec=$(make_spawn_case auto-role omp omp-auto-role-q5)
+  read_case_record "$rec"
+  id=omp-auto-role-q5
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness omp --model @mid_claude --effort auto)
+  status=$?
+  expect_code 0 "$status" "an omp role model with auto effort must spawn: $out"
+  assert_grep "effort=auto" "$HOME_DIR/state/$id.meta" "meta missing the auto effort"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--model '@mid_claude' --thinking 'auto' -e" "omp launch did not pass the role model and --thinking auto"
+
+  rec=$(make_spawn_case auto-refused pi omp-auto-refused-q6)
+  read_case_record "$rec"
+  id=omp-auto-refused-q6
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness pi --model openai-codex/gpt-6.1-sol --effort auto)
+  status=$?
+  expect_code 1 "$status" "auto effort on a non-omp harness must refuse"
+  assert_contains "$out" "--effort auto is omp-only" "refusal did not name the omp-only contract"
+  assert_absent "$HOME_DIR/state/$id.meta" "a refused auto spawn must publish no record"
+  pass "fm-spawn: omp takes a role model with --thinking auto; auto on any other harness refuses before a record"
+}
+
+test_spawn_raw_omp_auto_effort_refuses() {
+  local rec id=omp-raw-auto-refused-q7 out status
+  rec=$(make_spawn_case raw-auto-refused omp "$id")
+  read_case_record "$rec"
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" 'omp --auto-approve' --effort auto)
+  status=$?
+  expect_code 1 "$status" "auto effort on a raw omp launch must refuse"
+  assert_contains "$out" "raw launch commands must carry --thinking auto themselves" "refusal did not name the raw-command contract"
+  assert_absent "$HOME_DIR/state/$id.meta" "a refused raw auto spawn must publish no record"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a refused raw auto spawn must record no launch: $(cat "$LAUNCH_LOG")"
+  pass "fm-spawn: raw omp commands must carry --thinking auto themselves"
+}
+
 test_secondmate_launch_relies_on_discovery() {
   # A seeded secondmate home, launched for real through fm-spawn on omp: the
   # launch must carry the posture overlay and pin --cwd to the home. Its only
@@ -474,6 +510,10 @@ SH
 case "$*" in *fm-watch-arm.sh*'&'*) printf 'fm watcher-arm seatbelt: blocked\n' >&2; exit 2 ;; esac; exit 0
 SH
   printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/bin/fm-cd-pretool-check.sh"
+  cat > "$repo/bin/fm-subagent-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+case "$2" in task|subagent) printf 'fm delegation seatbelt: use bin/fm-spawn.sh\n' >&2; exit 2 ;; esac; exit 0
+SH
   # shellcheck disable=SC2016 # $2 expands in the generated script
   printf '#!/usr/bin/env bash\nprintf "OMP DIGEST source=%%s\\n" "$2"\n' > "$repo/bin/fm-sessionstart-run.sh"
   chmod +x "$repo/bin/"*.sh
@@ -484,7 +524,7 @@ const handlers = new Map();
 const pi = { on(e, h) { handlers.set(e, h); }, sendMessage() {} };
 const mod = await import(pathToFileURL(process.env.EXT).href);
 mod.default(pi);
-for (const name of ["session_start", "before_agent_start", "session_compact", "session_shutdown", "tool_call", "session_stop"]) {
+for (const name of ["session_start", "before_agent_start", "session_compact", "session_shutdown", "tool_call", "before_subagent_spawn", "session_stop"]) {
   if (!handlers.has(name)) throw new Error(`${name} handler was not registered`);
 }
 if (handlers.has("agent_settled")) throw new Error("omp guard must not listen for agent_settled");
@@ -501,6 +541,12 @@ const allowed = await handlers.get("tool_call")({ type: "tool_call", toolName: "
 if (allowed.block) throw new Error("an ordinary command was blocked");
 const blocked = await handlers.get("tool_call")({ type: "tool_call", toolName: "bash", input: { command: "bin/fm-watch-arm.sh &" } }, {});
 if (blocked.block !== true || !blocked.reason.includes("seatbelt")) throw new Error(`backgrounded arm was not blocked: ${JSON.stringify(blocked)}`);
+const delegated = await handlers.get("tool_call")({ type: "tool_call", toolName: "task", input: { tasks: [] } }, {});
+if (delegated.block !== true || !delegated.reason.includes("fm-spawn.sh")) throw new Error(`task delegation was not blocked: ${JSON.stringify(delegated)}`);
+const reader = await handlers.get("tool_call")({ type: "tool_call", toolName: "read", input: { path: "x" } }, {});
+if (reader.block) throw new Error("a non-delegation tool was blocked by the delegation seatbelt");
+const spawned = await handlers.get("before_subagent_spawn")({ type: "before_subagent_spawn", agent: "task", invocationKind: "eval" }, {});
+if (spawned?.block !== true || !spawned.reason.includes("fm-spawn.sh")) throw new Error(`an eval-originated subagent spawn was not blocked: ${JSON.stringify(spawned)}`);
 const r1 = await handlers.get("session_stop")({ type: "session_stop", stop_hook_active: false }, {});
 if (r1?.continue !== true) throw new Error(`guard exit 2 did not compel a continuation: ${JSON.stringify(r1)}`);
 if (!r1.additionalContext.startsWith("⁣FIRSTMATE_OP: v1 turn-end-guard: ")) throw new Error(`continuation context is not typed operational input: ${r1.additionalContext}`);
@@ -516,7 +562,7 @@ EOF
   status=$?
   expect_code 0 "$status" "omp turn-end guard extension contract: $out"
   [ -z "$out" ] || fail "omp guard extension test printed output: $out"
-  pass ".omp turn-end guard: digest delivery, seatbelt block, one compelled continuation, flagged stop stands down"
+  pass ".omp turn-end guard: digest delivery, arm and delegation seatbelts (tool and spawn), one compelled continuation, flagged stop stands down"
 }
 
 test_watch_extension_arms_and_delivers() {
@@ -865,6 +911,8 @@ test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_spawn_launch_line_and_worker_wiring
 test_spawn_model_validation_scoped_to_listed_providers
+test_spawn_auto_effort_and_role_model
+test_spawn_raw_omp_auto_effort_refuses
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated
 test_busy_extension_lifecycle

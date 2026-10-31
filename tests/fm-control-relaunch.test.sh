@@ -1138,6 +1138,54 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   pass "fm-control relaunch: a secondmate relaunch re-resolves its durable configured harness pin"
 }
 
+test_omp_auto_effort_survives_relaunch_and_non_omp_refuses() {
+  local dir home out rc id=sm-auto
+  dir=$(new_case sm-auto "$id")
+  home="$dir/home"
+  mkdir -p "$home/config" "$home/data/$id"
+  printf 'omp @mid_claude auto\n' > "$home/config/secondmate-harness"
+  printf '# secondmate brief\n' > "$home/data/$id/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-auto-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf '%s\n' "$id" > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  {
+    echo "window=fmses:fm-$id"
+    echo "endpoint_task_id=$id"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=default"
+    echo "effort=default"
+    echo "home=$dir/smhome"
+  } > "$home/state/$id.meta"
+  printf '%s\n' "fm-$id" > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  printf 'omp' > "$dir/fake/becomes"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/omp"
+  chmod +x "$dir/fakebin/omp"
+  out=$(run_control "$dir" "$id" relaunch); rc=$?
+  expect_code 0 "$rc" "a configured omp auto secondmate should relaunch: $out"
+  [ "$(meta_field "$dir" "$id" harness)" = omp ] || fail "relaunch lost the configured omp harness"
+  [ "$(meta_field "$dir" "$id" model)" = @mid_claude ] || fail "relaunch lost the configured omp role"
+  [ "$(meta_field "$dir" "$id" effort)" = auto ] || fail "relaunch lost the configured auto effort"
+  assert_contains "$(cat "$dir/fake/literal")" "--model '@mid_claude' --thinking 'auto'" "relaunch did not pass omp's role and auto effort"
+
+  dir=$(new_case non-omp-auto rl-auto-refused)
+  add_ship_task "$dir" rl-auto-refused claude
+  cp "$dir/home/state/rl-auto-refused.meta" "$dir/meta.before"
+  out=$(run_control "$dir" rl-auto-refused relaunch --effort auto --note "must refuse before stop"); rc=$?
+  expect_code 1 "$rc" "auto effort on a non-omp relaunch must refuse"
+  assert_contains "$out" "--effort auto is omp-only" "non-omp relaunch refusal did not name the omp-only contract"
+  cmp -s "$dir/home/state/rl-auto-refused.meta" "$dir/meta.before" || fail "refused auto relaunch changed metadata"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "refused auto relaunch stopped the running agent"
+  [ ! -s "$dir/fake/literal" ] || fail "refused auto relaunch sent lifecycle input"
+  pass "fm-control relaunch: omp auto persists and non-omp auto refuses before stop"
+}
+
 test_secondmate_claude_relaunch_keeps_local_settings() {
   local dir home prior settings out rc
   dir=$(new_case smlocal sml)
@@ -2715,6 +2763,7 @@ test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter
 test_secondmate_relaunch_picks_up_the_configured_harness_pin
+test_omp_auto_effort_survives_relaunch_and_non_omp_refuses
 test_secondmate_claude_relaunch_keeps_local_settings
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop
 test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
