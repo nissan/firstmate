@@ -2,8 +2,8 @@
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
 # Usage: fm-spawn.sh --exact-head-review-plan <probe-root>
-#        fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait] [--claude-review]
+#        fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--allocation-root <dir>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--allocation-root <dir>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait] [--claude-review]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -51,6 +51,13 @@
 #   prints a one-line deviation notice and continues, because the registered
 #   prefix is the captain's standing preference and the brief agreement above
 #   already guarantees the worker's instructions match the branch.
+#   --allocation-root <canonical-absolute-dir> selects an existing dedicated
+#   Treehouse root for one ordinary Herdr ship/scout task. Other backends and
+#   secondmates refuse it. Task-tab creation forwards TREEHOUSE_ROOT through
+#   Herdr's --env, never server/global environment. The allocation_root= record
+#   binds recovery and return to that pool; relaunch cannot override it.
+#   Absent preserves default behavior. See fm-allocation-root-lib.sh for validation.
+#
 #   --base-branch is the optional branch selected at intake for a ship or scout
 #   to start from and target instead of origin's default branch. A fresh launch
 #   resets its pooled copy to origin/<branch>, refusing when the project has no
@@ -957,6 +964,8 @@ fi
 . "$SCRIPT_DIR/fm-ff-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-allocation-root-lib.sh
+. "$SCRIPT_DIR/fm-allocation-root-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 fm_backlog_directory_present "$STATE" "state directory" || {
@@ -1029,6 +1038,8 @@ YOLO_SET=0
 BRANCH_PREFIX_SET=0
 BASE_BRANCH=
 BASE_BRANCH_SET=0
+ALLOCATION_ROOT=
+ALLOCATION_ROOT_SET=0
 UPSTREAM_CONSENT=
 UPSTREAM_CONSENT_SET=0
 TRACEPARENT_SET=0
@@ -1074,6 +1085,10 @@ for a in "$@"; do
     branch-prefix)
       BRANCH_PREFIX=$a
       BRANCH_PREFIX_SET=1
+      ;;
+    allocation-root)
+      ALLOCATION_ROOT=$a
+      ALLOCATION_ROOT_SET=1
       ;;
     base-branch)
       BASE_BRANCH=$a
@@ -1147,6 +1162,11 @@ for a in "$@"; do
     BRANCH_PREFIX=${a#--branch-prefix=}
     BRANCH_PREFIX_SET=1
     ;;
+  --allocation-root) want_value=allocation-root ;;
+  --allocation-root=*)
+    ALLOCATION_ROOT=${a#--allocation-root=}
+    ALLOCATION_ROOT_SET=1
+    ;;
   --base-branch) want_value="base-branch" ;;
   --base-branch=*)
     BASE_BRANCH=${a#--base-branch=}
@@ -1169,6 +1189,9 @@ done
   echo "error: --$want_value requires a value" >&2
   exit 1
 }
+if [ "$ALLOCATION_ROOT_SET" -eq 1 ]; then
+  fm_allocation_root_validate "$ALLOCATION_ROOT" || exit 1
+fi
 # No launch template is safe to select until native policy discovery is bounded.
 # Refuse before batching, provisioning, or permissions/harness resolution; there
 # is intentionally no test-only or config switch that admits a reviewer.
@@ -1234,6 +1257,10 @@ esac
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
 if [ "$RELAUNCH" -eq 1 ]; then
+  [ "$ALLOCATION_ROOT_SET" -eq 0 ] || {
+    echo 'error: --relaunch reuses recorded allocation root; --allocation-root cannot override it' >&2
+    exit 1
+  }
   [ "$BACKEND_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded backend; --backend cannot override it" >&2
     exit 1
@@ -1929,7 +1956,7 @@ spawn_abort_cleanup() {
   # release itself never removes another task's claim.
   if [ "$SPAWN_SLOT_CLAIMED" = 1 ] && [ -n "${WT:-}" ] &&
     [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ] &&
-    fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
+    fm_treehouse_pool_slot "$PROJ_ABS" "$WT" "$ALLOCATION_ROOT"; then
     SPAWN_SLOT_CLAIMED=0
     if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
       fm_treehouse_slot_owner_release "$WT" "$ID" || true
@@ -2100,6 +2127,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
   [ "$BRANCH_PREFIX_SET" -eq 0 ] || shared_args+=(--branch-prefix "$BRANCH_PREFIX")
   [ "$BASE_BRANCH_SET" -eq 0 ] || shared_args+=(--base-branch "$BASE_BRANCH")
+  [ "$ALLOCATION_ROOT_SET" -eq 0 ] || shared_args+=(--allocation-root "$ALLOCATION_ROOT")
   [ "$HERDR_RESUME_LOCK_WAIT" -eq 0 ] || shared_args+=(--herdr-resume-lock-wait)
   for pair in "${POS[@]}"; do
     case "$pair" in
@@ -2329,6 +2357,22 @@ if [ "$RELAUNCH" -eq 0 ]; then
   else
     BACKEND=$(fm_backend_name)
   fi
+  if [ -f "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ]; then
+    RECORDED_ALLOCATION_ROOT=$(fm_allocation_root_from_meta "$STATE/$ID.meta") || exit 1
+    if [ "$ALLOCATION_ROOT_SET" -eq 1 ] && [ "$ALLOCATION_ROOT" != "$RECORDED_ALLOCATION_ROOT" ]; then
+      echo 'error: --allocation-root cannot retarget an existing task' >&2
+      exit 1
+    fi
+    ALLOCATION_ROOT=$RECORDED_ALLOCATION_ROOT
+    if [ -n "$ALLOCATION_ROOT" ]; then
+      fm_treehouse_pool_slot "$(fm_meta_get "$STATE/$ID.meta" project)" \
+        "$(fm_meta_get "$STATE/$ID.meta" worktree)" "$ALLOCATION_ROOT" || {
+        echo 'error: existing task allocation root does not match pool and Git identity' >&2
+        exit 1
+      }
+    fi
+  fi
+  fm_allocation_root_supported "$ALLOCATION_ROOT" "$BACKEND" "$KIND" || exit 1
   fm_backend_validate_spawn "$BACKEND" || exit 1
   fm_backend_source "$BACKEND" || exit 1
   if [ "$BACKEND" = orca ] && [ "$KIND" = secondmate ]; then
@@ -2421,6 +2465,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # shellcheck source=bin/fm-exact-head-review-lib.sh
   . "$SCRIPT_DIR/fm-exact-head-review-lib.sh"
   fm_exact_head_review_record_check "$RELAUNCH_META" || exit 1
+  ALLOCATION_ROOT=$(fm_allocation_root_from_meta "$RELAUNCH_META") || exit 1
+  if [ -n "$ALLOCATION_ROOT" ]; then
+    fm_treehouse_pool_slot "$(fm_meta_get "$RELAUNCH_META" project)" \
+      "$(fm_meta_get "$RELAUNCH_META" worktree)" "$ALLOCATION_ROOT" || {
+      echo 'error: recorded allocation root does not own the task pool/Git identity' >&2
+      exit 1
+    }
+  fi
   fm_backend_validate_task_endpoint "$RELAUNCH_META" "$ID" || exit 1
   BACKEND=$FM_BACKEND_VALIDATED_BACKEND
   RELAUNCH_TARGET=$FM_BACKEND_VALIDATED_TARGET
@@ -4848,7 +4900,7 @@ EOF
     HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
     HERDR_SES=${CONTAINER%%:*}
     HERDR_WORKSPACE_ID=${CONTAINER#*:}
-    HERDR_TASK_IDS=$(fm_backend_herdr_create_task "$CONTAINER" "$W" "$WT" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
+    HERDR_TASK_IDS=$(fm_backend_herdr_create_task "$CONTAINER" "$W" "$WT" "$HERDR_SEEDED_DEFAULT_TAB_ID" "$ALLOCATION_ROOT") || exit 1
     read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
 EOF
@@ -4932,7 +4984,7 @@ else
           FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_reclaim_task \
             "$HERDR_SES" "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_LABEL_HOME" \
             "$HERDR_RECOVERY_WORKSPACE_ID" "$HERDR_RECOVERY_TAB_ID" "$HERDR_RECOVERY_PANE_ID" \
-            "$HERDR_PARENT_LABEL" "$W" "$PROJ_ABS"
+            "$HERDR_PARENT_LABEL" "$W" "$PROJ_ABS" "$ALLOCATION_ROOT"
           HERDR_RECLAIM_STATUS=$?
           set -e
           case "$HERDR_RECLAIM_STATUS" in
@@ -4989,7 +5041,7 @@ else
             HERDR_PROJECTION_ID=$(fm_backend_herdr_projection_journal_create "$STATE" "$ID") || exit 1
             HERDR_PROJECTION_LABEL=$(fm_backend_herdr_projection_workspace_label "$ID" "$HERDR_PROJECTION_ID")
             if ! FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_create_task \
-              "$PROJ_ABS" "$HERDR_PROJECTION_LABEL" "$W"; then
+              "$PROJ_ABS" "$HERDR_PROJECTION_LABEL" "$W" "$ALLOCATION_ROOT"; then
               if [ "${FM_BACKEND_HERDR_PROJECTION_CLEANUP_SAFE:-0}" = 1 ]; then
                 HERDR_PROJECTION_ABORT_CLEANUP=1
                 HERDR_PROJECTION_ABORT_SESSION=$FM_BACKEND_HERDR_PROJECTION_SESSION
@@ -5047,7 +5099,7 @@ else
       HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
       HERDR_SES=${CONTAINER%%:*}
       HERDR_WORKSPACE_ID=${CONTAINER#*:}
-      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
+      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID" "$ALLOCATION_ROOT") || exit 1
       read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
 EOF
@@ -5883,7 +5935,11 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # under its successor.
   # Written under the Treehouse project lock held from before slot allocation
   # through metadata publication, so no other spawn or return sees a half-claim.
-  if fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
+  if [ -n "$ALLOCATION_ROOT" ] && ! fm_treehouse_pool_slot "$PROJ_ABS" "$WT" "$ALLOCATION_ROOT"; then
+    echo 'error: acquired worktree does not match allocation root and Git pool identity; preserving it' >&2
+    exit 1
+  fi
+  if fm_treehouse_pool_slot "$PROJ_ABS" "$WT" "$ALLOCATION_ROOT"; then
     if ! fm_treehouse_slot_owner_claim "$WT" "$ID" "$FM_HOME"; then
       echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; $(spawn_endpoint_hint)" >&2
       exit 1
@@ -6868,7 +6924,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider claude_review omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch allocation_root upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider claude_review omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -6892,6 +6948,7 @@ preserve_relaunch_meta() {
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"
   echo "tasktmp=$TASK_TMP"
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
+  [ -z "$ALLOCATION_ROOT" ] || echo "allocation_root=$ALLOCATION_ROOT"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"
   # Read by bin/fm-dod-lib.sh's ready-report gate; absent on every other forge.
   [ "$EXTERNAL_REVIEW" = 0 ] || echo "forge=external"

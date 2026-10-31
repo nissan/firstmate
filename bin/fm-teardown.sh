@@ -432,6 +432,7 @@ for _teardown_source in \
   fm-cursor-lib.sh \
   fm-nm-run-lib.sh \
   fm-wake-lib.sh \
+  fm-allocation-root-lib.sh \
   fm-path-lib.sh \
   fm-lease-lib.sh
 do
@@ -588,6 +589,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 }
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-allocation-root-lib.sh
+. "$SCRIPT_DIR/fm-allocation-root-lib.sh"
 # Supervision lease guard: post-landing cleanup is overlap territory between
 # the two Pi supervision actors; refuse while the OTHER actor holds this
 # task's live lease (contract: bin/fm-lease-lib.sh; no-op in homes without
@@ -656,6 +659,18 @@ teardown_record_only_project_lock_path() {  # <project> <worktree>
   fm_treehouse_project_lock_path "$project_abs"
 }
 
+# Refuse invalid allocation identity before endpoint or worktree mutation.
+ALLOCATION_ROOT=
+if [ -f "$META" ] && [ ! -L "$META" ]; then
+  ALLOCATION_ROOT=$(fm_allocation_root_from_meta "$META") || exit 1
+  if [ -n "$ALLOCATION_ROOT" ]; then
+    fm_treehouse_pool_slot "$(fm_meta_get "$META" project)" \
+      "$(fm_meta_get "$META" worktree)" "$ALLOCATION_ROOT" || {
+      echo 'REFUSED: allocation root does not match recorded pool and Git identity' >&2
+      exit 1
+    }
+  fi
+fi
 TREEHOUSE_PROJECT_LOCK=
 TREEHOUSE_PROJECT_LOCK_HELD=0
 TREEHOUSE_SLOT_LOCK_REQUIRED=0
@@ -1344,6 +1359,11 @@ fi
 # validator rather than probing or closing an ambient current window.
 WT=$(fm_meta_get "$META" worktree)
 PROJ=$(fm_meta_get "$META" project)
+LOCKED_ALLOCATION_ROOT=$(fm_allocation_root_from_meta "$META") || exit 1
+[ "$LOCKED_ALLOCATION_ROOT" = "$ALLOCATION_ROOT" ] || {
+  echo 'REFUSED: allocation identity changed while acquiring teardown locks' >&2
+  exit 1
+}
 T_ORCA=
 if [ "$TEARDOWN_WINDOWLESS" = 1 ]; then
   BACKEND=tmux
@@ -2129,12 +2149,12 @@ cleanup_stale_lock_for_safety_check() {
 # Return a worktree/home via `treehouse return --force`, tolerating a transient or
 # stale git index.lock left by a killed crew process. See the script header.
 teardown_treehouse_return() {
-  local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-}
+  local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-} allocation_root=${5:-}
   local out lock attempt=0 max_retries lock_desc
 
   # Capture stdout+stderr so non-lock failures stay visible and lock failures can
   # be matched by signature even when the lock file is already gone mid-check.
-  if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
+  if out=$( ( cd "$cd_dir" && fm_allocation_treehouse "$allocation_root" return --force "$dir" ) 2>&1 ); then
     [ -n "$out" ] && printf '%s\n' "$out"
     return 0
   fi
@@ -2159,7 +2179,7 @@ teardown_treehouse_return() {
     echo "teardown: $label return failed with transient git lock ($lock_desc); waiting ${TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS}s and retrying ($attempt/${max_retries})" >&2
     sleep "$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS"
 
-    if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
+    if out=$( ( cd "$cd_dir" && fm_allocation_treehouse "$allocation_root" return --force "$dir" ) 2>&1 ); then
       [ -n "$out" ] && printf '%s\n' "$out"
       echo "teardown: $label return succeeded on retry; lock cleared on its own" >&2
       return 0
@@ -2186,7 +2206,7 @@ teardown_treehouse_return() {
           return 1
         fi
       fi
-      if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
+      if out=$( ( cd "$cd_dir" && fm_allocation_treehouse "$allocation_root" return --force "$dir" ) 2>&1 ); then
         [ -n "$out" ] && printf '%s\n' "$out"
         echo "teardown: $label return succeeded after stale-lock cleanup" >&2
         return 0
@@ -3685,11 +3705,17 @@ preflight_descendant_task_locks() {
 }
 
 preflight_descendant_treehouse_slots() {
-  local i state task_id meta kind backend target worktree project lock_path held owner_rc
+  local i state task_id meta kind backend target worktree project lock_path held owner_rc allocation_root
   for ((i=0; i < ${#DESCENDANT_TASK_IDS[@]}; i++)); do
     state=${DESCENDANT_TASK_STATES[$i]}
     task_id=${DESCENDANT_TASK_IDS[$i]}
     meta="$state/$task_id.meta"
+    allocation_root=$(fm_allocation_root_from_meta "$meta") || return 1
+    if [ -n "$allocation_root" ] && ! fm_treehouse_pool_slot \
+      "$(meta_value "$meta" project)" "$(meta_value "$meta" worktree)" "$allocation_root"; then
+      echo "REFUSED: child $task_id allocation root does not match pool and Git identity" >&2
+      return 1
+    fi
     kind=$(meta_value "$meta" kind)
     [ -n "$kind" ] || kind=ship
     backend=$(fm_backend_of_meta "$meta")
@@ -3958,7 +3984,7 @@ endpoint_close_refusal() {  # <subject> <backend> <target> <honors-force>
 }
 
 cleanup_firstmate_home_children() {
-  local home=$1 archive_parent=${2:-$ID} sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_rex_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_owner_rc child_pool_slot
+  local home=$1 archive_parent=${2:-$ID} sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_rex_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_owner_rc child_pool_slot child_allocation_root
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
@@ -4053,7 +4079,8 @@ cleanup_firstmate_home_children() {
           teardown_scrub_scratch_copy "$child_wt" || return 1
           child_pool_slot=0
           fm_treehouse_pool_slot "$child_proj" "$child_wt" && child_pool_slot=1
-          if teardown_treehouse_return "$child_wt" "$child_proj" "child worktree"; then
+          child_allocation_root=$(fm_allocation_root_from_meta "$child_meta") || return 1
+          if teardown_treehouse_return "$child_wt" "$child_proj" "child worktree" "" "$child_allocation_root"; then
             [ "$child_pool_slot" = 0 ] || teardown_note_dirty_return "$child_wt"
             fm_treehouse_slot_owner_release "$child_wt" "$child_id"
           else
@@ -4452,7 +4479,7 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fi
   wt_pool_slot=0
   fm_treehouse_pool_slot "$PROJ" "$WT" && wt_pool_slot=1
-  teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" || {
+  teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" "$ALLOCATION_ROOT" || {
     echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
     exit 1
   }

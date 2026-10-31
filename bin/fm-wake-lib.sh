@@ -1771,11 +1771,16 @@ fm_treehouse_project_lock_path() {  # <project-dir>
 # A Treehouse slot has the managed pool's fixed <pool>/<slot>/<repo> layout.
 # Require both its pool state and the same Git common directory as the recorded
 # project; an ordinary linked worktree is not evidence that Treehouse owns it.
-fm_treehouse_pool_slot() {  # <project-dir> <worktree>
-  local project=$1 worktree=$2 slot pool state project_common slot_common
+fm_treehouse_pool_slot() {  # <project-dir> <worktree> [allocation-root]
+  local project=$1 worktree=$2 allocation_root=${3:-} slot pool state project_common slot_common
   [ -d "$project" ] && [ -d "$worktree" ] || return 1
   slot=$(CDPATH='' cd -- "$worktree" 2>/dev/null && pwd -P) || return 1
   pool=$(dirname "$(dirname "$slot")")
+  if [ -n "$allocation_root" ]; then
+    # TREEHOUSE_ROOT/--root select the parent of Treehouse's .treehouse
+    # directory, not the repository pool itself (native Treehouse contract).
+    [ "$(dirname "$pool")" = "$allocation_root/.treehouse" ] || return 1
+  fi
   state="$pool/treehouse-state.json"
   [ -f "$state" ] && [ ! -L "$state" ] || return 1
   project_common=$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1

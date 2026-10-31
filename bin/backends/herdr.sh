@@ -92,6 +92,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # same rule (fm_backend_herdr_pane_process_state).
 # shellcheck source=bin/fm-agent-process-lib.sh
 . "$FM_BACKEND_HERDR_ROOT/bin/fm-agent-process-lib.sh"
+# shellcheck source=bin/fm-allocation-root-lib.sh
+. "$FM_BACKEND_HERDR_ROOT/bin/fm-allocation-root-lib.sh"
 
 FM_BACKEND_HERDR_MIN_PROTOCOL=14
 # events.subscribe (the native pane.agent_status_changed push stream) and its
@@ -2577,8 +2579,14 @@ fm_backend_herdr_agent_alive() {  # <target>
 # the safety argument). An ADOPTED workspace's caller always passes an empty
 # 4th arg, so this function never even queries for a prune candidate in that
 # case. Echoes "<tab_id> <pane_id>" on success.
-fm_backend_herdr_create_task() {  # <container> <label> <cwd> <seeded_default_tab_id>
+fm_backend_herdr_create_task() {  # <container> <label> <cwd> <seeded_default_tab_id> [allocation-root]
   local container=$1 label=$2 cwd=$3 seeded_tab_id=${4:-} session wsid list dup_tabs dup dup_pane dup_tab_ids out tab_id pane_id remaining_dup_tabs
+  local allocation_root=${5:-}
+  local -a allocation_env=()
+  if [ -n "$allocation_root" ]; then
+    fm_allocation_root_validate "$allocation_root" || return 1
+    allocation_env=(--env "TREEHOUSE_ROOT=$allocation_root")
+  fi
   session=${container%%:*}
   wsid=${container#*:}
   list=$(fm_backend_herdr_cli "$session" tab list --workspace "$wsid" 2>/dev/null) || return 1
@@ -2600,7 +2608,7 @@ fm_backend_herdr_create_task() {  # <container> <label> <cwd> <seeded_default_ta
 $dup_tabs
 EOF
   fi
-  out=$(fm_backend_herdr_cli "$session" tab create --workspace "$wsid" --cwd "$cwd" --label "$label" --no-focus 2>/dev/null) || return 1
+  out=$(fm_backend_herdr_cli "$session" tab create --workspace "$wsid" --cwd "$cwd" --label "$label" --no-focus ${allocation_env[@]+"${allocation_env[@]}"} 2>/dev/null) || return 1
   tab_id=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
   pane_id=$(printf '%s' "$out" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)
   if [ -z "$tab_id" ] || [ -z "$pane_id" ]; then
@@ -2649,8 +2657,14 @@ EOF
 # CLEANUP_SAFE becomes 1 only after both creates returned complete exact IDs.
 # A missing, failed, or malformed create response stays ambiguous and grants no
 # cleanup authority.
-fm_backend_herdr_projection_create_task() {  # <cwd> <workspace-label> <task-label>
+fm_backend_herdr_projection_create_task() {  # <cwd> <workspace-label> <task-label> [allocation-root]
   local cwd=$1 workspace_label=$2 task_label=$3 session out tabs panes tab_count pane_count focus_before active_tab
+  local allocation_root=${4:-}
+  local -a allocation_env=()
+  if [ -n "$allocation_root" ]; then
+    fm_allocation_root_validate "$allocation_root" || return 1
+    allocation_env=(--env "TREEHOUSE_ROOT=$allocation_root")
+  fi
   FM_BACKEND_HERDR_PROJECTION_SESSION=""
   FM_BACKEND_HERDR_PROJECTION_WORKSPACE_ID=""
   FM_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID=""
@@ -2695,7 +2709,7 @@ fm_backend_herdr_projection_create_task() {  # <cwd> <workspace-label> <task-lab
   }
   if out=$(fm_backend_herdr_cli "$session" tab create \
     --workspace "$FM_BACKEND_HERDR_PROJECTION_WORKSPACE_ID" \
-    --cwd "$cwd" --label "$task_label" --no-focus 2>/dev/null); then
+    --cwd "$cwd" --label "$task_label" --no-focus ${allocation_env[@]+"${allocation_env[@]}"} 2>/dev/null); then
     :
   else
     fm_backend_herdr_projection_focus_restore "$session" "$focus_before" "task-tab create" || true
@@ -2864,9 +2878,15 @@ fm_backend_herdr_projection_reclaim_rollback() {  # <session> <new-pane>
 # Return 0 means exact reclaim, 2 means non-mutating or exactly rolled-back
 # refusal with flat fallback permitted, and 1 means a live/unknown or
 # post-mutation uncertainty that must refuse the launch.
-fm_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <home> <meta-workspace> <meta-tab> <meta-pane> <parent-label> <task-label> <cwd>
+fm_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <home> <meta-workspace> <meta-tab> <meta-pane> <parent-label> <task-label> <cwd> [allocation-root]
   local session=$1 journal=$2 id=$3 home=$4 meta_workspace=$5 meta_tab=$6 meta_pane=$7
   local parent_label=$8 task_label=$9 cwd=${10} canonical_home state focus_before active_tab out new_tab new_pane info close_status
+  local allocation_root=${11:-}
+  local -a allocation_env=()
+  if [ -n "$allocation_root" ]; then
+    fm_allocation_root_validate "$allocation_root" || return 1
+    allocation_env=(--env "TREEHOUSE_ROOT=$allocation_root")
+  fi
   FM_BACKEND_HERDR_PROJECTION_TAB_ID=""
   FM_BACKEND_HERDR_PROJECTION_PANE_ID=""
   fm_backend_herdr_projection_journal_snapshot "$journal" "$id" || return 1
@@ -2918,7 +2938,7 @@ fm_backend_herdr_projection_reclaim_task() {  # <session> <journal> <task-id> <h
     return 2
   fi
   if ! out=$(fm_backend_herdr_cli "$session" tab create \
-    --workspace "$meta_workspace" --cwd "$cwd" --label "$task_label" --no-focus 2>/dev/null); then
+    --workspace "$meta_workspace" --cwd "$cwd" --label "$task_label" --no-focus ${allocation_env[@]+"${allocation_env[@]}"} 2>/dev/null); then
     fm_backend_herdr_projection_focus_restore "$session" "$focus_before" "husk replacement create" || return 1
     echo "warning: herdr presentation reclaim for $id could not create an exact replacement; spawning flat" >&2
     return 2

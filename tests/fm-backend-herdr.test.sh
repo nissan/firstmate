@@ -1683,17 +1683,23 @@ test_container_ensure_uses_secondmate_home_label() {
 }
 
 test_create_task_creates_with_no_focus_flag() {
-  local dir log resp fb out
-  dir="$TMP_ROOT/create-task-no-focus"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  local dir log resp fb out allocation_root=''
+  dir="$TMP_ROOT/create-task-no-focus${1:-}"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  if [ "${1:-}" = with-root ]; then allocation_root="$dir/dedicated pool"; mkdir -p "$allocation_root"; fi
   printf '{"result":{"tabs":[]}}\n' > "$resp/1.out"
   printf '{"result":{"tab":{"tab_id":"w1:t2"},"root_pane":{"pane_id":"w1:p2"}}}\n' > "$resp/2.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_create_task fmtest:w1 fm-newtask /tmp/proj' "$ROOT" )
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_create_task fmtest:w1 fm-newtask /tmp/proj "" "$1"' "$ROOT" "$allocation_root" )
   [ "$out" = "w1:t2 w1:p2" ] || fail "create_task should still echo '<tab_id> <pane_id>', got '$out'"
   assert_contains "$(cat "$log")" $'\x1f''tab'$'\x1f''create'$'\x1f''--workspace'$'\x1f''w1'$'\x1f''--cwd'$'\x1f''/tmp/proj'$'\x1f''--label'$'\x1f''fm-newtask'$'\x1f''--no-focus' \
     "create_task's tab create did not pass --no-focus"
-  pass "fm_backend_herdr_create_task: tab create passes --no-focus"
+  if [ -n "$allocation_root" ]; then
+    assert_contains "$(cat "$log")" $'\x1f--env\x1fTREEHOUSE_ROOT='"$allocation_root" 'flat task lost exact root argument'
+  else
+    assert_not_contains "$(cat "$log")" $'\x1f--env' 'absent root changed default environment'
+  fi
+  pass "fm_backend_herdr_create_task: tab create passes --no-focus and preserves allocation environment"
 }
 
 # --- default-on disposable presentation projection --------------------------
@@ -2109,7 +2115,9 @@ test_projection_journal_v2_binds_and_advances_exact_endpoint() {
 
 test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane() {
   local dir state log resp fb out token journal
-  dir="$TMP_ROOT/projection-create"; state="$dir/state"; mkdir -p "$dir/responses" "$state"
+  local allocation_root=''
+  dir="$TMP_ROOT/projection-create${1:-}"; state="$dir/state"; mkdir -p "$dir/responses" "$state"
+  if [ "${1:-}" = with-root ]; then allocation_root="$dir/dedicated pool"; mkdir -p "$allocation_root"; fi
   log="$dir/log"; resp="$dir/responses"; : > "$log"
   printf '{"result":{"workspace":{"workspace_id":"w9"},"tab":{"tab_id":"w9:t1"},"root_pane":{"pane_id":"w9:p1"}}}\n' > "$resp/1.out"
   printf '{"result":{"tab":{"tab_id":"w9:t2"},"root_pane":{"pane_id":"w9:p2"}}}\n' > "$resp/2.out"
@@ -2131,14 +2139,14 @@ test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane() {
       fm_backend_herdr_projection_focus_restore() { return 0; }
       token=$(fm_backend_herdr_projection_journal_create "$1" task-p2) || exit 1
       label=$(fm_backend_herdr_projection_workspace_label task-p2 "$token")
-      fm_backend_herdr_projection_create_task /tmp/proj "$label" fm-task-p2 || exit 1
+      fm_backend_herdr_projection_create_task /tmp/proj "$label" fm-task-p2 "$2" || exit 1
       printf "%s %s %s %s %s\n" \
         "$FM_BACKEND_HERDR_PROJECTION_WORKSPACE_ID" \
         "$FM_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID" \
         "$FM_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID" \
         "$FM_BACKEND_HERDR_PROJECTION_TAB_ID" \
         "$FM_BACKEND_HERDR_PROJECTION_PANE_ID"
-    ' "$ROOT" "$state") || fail "projection create should succeed from complete exact responses"
+    ' "$ROOT" "$state" "$allocation_root") || fail "projection create should succeed from complete exact responses"
   [ "$out" = "w9 w9:t1 w9:p1 w9:t2 w9:p2" ] || fail "projection create did not retain exact response IDs: $out"
   journal="$state/task-p2.herdr-presentation"
   token=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_projection_journal_token "$1" task-p2' "$ROOT" "$journal") \
@@ -2151,6 +2159,12 @@ test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane() {
     "projection create did not prune the exact seeded root pane"
   assert_not_contains "$(cat "$log")" $'workspace\x1fclose' \
     "projection create must never call workspace close"
+  if [ -n "$allocation_root" ]; then
+    assert_contains "$(cat "$log")" $'\x1f--env\x1fTREEHOUSE_ROOT='"$allocation_root" 'projection lost exact root argument'
+    [ "$(grep -c -- '--env' "$log")" = 1 ] || fail 'root must reach only task tab, not workspace seed'
+  else
+    assert_not_contains "$(cat "$log")" $'\x1f--env' 'absent projected root changed default environment'
+  fi
   pass "herdr presentation create: exact response IDs yield one normal task pane with no workspace-close authority"
 }
 
@@ -3755,7 +3769,9 @@ test_projection_reclaim_refusal_matrix_is_non_mutating() {
 
 test_projection_reclaim_replaces_only_exact_husk_and_advances_binding() {
   local dir state home home_real log resp fb journal token label out calls create_line close_line agent_line boundary_mutations
-  dir="$TMP_ROOT/projection-reclaim-exact"; state="$dir/state"; home="$dir/home"
+  local allocation_root=''
+  dir="$TMP_ROOT/projection-reclaim-exact${1:-}"; state="$dir/state"; home="$dir/home"
+  if [ "${1:-}" = with-root ]; then allocation_root="$dir/dedicated pool"; mkdir -p "$allocation_root"; fi
   mkdir -p "$dir/responses" "$state" "$home"
   home_real=$(cd "$home" && pwd -P)
   log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -3805,9 +3821,14 @@ test_projection_reclaim_replaces_only_exact_husk_and_advances_binding() {
     bash -c '
       . "$0/bin/backends/herdr.sh"
       fm_backend_herdr_projection_reclaim_task \
-        fmtest "$1" fm-hibit-r1 "$2" w2 w2:t2 w2:p2 firstmate fm-fm-hibit-r1 /tmp/project || exit 1
+        fmtest "$1" fm-hibit-r1 "$2" w2 w2:t2 w2:p2 firstmate fm-fm-hibit-r1 /tmp/project "$3" || exit 1
       printf "%s %s" "$FM_BACKEND_HERDR_PROJECTION_TAB_ID" "$FM_BACKEND_HERDR_PROJECTION_PANE_ID"
-    ' "$ROOT" "$journal" "$home") || fail "exact agent-free projection reclaim failed"
+    ' "$ROOT" "$journal" "$home" "$allocation_root") || fail "exact agent-free projection reclaim failed"
+  if [ -n "$allocation_root" ]; then
+    assert_contains "$(cat "$log")" $'\x1f--env\x1fTREEHOUSE_ROOT='"$allocation_root" 'reclaim lost exact root argument'
+  else
+    assert_not_contains "$(cat "$log")" $'\x1f--env' 'absent reclaim root changed default environment'
+  fi
   [ "$out" = "w2:t3 w2:p3" ] || fail "reclaim did not return exact replacement ids: $out"
   [ "$(sed -n 's/^tab_id=//p' "$journal")" = w2:t3 ] \
     && [ "$(sed -n 's/^pane_id=//p' "$journal")" = w2:p3 ] \
@@ -6234,6 +6255,7 @@ test_create_task_refuses_when_agent_state_ambiguous
 test_create_task_husk_replacement_creates_before_closing
 test_create_task_creates_and_parses_ids
 test_create_task_creates_with_no_focus_flag
+test_create_task_creates_with_no_focus_flag with-root
 test_presentation_defaults_on_at_or_above_the_floor
 test_presentation_default_falls_back_below_the_floor
 test_presentation_unreadable_release_falls_back
@@ -6249,6 +6271,7 @@ test_presentation_preference_reports_three_distinct_states
 test_projection_journal_is_atomic_and_uses_128_bit_token
 test_projection_journal_v2_binds_and_advances_exact_endpoint
 test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane
+test_projection_create_uses_exact_response_ids_and_leaves_one_task_pane with-root
 test_projection_create_never_closes_a_concurrent_same_label_tab
 test_projection_focus_snapshot_requires_exact_workspace_and_tab
 test_projection_close_restores_exact_prior_focus
@@ -6297,6 +6320,7 @@ test_presentation_session_lock_path_rejects_malformed_socket
 test_projection_order_rejects_malformed_socket
 test_projection_reclaim_refusal_matrix_is_non_mutating
 test_projection_reclaim_replaces_only_exact_husk_and_advances_binding
+test_projection_reclaim_replaces_only_exact_husk_and_advances_binding with-root
 test_projection_recovery_is_read_only_and_refuses_live_duplicate_risk
 test_workspace_find_matches_only_this_homes_own_label
 test_list_live_scoped_to_this_homes_workspace_only

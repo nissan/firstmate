@@ -551,6 +551,9 @@ For spawn-capable adapters, the runtime session-provider backend controls where 
 
 Treehouse remains the worktree provider for tmux, herdr, zellij, cmux, paseo, rex, t3code, and tern, since herdr, zellij, cmux, paseo, rex, t3code, and tern are session providers only; Orca provides both the task worktree and terminal endpoint.
 
+Ordinary Herdr ship/scout tasks can select a dedicated Treehouse allocation root without changing the server environment or other tasks' pools.
+See [`bin/fm-spawn.sh`](../bin/fm-spawn.sh)'s `--allocation-root` contract for supported intake and recovery, and [`tests/fm-allocation-root.test.sh`](../tests/fm-allocation-root.test.sh) for the identity regression.
+
 ### Backend selection order
 
 New spawns choose the backend in this order:

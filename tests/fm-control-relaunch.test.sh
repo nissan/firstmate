@@ -2817,6 +2817,58 @@ herdr_case_or_skip() {  # <name> <id> [session] [surviving-pane]
   return 0
 }
 
+test_allocation_cli_refuses_unsupported_backends() {
+  local dir root backend out rc
+  dir=$(new_case allocation-refusals allocation-refusals)
+  root="$dir/dedicated pool"; mkdir -p "$root"
+  for backend in tmux zellij orca cmux paseo rex t3code tern; do
+    rc=0
+    out=$(run_spawn "$dir" allocation-refusals "$dir/proj" --scout --backend "$backend" --allocation-root "$root") || rc=$?
+    [ "$rc" -ne 0 ] || fail "CLI accepted root for $backend"
+    assert_contains "$out" 'ordinary Herdr ship/scout tasks only' "wrong refusal for $backend: $out"
+    [ ! -e "$dir/home/state/allocation-refusals.meta" ] || fail 'unsupported backend published metadata'
+  done
+  pass 'spawn CLI rejects explicit roots on every other supported backend before launch'
+}
+
+test_herdr_allocation_identity_survives_relaunch() {
+  local dir id endpoint root wt out rc before
+  for endpoint in keep gone fail; do
+    id="allocation-$endpoint"
+    herdr_case_or_skip "$id" "$id" fmlab '%7' || return 0
+    dir=$HERDR_CASE_DIR
+    root="$dir/dedicated pool"; wt="$root/.treehouse/pool/1/repo"
+    mkdir -p "$root/.treehouse/pool/1"
+    git -C "$dir/proj" worktree move "$dir/wt" "$wt" || fail 'fixture move failed'
+    printf '{}\n' > "$root/.treehouse/pool/treehouse-state.json"
+    sed -i "s|^worktree=.*|worktree=$wt|" "$dir/home/state/$id.meta"
+    printf 'allocation_root=%s\nslot_claim_gen=c1700000000.12.34\n' "$root" >> "$dir/home/state/$id.meta"
+    printf '%s' "$wt" > "$dir/fake/cwd"
+    if [ "$endpoint" = gone ]; then printf '%s' '%none' > "$dir/fake/herdr-pane"; fi
+    if [ "$endpoint" = fail ]; then printf '%s' "$dir/proj" > "$dir/fake/cwd"; fi
+    before=$(cat "$dir/home/state/$id.meta")
+    rc=0
+    out=$(run_control "$dir" "$id" relaunch --note 'retain allocation identity') || rc=$?
+    if [ "$endpoint" = fail ]; then
+      [ "$rc" -ne 0 ] || fail 'wrong cwd must refuse replacement'
+      [ "$(cat "$dir/home/state/$id.meta")" = "$before" ] || fail 'rollback changed allocation identity'
+    else
+      expect_code 0 "$rc" "allocation relaunch failed: $out"
+      [ "$(meta_field "$dir" "$id" allocation_root)" = "$root" ] || fail 'relaunch dropped root'
+      [ "$(grep -c '^allocation_root=' "$dir/home/state/$id.meta")" = 1 ] || fail 'relaunch duplicated root'
+      [ "$(meta_field "$dir" "$id" slot_claim_gen)" = c1700000000.12.34 ] || fail 'relaunch changed immutable slot claim'
+      if [ "$endpoint" = gone ]; then
+        assert_contains "$(cat "$dir/fake/herdr-created-tabs")" "--env TREEHOUSE_ROOT=$root" 'replacement tab lost root'
+      fi
+    fi
+    rc=0
+    out=$(run_spawn "$dir" "$id" --relaunch --allocation-root "$root") || rc=$?
+    [ "$rc" -ne 0 ] || fail 'relaunch accepted allocation override'
+    assert_contains "$out" 'cannot override' 'allocation override refusal missing'
+  done
+  pass 'Herdr relaunch retains allocation and slot identities on reuse, rebind and rollback; overrides refuse'
+}
+
 test_herdr_relaunch_resumes_only_the_registered_pi_session() {
   local dir out rc=0 command registered
   for registered in pi claude; do
@@ -3251,6 +3303,8 @@ test_tmux_refuses_a_window_missing_from_its_session
 test_tmux_refuses_a_session_that_cannot_be_found
 test_tmux_refuses_when_the_server_is_gone
 test_reclaim_refuses_an_unreadable_endpoint
+test_allocation_cli_refuses_unsupported_backends
+test_herdr_allocation_identity_survives_relaunch
 test_herdr_relaunch_resumes_only_the_registered_pi_session
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server
 test_herdr_exit_reports_already_stopped_when_the_pane_outlived_its_server

@@ -3423,6 +3423,71 @@ SH
   chmod +x "$case_dir/fakebin/herdr"
 }
 
+test_herdr_allocation_return_and_refusal() {
+  local case_dir root wt mode rc log closed thlog claim lock
+  for mode in normal retry stale wrong-root duplicate; do
+    case_dir=$(make_case "allocation-$mode")
+    root="$case_dir/dedicated pool"; wt="$root/.treehouse/pool/1/repo"
+    mkdir -p "$root/.treehouse/pool/1" "$case_dir/wrong"
+    git -C "$case_dir/project" worktree move "$case_dir/wt" "$wt" || fail 'allocation fixture move failed'
+    printf '{}\n' > "$root/.treehouse/pool/treehouse-state.json"
+    write_meta "$case_dir" local-only ship "$wt"
+    configure_flat_herdr_teardown_case "$case_dir"
+    claim=$(bash -c '. "$0/bin/fm-wake-lib.sh"; fm_treehouse_slot_owner_claim "$1" task-x1 "$2"; printf "%s" "$FM_TREEHOUSE_SLOT_CLAIM_GEN"' "$ROOT" "$wt" "$case_dir")
+    printf 'slot_claim_gen=%s\n' "$claim" >> "$case_dir/state/task-x1.meta"
+    if [ "$mode" = wrong-root ]; then root="$case_dir/wrong"; fi
+    printf 'allocation_root=%s\n' "$root" >> "$case_dir/state/task-x1.meta"
+    if [ "$mode" = duplicate ]; then printf 'allocation_root=%s\n' "$root" >> "$case_dir/state/task-x1.meta"; fi
+    log="$case_dir/herdr.log"; closed="$case_dir/closed"; thlog="$case_dir/treehouse.log"
+    lock=$(git_index_lock_path "$wt")
+    if [ "$mode" = stale ]; then add_lsof_no_holder "$case_dir"; fi
+    : > "$log"; : > "$thlog"
+    cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '<%s>' "\$@" >> "$thlog"
+printf '\\n' >> "$thlog"
+if [ "$mode" = retry ] && [ "\$(wc -l < "$thlog")" -eq 1 ]; then
+  echo "fatal: Unable to create 'index.lock': File exists" >&2
+  exit 1
+fi
+if [ "$mode" = stale ]; then
+  if [ "\$(wc -l < "$thlog")" -eq 1 ]; then : > "$lock"; touch -t 200001010000 "$lock"; fi
+  if [ -e "$lock" ]; then echo "fatal: Unable to create '$lock': File exists" >&2; exit 1; fi
+fi
+exit 0
+SH
+    chmod +x "$case_dir/fakebin/treehouse"
+    rc=0
+    FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_CLOSED="$closed" FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS=1 \
+      FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=0 FM_TREEHOUSE_RETURN_LOCK_RETRIES=1 \
+      FM_STALE_WORKTREE_LOCK_AGE_SECS=1 run_teardown "$case_dir" > "$case_dir/out" 2> "$case_dir/err" || rc=$?
+    case "$mode" in
+      wrong-root|duplicate)
+        [ "$rc" -ne 0 ] || fail "$mode allocation identity accepted"
+        [ ! -s "$thlog" ] || fail "$mode invoked Treehouse"
+        [ ! -s "$log" ] || fail "$mode touched endpoint"
+        [ -f "$case_dir/state/task-x1.meta" ] || fail "$mode removed record"
+        [ -d "$wt" ] || fail "$mode removed copy"
+        ;;
+      *)
+        expect_code 0 "$rc" "allocation $mode return failed: $(cat "$case_dir/err")"
+        assert_grep "<--root><$root><return><--force><$wt>" "$thlog" 'root lost during return'
+        if [ "$mode" = retry ]; then
+          [ "$(wc -l < "$thlog" | tr -d ' ')" = 2 ] || fail 'retry lost call or root'
+          [ "$(sort -u "$thlog" | wc -l | tr -d ' ')" = 1 ] || fail 'retry changed root identity'
+        fi
+        if [ "$mode" = stale ]; then
+          [ "$(wc -l < "$thlog" | tr -d ' ')" = 3 ] || fail 'stale-lock path did not run three attempts'
+          [ "$(sort -u "$thlog" | wc -l | tr -d ' ')" = 1 ] || fail 'stale-lock return changed root identity'
+          assert_grep 'succeeded after stale-lock cleanup' "$case_dir/err" 'stale-lock path did not finish'
+        fi
+        [ ! -e "$case_dir/state/task-x1.meta" ] || fail 'successful return retained record'
+        ;;
+    esac
+  done
+  pass 'Herdr allocation returns keep root across retries; wrong/duplicate roots refuse before mutation'
+}
+
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes() {
   local case_dir log closed lock ready release holder_pid rc thlog
   case_dir=$(make_case herdr-orphan-refusal)
@@ -6171,6 +6236,13 @@ test_status_archive_nested_secondmate_children() {
   pass "forced secondmate retirement preserves two descendant levels and refuses linked child directories"
 }
 
+# Focused entry point when a separately reported baseline failure stops the
+# broad suite before the remaining regression cases.
+if [ "${1:-}" = --allocation-root-only ]; then
+  test_herdr_allocation_return_and_refusal
+  exit 0
+fi
+test_herdr_allocation_return_and_refusal
 test_hidden_untracked_work_refuses_before_return
 test_content_fallback_git_capability_boundary
 test_status_archive_opt_in
