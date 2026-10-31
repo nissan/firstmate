@@ -406,6 +406,52 @@ test_sweep_respawns_confirmed_dead_secondmate() {
   pass "sweep: a confirmed-dead secondmate endpoint is killed and respawned"
 }
 
+test_intentional_exit_suppresses_recovery_until_explicit_launch() {
+  local w fb tmuxfb log out rc
+  w=$(new_world sweep-intentional-stop)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  printf 'worktree=%s\nproject=%s\nendpoint_task_id=sm1\n' "$w/sm1" "$w/sm1" >> "$w/home/state/sm1.meta"
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+  out=$(PATH="$tmuxfb:$fb:$BASE_PATH" FM_HOME="$w/home" FM_BACKEND=tmux TMUX='' \
+    FM_TEST_PANE_CMD=zsh FM_TMUX_CALL_LOG="$log" \
+    FM_CONTROL_POLL=0.01 FM_CONTROL_ARM_WAIT=0.01 \
+    bash "$ROOT/bin/fm-control.sh" sm1 exit 2>&1) || fail "intentional exit failed: $out"
+  assert_contains "$out" 'already-stopped sm1' "exit on an already-dead mate must still record operator intent"
+  out=$(PATH="$tmuxfb:$fb:$BASE_PATH" FM_TEST_PANE_CMD=zsh FM_TMUX_CALL_LOG="$log" \
+    bash -c '. "$1/bin/fm-backend.sh"; fm_backend_agent_state tmux firstmate:fm-sm1' _ "$ROOT")
+  [ "$out" = dead ] || fail "fixture must expose a positively-dead endpoint, not an alive masking condition"
+  [ -f "$w/home/state/.secondmate-intentional-stop-sm1" ] || fail "exit did not persist operator intent"
+
+  # The real watcher tick reports once, then a fresh watcher and the startup
+  # sweep both preserve the same positively-dead endpoint without recovery.
+  rc=0
+  out=$(PATH="$tmuxfb:$fb:$BASE_PATH" FM_HOME="$w/home" FM_BACKEND=tmux TMUX='' \
+    FM_TEST_PANE_CMD=zsh FM_TMUX_CALL_LOG="$log" \
+    FM_SECONDMATE_LIVENESS_SECS=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=999999 \
+    bash -c '. "$1/bin/fm-timeout-lib.sh"; fm_run_timed 8 bash "$1/bin/fm-watch.sh"' _ "$ROOT" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "first intentional-stop tick did not wake: $out"
+  assert_contains "$out" 'secondmate sm1 intentionally stopped' "first tick should explain suppressed recovery"
+  [ ! -s "$log" ] || fail "intentional stop still killed or launched an endpoint: $(cat "$log")"
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+  assert_not_contains "$out" 'secondmate sm1 intentionally stopped' "startup must not repeat a delivered stop notification"
+  [ ! -s "$log" ] || fail "startup recovered an intentionally stopped mate"
+  [ ! -e "$w/home/state/.secondmate-relaunch-sm1" ] || fail "suppressed recovery recorded an attempt"
+
+  out=$(PATH="$tmuxfb:$fb:$BASE_PATH" FM_HOME="$w/home" FM_BACKEND=tmux TMUX='' \
+    FM_TEST_PANE_CMD=missing FM_TMUX_CALL_LOG="$log" FM_SPAWN_NO_GUARD=1 \
+    bash "$ROOT/bin/fm-spawn.sh" sm1 --secondmate 2>&1) || fail "explicit launch failed: $out"
+  [ ! -e "$w/home/state/.secondmate-intentional-stop-sm1" ] || fail "explicit launch did not clear stop"
+  [ ! -e "$w/home/state/.secondmate-intentional-stop-sm1.reported" ] || fail "explicit launch did not clear receipt"
+  assert_contains "$(cat "$log")" 'new-window' "explicit launch must actually launch"
+  : > "$log"
+  rm -f "$log.windows"
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+  assert_contains "$(cat "$log")" 'new-window' "the identical dead endpoint without stop intent must recover"
+  assert_grep 'relaunched' "$w/home/state/.secondmate-relaunch-sm1" "crash recovery must complete"
+  pass "intentional exit suppresses watcher and startup recovery; explicit launch clears intent and crashes recover"
+}
+
 test_sweep_recovers_the_durable_secondmate_account() {
   local w fb tmuxfb log out
   w=$(new_world sweep-account)
@@ -844,6 +890,7 @@ test_tmux_agent_state_classifies
 test_tmux_agent_state_rejects_malformed_targets_before_probe
 test_herdr_agent_state_preserves_husk_classifier
 test_agent_state_dispatcher_and_compatibility
+test_intentional_exit_suppresses_recovery_until_explicit_launch
 test_sweep_respawns_confirmed_dead_secondmate
 test_sweep_recovers_the_durable_secondmate_account
 test_sweep_serializes_distinct_secondmate_relaunches

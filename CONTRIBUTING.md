@@ -45,8 +45,9 @@ bin/fm-no-mistakes-attestation.sh "$PR_HEAD" < "$PR_BODY_FILE"
 ```
 
 This verifies the supplied bytes only; it neither grants merge authority nor checks forge mergeability or check results.
-The trusted default-branch `.no-mistakes.yaml` declares `no_ci: true`, allowing zero reported checks without waiting for hosted runners.
-A reported red or pending check still refuses ordinary merging; zero checks never means that a reported failure was waived.
+The trusted default-branch `.no-mistakes.yaml` declares `no_ci: true`, so the external monitor need not wait for hosted runners.
+That declaration is not a CI pass or autonomous merge authority: the [merge helper](bin/fm-pr-merge.sh) reports an empty check rollup as no-checks and owns the existing attended missing-context waiver.
+A reported red or pending check still refuses ordinary merging.
 
 Do not add required hosted contexts for this fork's routine delivery: a manual-only workflow cannot automatically satisfy them on each new head.
 Use local targeted tests and canonical lint before any authorized publication, consolidate changes, and never use pushes as a debugging loop.

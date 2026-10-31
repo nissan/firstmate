@@ -1171,6 +1171,12 @@ secondmate_liveness_tick() {
     bound_marker="$STATE/.secondmate-relaunch-bound-$id"
     reason='' notify_key='' err=''
     case "$FM_SM_LIVE_STATUS" in
+      stopped)
+        if fm_secondmate_stop_report_pending "$id"; then
+          reason="check: secondmate $id intentionally stopped; automatic relaunch disabled until an explicit launch or relaunch"
+          notify_key="secondmate-intentional-stop-$id"
+        fi
+        ;;
       relaunchable)
         if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
           :
@@ -1212,6 +1218,9 @@ secondmate_liveness_tick() {
       queued=$(fm_wake_queued_keys check)
       if printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1 \
         || fm_wake_append check "$notify_key" "$reason"; then
+        if [ "$FM_SM_LIVE_STATUS" = stopped ]; then
+          fm_secondmate_stop_reported "$id" || err="intentional-stop notification receipt could not be written"
+        fi
         [ -n "$first_reason" ] || first_reason=$reason
       else
         err="check wake row could not be queued: $reason"

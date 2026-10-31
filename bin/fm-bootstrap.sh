@@ -817,6 +817,15 @@ secondmate_liveness_one() {  # <meta> <id>
   case "$FM_SM_LIVE_STATUS" in
     silent)
       ;;
+    stopped)
+      if fm_secondmate_stop_report_pending "$id"; then
+        echo "SECONDMATE_LIVENESS: secondmate $id intentionally stopped; automatic relaunch disabled until an explicit launch or relaunch"
+        if ! fm_secondmate_stop_reported "$id"; then
+          fm_secondmate_liveness_unlock "$id"
+          return 1
+        fi
+      fi
+      ;;
     alive)
       [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: $FM_SM_LIVE_LINE"
       ;;

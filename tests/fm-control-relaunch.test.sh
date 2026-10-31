@@ -1338,8 +1338,13 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   printf '%s\n' "fm-sm3" > "$dir/fake/windows"
   printf '%s' "$dir/smhome" > "$dir/fake/cwd"
   printf 'codex' > "$dir/fake/becomes"
+  out=$(run_control "$dir" sm3 exit); rc=$?
+  expect_code 0 "$rc" "intentional exit before explicit relaunch should succeed: $out"
+  [ -f "$home/state/.secondmate-intentional-stop-sm3" ] || fail "exit did not record stop intent"
   out=$(run_control "$dir" sm3 relaunch); rc=$?
   expect_code 0 "$rc" "a configured secondmate harness should relaunch"$'\n'"$out"
+  [ ! -e "$home/state/.secondmate-intentional-stop-sm3" ] || fail "explicit control relaunch did not clear stop intent"
+  [ "$(cat "$dir/fake/command")" = codex ] || fail "explicit relaunch did not start the configured agent"
   [ "$(journal_field "$dir" sm3 to_harness)" = codex ] \
     || fail "a secondmate relaunch should pick up the configured harness pin, got '$(journal_field "$dir" sm3 to_harness)'"
   [ "$(journal_field "$dir" sm3 to_model)" = some-model ] \

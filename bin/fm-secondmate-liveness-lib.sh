@@ -51,6 +51,14 @@
 # The attempt ledger (.secondmate-relaunch-<id>, one line per attempt plus one
 # per outcome) is both the durable relaunch record and the input to the
 # watcher's relaunch bound; teardown removes it.
+#
+# Intentional stop: state/.secondmate-intentional-stop-<id> records an explicit
+# fm-control exit before any exit key is sent. Its presence suppresses both
+# automatic recovery drivers even if the exit fails or the endpoint is alive.
+# The first driver reports it once, then creates the sibling .reported receipt;
+# subsequent ticks and session starts stay silent. A successful explicit launch
+# or relaunch clears both files. Never infer operator intent from agent death.
+# fm-control exit holds the same per-mate liveness lock through the stop.
 
 set -u
 
@@ -83,6 +91,16 @@ fm_secondmate_liveness_lock() {  # <id>
 fm_secondmate_liveness_unlock() {  # <id>
   fm_sm_live_require_locks || return 0
   fm_lock_release "$STATE/.secondmate-liveness-$1.lock" 2>/dev/null || true
+}
+
+# Caller holds the per-mate liveness lock. A receipt is written only after the
+# caller has successfully surfaced the line (or queued its durable wake).
+fm_secondmate_stop_report_pending() {  # <id>
+  [ ! -e "$STATE/.secondmate-intentional-stop-$1.reported" ]
+}
+
+fm_secondmate_stop_reported() {  # <id>
+  printf '%s\n' "$(date +%s)" > "$STATE/.secondmate-intentional-stop-$1.reported"
 }
 
 fm_sm_live_first_line() {
@@ -119,7 +137,7 @@ fm_secondmate_liveness_recent_attempts() {  # <id> <window-secs>
 #
 # Read-only probe of one registered secondmate's recorded endpoint. Populates:
 #
-#   FM_SM_LIVE_STATUS  silent | alive | relaunchable | skipped
+#   FM_SM_LIVE_STATUS  silent | stopped | alive | relaunchable | skipped
 #   FM_SM_LIVE_STATE   the raw classifier/state word
 #   FM_SM_LIVE_KILL    1 when relaunch must first kill a confirmed-dead local
 #                      endpoint (its shell husk occupies the name)
@@ -141,6 +159,10 @@ fm_secondmate_liveness_probe() {  # <meta> <id> <full|poll>
   local meta=$1 id=$2 mode=$3
   FM_SM_LIVE_STATUS=skipped FM_SM_LIVE_STATE=unknown FM_SM_LIVE_KILL=0 FM_SM_LIVE_RESUME=0
   FM_SM_LIVE_CAUSE='' FM_SM_LIVE_WHERE='' FM_SM_LIVE_REASON='' FM_SM_LIVE_LINE=''
+  if [ -e "$STATE/.secondmate-intentional-stop-$id" ] || [ -L "$STATE/.secondmate-intentional-stop-$id" ]; then
+    FM_SM_LIVE_STATUS=stopped
+    return 0
+  fi
   local window harness remote_host remote_rc out agent_state readiness_reason route_out remote_backend
   window=$(fm_meta_get "$meta" window)
   [ -n "$window" ] || { FM_SM_LIVE_STATUS=silent; return 0; }

@@ -103,6 +103,11 @@
 # setting, which the merge API applies, and imposing squash there would override
 # that convention rather than mirror the GitHub default.
 #
+# An empty GitHub check rollup is a distinct no-checks state, never green.
+# It refuses ordinary merging, including a repository's no_ci declaration;
+# only an attended --allow-missing naming an actually absent required context
+# can cover it, with every other guard still enforced.
+#
 # A GitLab merge is refused unless every pre-merge condition holds, each read
 # live at merge time rather than taken from recorded metadata: the merge request
 # is open, detailed_merge_status is mergeable, has_conflicts is false,
@@ -1104,6 +1109,7 @@ github_verify_mergeable() {
   local json fields line red name covered missing unreported producers runs
   local total=0 named=0 refusals='' mergeable_refusal='' attestation_ok=false
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
+  local no_checks=false
 
   if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,body 2>/dev/null) \
     || [ -z "$json" ]; then
@@ -1254,6 +1260,16 @@ EOF
 $missing
 EOF
   fi
+  if printf '%s' "$json" | jq -e '.statusCheckRollup | length == 0' >/dev/null; then
+    no_checks=true
+    if [ "${#ALLOW_MISSING[@]}" -gt 0 ] && [ -n "$missing" ] \
+      && printf '%s\n' "$missing" | grep -Fx -- "${ALLOW_MISSING[0]}" >/dev/null; then
+      : # Existing attended missing-context waiver; all other refusals remain.
+    else
+      refusals="$refusals  - CI state is no-checks: no checks reported at head $live_head; this is neither green nor red
+"
+    fi
+  fi
 
   if [ -n "$mergeable_refusal" ]; then
     if [ -z "$refusals" ] && [ "$mergeable" = UNKNOWN ]; then
@@ -1272,7 +1288,10 @@ EOF
   # One sentence, so the attestation clause is additive rather than a second
   # phrasing of the same verdict: the required-check wording is identical on
   # both paths and only the local-evidence clause is appended.
-  if [ "$attestation_ok" = true ]; then
+  if [ "$no_checks" = true ]; then
+    printf 'verified: %s is open and mergeable at head %s with CI state no-checks under the attended missing-context waiver; no CI pass is claimed\n' \
+      "$URL" "$live_head" >&2
+  elif [ "$attestation_ok" = true ]; then
     printf 'verified: %s is open and mergeable, with every unwaived required check reported and every unwaived check green at head %s, and local no-mistakes validation bound to that head\n' \
       "$URL" "$live_head" >&2
   else

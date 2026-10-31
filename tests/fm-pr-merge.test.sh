@@ -4351,6 +4351,32 @@ test_allow_missing_waives_only_the_named_unreported_check() {
   pass "fm-pr-merge --allow-missing waives only its named unreported check"
 }
 
+test_zero_checks_is_distinct_and_requires_attended_missing_context() {
+  local case_dir head
+  head=a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7
+  case_dir=$(make_case github-zero-checks)
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head"
+  run_required_case "$case_dir" 100
+  expect_code 1 "$RC" "zero reported checks must refuse an autonomous merge"
+  assert_grep 'CI state is no-checks' "$case_dir/stderr" "zero checks must be distinguished from red and green"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "zero checks must not reach the forge merge"
+
+  run_required_case "$case_dir" 100 --attended-override
+  expect_code 1 "$RC" "generic attended override must not waive a check condition"
+  run_required_case "$case_dir" 100 --allow-missing nonexistent
+  expect_code 1 "$RC" "a waiver naming no actual required context must not cover zero checks"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "an unrelated waiver must not reach the forge merge"
+
+  write_github_required "$case_dir" classic:ci
+  run_required_case "$case_dir" 100 --allow-missing ci
+  expect_code 0 "$RC" "the existing attended waiver may cover its genuinely missing required context"
+  assert_logged_gh_merge "$case_dir" 100 example/repo --squash
+  assert_grep 'CI state no-checks under the attended missing-context waiver' "$case_dir/stderr" "waived absence is still no-checks"
+  assert_no_grep 'every unwaived check green' "$case_dir/stderr" "zero checks must never claim green"
+  pass "zero checks refuse autonomous merge and remain no-checks under an exact attended missing-context waiver"
+}
+
 test_allow_missing_follows_the_allow_red_rules() {
   local case_dir head
   head=a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6
@@ -4661,6 +4687,7 @@ test_red_and_unreported_checks_are_reported_together
 test_unreadable_required_set_refuses
 test_allow_missing_waives_only_the_named_unreported_check
 test_allow_missing_follows_the_allow_red_rules
+test_zero_checks_is_distinct_and_requires_attended_missing_context
 
 test_required_producer_identity
 test_app_bound_required_status_context_matches_by_name

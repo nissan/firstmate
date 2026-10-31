@@ -59,6 +59,11 @@ test_remote_containing_named_head_is_accepted() {
   git -C "$wt" update-ref refs/remotes/origin/fm/pushed "$sha"
   accept_done ship no-mistakes "$wt" "$repo" "done: PR https://example.test/o/r/pull/2 checks green" \
     || fail "named head on a remote-tracking ref was refused"
+  accept_done ship no-mistakes "$wt" "$repo" "done: PR https://example.test/o/r/pull/2 no checks reported; merge approval required" \
+    || fail "published named head with honestly reported zero checks was refused"
+  if fm_dod_note_reports_ci_ready "PR https://example.test/o/r/pull/2 no checks reported; merge approval required"; then
+    fail "a no-checks completion must not be promoted to checks green"
+  fi
   pass "named head on a remote-tracking ref is accepted"
 }
 
@@ -287,7 +292,8 @@ test_ci_ready_variants_are_gated() {
     'done: PR https://github.com/o/r/pull/5 checks green, risk low' \
     'done: PR https://github.com/o/r/pull/5 - checks green' \
     'done: PR https://github.com/o/r/pull/5 checks green.' \
-    'done: PR https://github.com/o/r/pull/5 (checks green)'; do
+    'done: PR https://github.com/o/r/pull/5 (checks green)' \
+    'done: PR https://github.com/o/r/pull/5 no checks reported; merge approval required'; do
     rc=0
     accept_done ship no-mistakes "$wt" "$repo" "$line" >/dev/null || rc=$?
     [ "$rc" -eq 1 ] || fail "no-mistakes CI-ready variant skipped the gate: $line"

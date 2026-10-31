@@ -1231,6 +1231,10 @@ test_secondmate_control_command_carries_no_marker() {
   alive_as "$dir" claude
   out=$(run_control "$dir" domain exit); rc=$?
   expect_code 0 "$rc" "exiting a secondmate's agent should succeed"$'\n'"$out"
+  [ -f "$home/state/.secondmate-intentional-stop-domain" ] \
+    || fail "successful secondmate exit must preserve intentional-stop state"
+  [ "$(cat "$dir/fake/command")" = zsh ] \
+    || fail "intentional stop must actually stop the live fixture agent"
   typed=$(literals "$dir")
   [ "$typed" = "/exit" ] \
     || fail "a secondmate control command must be the bare exit command, got: $typed"

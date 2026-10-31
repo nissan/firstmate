@@ -205,6 +205,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-exclude-tools-lib.sh"
 # shellcheck source=bin/fm-exit-check-lib.sh
 . "$SCRIPT_DIR/fm-exit-check-lib.sh"
+# shellcheck source=bin/fm-secondmate-liveness-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -220,6 +222,7 @@ die() {  # <message>
 
 CONTROL_LOCK=
 CONTROL_LOCK_HELD=0
+SECONDMATE_STOP_LOCK_HELD=0
 RELAUNCH_ACTIVE=0
 RELAUNCH_PHASE=start
 
@@ -233,6 +236,9 @@ control_cleanup() {
   # the next lifecycle command for this task writes the same path.
   if [ -n "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
     rm -f "$FM_COMPOSER_DIALOG_SINK"
+  fi
+  if [ "$SECONDMATE_STOP_LOCK_HELD" = 1 ]; then
+    fm_secondmate_liveness_unlock "$ID" || true
   fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
@@ -1332,10 +1338,27 @@ case "$VERB" in
     echo "interrupt-delivered $ID harness=$HARNESS backend=$BACKEND verified=$proof"
     ;;
   exit)
+    if [ "$KIND" = secondmate ]; then
+      require_state_verified_backend exit
+      fm_control_backend_exit_supported "$BACKEND" \
+        || die "secondmate $ID's backend does not support exit"
+      fm_secondmate_liveness_lock "$ID" \
+        || die "secondmate $ID is already being recovered; retry its intentional exit after recovery"
+      SECONDMATE_STOP_LOCK_HELD=1
+      rm -f "$STATE/.secondmate-intentional-stop-$ID.reported" \
+        || die "could not reset the intentional-stop notification for $ID"
+      printf '%s\n' "$(date +%s)" > "$STATE/.secondmate-intentional-stop-$ID" \
+        || die "could not record the intentional stop for $ID; no exit sent"
+    fi
     result=$(do_exit)
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
+    if [ "$KIND" = secondmate ]; then
+      fm_secondmate_liveness_lock "$ID" \
+        || die "secondmate $ID is already being recovered; retry its relaunch after recovery"
+      SECONDMATE_STOP_LOCK_HELD=1
+    fi
     do_relaunch
     ;;
 esac
