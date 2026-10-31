@@ -544,3 +544,71 @@ run_inbox "$home" drain --ack "$did" >/dev/null || fail "drain --ack failed"
 assert_absent "$home/state/inbox/$did.note" "acked note leaves pending"
 assert_present "$home/state/inbox/handled/$did.note" "acked note is in handled"
 pass "drain --ack still moves the note to handled"
+
+# Notification coverage never consumes rows or changes actor ownership. A close
+# covers the predecessor's snapshot, not requests appended during its handoff.
+run_notification() {
+  local home=$1 operation=$2
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" FM_WAKE_QUEUE="$home/state/.wake-queue" \
+    FM_WAKE_QUEUE_LOCK="$home/state/.wake-queue.lock" bash -c '
+      . "$1/bin/fm-wake-lib.sh"
+      "$2"
+    ' _ "$ROOT" "$operation"
+}
+
+home=$(make_home notification-coverage)
+run_notification "$home" fm_wake_inbox_notification_pending && fail "empty queue notified"
+first=$(run_inbox "$home" note --request-id predecessor --json "synthetic predecessor")
+first_id=$(printf '%s' "$first" | json_get id)
+run_notification "$home" fm_wake_inbox_notification_pending || fail "new note not pending"
+# Exercise the real close callback: unrelated branch-eligible closes cannot
+# cover a main-only inbox row just because it was co-present in the queue.
+for reason in 'signal: synthetic.status' 'heartbeat: synthetic'; do
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_DATA_OVERRIDE="$home/data" bash -c '
+      . "$1/bin/fm-push-transition-lib.sh"
+      wake "$2"
+    ' _ "$ROOT" "$reason" >/dev/null || fail "unrelated close failed"
+  run_notification "$home" fm_wake_inbox_notification_pending || fail "unrelated close covered inbox notification"
+done
+FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_CONFIG_OVERRIDE="$home/config" \
+  FM_DATA_OVERRIDE="$home/data" bash -c '
+    . "$1/bin/fm-push-transition-lib.sh"
+    wake "check: inbox-pending"
+  ' _ "$ROOT" >/dev/null || fail "inbox-owning close failed"
+
+queue_before=$(cksum < "$home/state/.wake-queue")
+for repeat in 1 2 3; do
+  run_notification "$home" fm_wake_inbox_notification_pending && fail "inherited request notified again ($repeat)"
+done
+run_inbox "$home" announce --json "$first_id" >/dev/null
+assert_equals 1 "$(count_wakes "$home")" "repeat announce does not enqueue"
+assert_equals "$queue_before" "$(cksum < "$home/state/.wake-queue")" "notification leaves rows untouched"
+# Before predecessor acknowledgement: independent appends still notify.
+run_inbox "$home" note --request-id during-handoff --json "synthetic independent request" >/dev/null
+run_notification "$home" fm_wake_inbox_notification_pending || fail "handoff arrival suppressed"
+run_notification "$home" fm_wake_inbox_notification_snapshot || fail "handoff snapshot failed"
+run_notification "$home" fm_wake_inbox_notification_pending && fail "busy-main follow-up repeated"
+# Concurrent requests share coverage without being consumed or lost.
+pids=()
+for request in 1 2 3 4; do
+  run_inbox "$home" note --request-id "concurrent-$request" --json "synthetic concurrent request" >/dev/null &
+  pids+=("$!")
+done
+for pid in "${pids[@]}"; do wait "$pid" || fail "concurrent enqueue failed"; done
+run_notification "$home" fm_wake_inbox_notification_pending || fail "concurrent arrivals suppressed"
+run_notification "$home" fm_wake_inbox_notification_snapshot || fail "concurrent snapshot failed"
+assert_equals 6 "$(count_wakes "$home")" "all independent requests remain durable"
+run_notification "$home" fm_wake_inbox_notification_pending && fail "concurrent requests notified twice"
+# Each invocation is a fresh process: persistence is independent of watcher life.
+run_inbox "$home" note --request-id after-replacement --json "synthetic replacement request" >/dev/null
+run_notification "$home" fm_wake_inbox_notification_pending || fail "replacement arrival suppressed"
+# Unsafe observation must be an error, not evidence that no requests exist.
+printf 'invalid\n' > "$home/state/.inbox-notified-through"
+set +e
+run_notification "$home" fm_wake_inbox_notification_pending
+notification_status=$?
+set -e
+expect_code 2 "$notification_status" "malformed coverage refuses observation"
+pass "notification coverage survives handoff, busy main, concurrency, replay, and replacement without consuming requests"

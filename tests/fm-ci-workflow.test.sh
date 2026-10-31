@@ -33,6 +33,8 @@ raise "manual CI lost a fallback validation job" unless ci.fetch("jobs").keys.so
 ci.fetch("jobs").each do |name, job|
   timeout = job["timeout-minutes"]
   raise "#{name} has no finite timeout" unless timeout.is_a?(Integer) && timeout.positive?
+  condition = job["if"].to_s
+  raise "manual job #{name} depends on a PR or push event" if condition.include?("github.event") || condition.include?("github.repository")
 end
 fast = %w[test-coverage invariants tests-timing-aggregate]
 normal = %w[lint tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial macos-stock-bash]
@@ -56,6 +58,7 @@ expected = shards.map { |shard| "portable-serial-#{shard}of#{shards.length}" }
 raise "hosted fallback matrix and local runner disagree" unless actual.sort == expected.sort
 
 attestation_triggers = triggers(attestation)
+raise "attestation must be manual-only" unless attestation_triggers.keys == ["workflow_dispatch"]
 manual = attestation_triggers.fetch("workflow_dispatch")
 input = manual.fetch("inputs").fetch("pull_request")
 raise "manual attestation needs a required numeric PR input" unless input["required"] == true && input["type"] == "number"
@@ -85,8 +88,7 @@ attestation_run_script() {
   ' "$ATTESTATION_WORKFLOW"
 }
 
-# A realistic `GET /repos/{owner}/{repo}/pulls/{n}` payload whose body carries
-# a no-mistakes attestation bound to attested_head.
+# A realistic GET pull-request payload whose body carries an exact-head attestation.
 write_pull_payload() {
   local file=$1 live_head=$2 attested_head=$3
   jq -n --arg live "$live_head" --arg attested "$attested_head" '{
@@ -155,5 +157,39 @@ GH
   pass "the manual attestation step feeds the live pull-request head and body to the verifier"
 }
 
+extract_contributor_validation_command() {
+  ruby - "$1" <<'RUBY'
+text = File.read(ARGV[0])
+section = text.split("## Fork-local validation\n", 2).fetch(1).split(/^## /, 2).first
+command = section.match(/```sh\n(.*?)\n```/m)&.captures&.first
+raise "copyable local verifier command missing" unless command
+puts command
+RUBY
+}
+
+test_contributor_guidance_executes_local_validation() {
+  local tmp head rc
+  tmp=$(fm_test_tmproot fm-ci-contributor-guidance)
+  head=537f2bbc95e7f42905cdbc48318514333f02f56d
+  extract_contributor_validation_command "$ROOT/CONTRIBUTING.md" > "$tmp/command.sh" \
+    || fail "contributor guidance has no executable local verifier command"
+  write_pull_payload "$tmp/pull.json" "$head" "$head"
+  jq -r .body "$tmp/pull.json" > "$tmp/body.md"
+  (cd "$ROOT" && PR_HEAD="$head" PR_BODY_FILE="$tmp/body.md" bash -e "$tmp/command.sh") \
+    > "$tmp/stdout" 2> "$tmp/stderr" \
+    || fail "documented verifier refused completed exact-head validation"
+  grep -qxF "verified no-mistakes local validation at head $head" "$tmp/stdout" \
+    || fail "documented command did not verify the requested head"
+  rc=0
+  (cd "$ROOT" && PR_HEAD=1111111111111111111111111111111111111111 \
+    PR_BODY_FILE="$tmp/body.md" bash -e "$tmp/command.sh") \
+    > "$tmp/stale-out" 2> "$tmp/stale-err" || rc=$?
+  [ "$rc" -ne 0 ] || fail "documented verifier accepted a stale attestation"
+  grep -q 'attestation is malformed, stale' "$tmp/stale-err" \
+    || fail "documented stale refusal was not the attestation check"
+  pass "contributor guidance executes exact-head local validation"
+}
+
 test_hosted_workflows_are_manual_fallbacks
 test_manual_attestation_step_verifies_the_live_head_and_body
+test_contributor_guidance_executes_local_validation

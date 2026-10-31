@@ -68,12 +68,32 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
+  new-window)
+    # Track the newly opened endpoint independently of the pre-existing fleet.
+    # Upstream's exact-target send guard checks this inventory before Enter.
+    prev=
+    for a in "$@"; do
+      if [ "$prev" = '-n' ]; then
+        printf '%s\n' "$a" >> "$FM_FAKE_COMM_DIR/created-windows"
+        break
+      fi
+      prev=$a
+    done
+    exit 0
+    ;;
   list-windows)
     if [ -n "${FM_FAKE_LIST_FAIL:-}" ]; then
+      # A blind old-fleet inventory cannot block admission, but an endpoint
+      # just opened by this fixture remains independently observable.
+      if [ -f "${FM_FAKE_COMM_DIR:-}/created-windows" ]; then
+        cat "$FM_FAKE_COMM_DIR/created-windows"
+        exit 0
+      fi
       printf '%s\n' "permission denied" >&2
       exit 1
     fi
-    printf '%s' "${FM_FAKE_WINDOWS:-}"
+    printf '%s\n' "${FM_FAKE_WINDOWS:-}"
+    [ ! -f "${FM_FAKE_COMM_DIR:-}/created-windows" ] || cat "$FM_FAKE_COMM_DIR/created-windows"
     exit 0
     ;;
 esac
