@@ -1,0 +1,19 @@
+Reconcile acceptance evidence
+
+ok - the generated shard plan is deterministic, current, and retains safe 30-minute margin
+ok - coverage guard bounds the unmeasured share and serial packing within twenty minutes
+ok - independent inbox notifications survive startup, busy main, later append and recovery (attended)
+ok - external DoD renders the contract, the review grammar, and the adapter, and refuses without one
+ok - fm-spawn: omp takes a role model with --thinking auto; auto on any other harness refuses before a record
+ok - fm-spawn: raw omp commands must carry --thinking auto themselves
+ok - auto-arm: explicit exit 1 with empty output notifies without retry
+ok - fm-control relaunch: omp auto persists and non-omp auto refuses before stop
+ok - notification coverage survives handoff, busy main, concurrency, replay, and replacement without consuming requests
+ok - contributor guidance executes exact-head local validation
+
+Herdr live scenario setup block:
+fm-herdr-lab: fleet-state tripwire requires exactly one running default session
+not ok - could not provision isolated Herdr lab session
+not ok - guarded Herdr lab teardown or default-session tripwire verification failed
+
+FM_TEST_COVERAGE ok total=319 parallel=26 parallel_max_ms=814249 parallel_imbalance_ms=552 parallel_unhinted=0 serial=277 serial_shards=11 serial_unhinted=33 serial_max_ms=1082916 serial_budget_ms=1200000 herdr=16

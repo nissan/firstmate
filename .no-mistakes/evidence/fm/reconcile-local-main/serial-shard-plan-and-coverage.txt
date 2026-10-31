@@ -1,0 +1,15 @@
+$ bin/fm-test-run.sh --serial-shard-plan
+portable-serial-1of11	25	1082915
+portable-serial-2of11	25	1082911
+portable-serial-3of11	26	1082915
+portable-serial-4of11	26	1082916
+portable-serial-5of11	25	1082900
+portable-serial-6of11	25	1082896
+portable-serial-7of11	25	1082878
+portable-serial-8of11	25	1082878
+portable-serial-9of11	25	1082895
+portable-serial-10of11	25	1082886
+portable-serial-11of11	25	1082881
+
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=319 parallel=26 parallel_max_ms=814249 parallel_imbalance_ms=552 parallel_unhinted=0 serial=277 serial_shards=11 serial_unhinted=33 serial_max_ms=1082916 serial_budget_ms=1200000 herdr=16
