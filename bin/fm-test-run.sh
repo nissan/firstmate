@@ -723,13 +723,10 @@ list_portable_serial() {
 # balance rather than coverage. That doc owns the refresh procedure.
 portable_serial_weight_hints() {
   cat <<'EOF'
-tests/fm-crew-cap.test.sh 20100
 tests/fm-exact-head-guard.test.sh 2484
 tests/fm-exact-head-review-refusal.test.sh 3862
 tests/fm-readonly-evidence.test.sh 1066
 tests/fm-runway-gate.test.sh 19586
-tests/fm-shared-brain-skill.test.sh 524
-tests/fm-watch-noprogress.test.sh 48577
 tests/fm-afk-contract.test.sh 11101
 tests/fm-afk-inject-e2e.test.sh 41958
 tests/fm-afk-pi-herdr-return-e2e.test.sh 52
