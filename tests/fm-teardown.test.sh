@@ -1999,6 +1999,55 @@ test_forced_secondmate_child_scout_nested_clone_returns_clean() {
   pass "a forced secondmate teardown returns a child scout copy with a nested clone clean"
 }
 
+# A forced secondmate teardown returns each child copy through that child's own
+# recorded allocation root, and refuses a child whose copy is outside that root
+# before any return, record removal, or home removal.
+test_forced_secondmate_child_allocation_root_return() {
+  local case_dir home root child_wt rc thlog log closed mode
+  for mode in owned wrong-root; do
+    case_dir=$(make_case "secondmate-child-root-$mode")
+    write_meta "$case_dir" local-only secondmate
+    configure_secondmate_with_herdr_child "$case_dir"
+    home="$case_dir/secondmate-home"
+    root="$case_dir/dedicated pool"
+    child_wt="$root/.treehouse/pool/1/repo"
+    mkdir -p "$root/.treehouse/pool/1" "$case_dir/wrong"
+    git -C "$case_dir/project" worktree move "$case_dir/wt" "$child_wt" || fail 'secondmate-child-root: fixture move failed'
+    printf '{}\n' > "$root/.treehouse/pool/treehouse-state.json"
+    [ "$mode" = wrong-root ] && root="$case_dir/wrong"
+    sed -i.bak "s#^worktree=.*#worktree=$child_wt#" "$home/state/child-herdr.meta" && rm -f "$home/state/child-herdr.meta.bak"
+    printf 'allocation_root=%s\n' "$root" >> "$home/state/child-herdr.meta"
+    thlog="$case_dir/treehouse.log"; log="$case_dir/herdr.log"; closed="$case_dir/closed"
+    : > "$thlog"; : > "$log"
+    cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '<%s>' "\$@" >> "$thlog"
+printf '\\n' >> "$thlog"
+exit 0
+SH
+    chmod +x "$case_dir/fakebin/treehouse"
+
+    rc=0
+    FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_CLOSED="$closed" \
+      run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+    if [ "$mode" = owned ]; then
+      expect_code 0 "$rc" "secondmate-child-root: forced teardown failed: $(cat "$case_dir/stderr")"
+      assert_grep "<--root><$root><return><--force><$child_wt>" "$thlog" \
+        "secondmate-child-root: child copy was not returned through its own allocation root"
+      assert_absent "$home" "secondmate-child-root: secondmate home was not removed"
+    else
+      [ "$rc" -ne 0 ] || fail "secondmate-child-root: a child copy outside its recorded root was accepted"
+      [ ! -s "$thlog" ] || fail "secondmate-child-root: wrong-root child invoked Treehouse: $(cat "$thlog")"
+      [ ! -e "$closed" ] || fail "secondmate-child-root: wrong-root refusal closed the child endpoint"
+      [ -f "$home/state/child-herdr.meta" ] || fail "secondmate-child-root: wrong-root refusal removed the child record"
+      [ -f "$case_dir/state/task-x1.meta" ] || fail "secondmate-child-root: wrong-root refusal removed the secondmate record"
+      [ -d "$child_wt" ] || fail "secondmate-child-root: wrong-root refusal removed the child copy"
+    fi
+  done
+  pass "a forced secondmate teardown returns a Herdr child through its own allocation root and refuses a foreign root before changes"
+}
+
 # Return succeeds but leaves no readable worktree behind to verify.
 add_treehouse_that_removes_copy() {
   local case_dir=$1
@@ -6240,9 +6289,11 @@ test_status_archive_nested_secondmate_children() {
 # broad suite before the remaining regression cases.
 if [ "${1:-}" = --allocation-root-only ]; then
   test_herdr_allocation_return_and_refusal
+  test_forced_secondmate_child_allocation_root_return
   exit 0
 fi
 test_herdr_allocation_return_and_refusal
+test_forced_secondmate_child_allocation_root_return
 test_hidden_untracked_work_refuses_before_return
 test_content_fallback_git_capability_boundary
 test_status_archive_opt_in
