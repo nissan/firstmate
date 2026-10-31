@@ -175,7 +175,7 @@ When that script is absent the message still defers to intake classification and
 
 ## Harness wiring
 
-Every supported primary harness was reviewed; the omp row was verified live on omp 18.14.0 for its `task` tool and eval `agent()` route, without a full tool enumeration.
+Every supported primary harness was reviewed; the omp row records its live-verified routes and remaining verification limits.
 Applicability turns on one question: does the harness expose built-in delegation tools that a primary session could use instead of `bin/fm-spawn.sh`?
 
 | Harness | Delegation surface | Status |
@@ -183,7 +183,7 @@ Applicability turns on one question: does the harness expose built-in delegation
 | Claude | 16 known tools, listed above | Scoped guard wired and live-verified; untracked local deny list verified and recommended. |
 | Codex | none | Not applicable, verified empirically below. Codex 0.144.1 exposes no subagent, sub-task, or delegated-agent tool, so there is nothing to remove or intercept. `.codex/hooks.json` is unchanged. |
 | Grok | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
-| omp | present: the `task` tool, plus eval's `agent()` and `workpool()` helpers, which spawn subagents without a tool name of their own | Wired and live-verified for `task` and eval `agent()` on omp 18.14.0 (2026-10-31, lab clone, `openai-codex/gpt-5.6-sol`): both returned the `[subagent-dispatch]` deny, the eval route naming `blocked tool: subagent`. `.omp/extensions/fm-primary-turnend-guard.ts` passes every `tool_call` name to `bin/fm-subagent-pretool-check.sh --tool` (the `.*` matcher shape), and answers omp's `before_subagent_spawn` event, which fires once per child for task, eval `agent()` and `workpool()` before the child resolves a model, with `--tool subagent`; the spawn event is the only fence that sees eval-originated spawns. Pinned by `tests/fm-omp-harness.test.sh` over the fake omp API. `workpool()` and a full tool enumeration were not exercised live. |
+| omp | present: the `task` tool, plus eval's `agent()` and `workpool()` helpers, which spawn subagents without a tool name of their own | Wired through `.omp/extensions/fm-primary-turnend-guard.ts`, with every `tool_call` name reaching `bin/fm-subagent-pretool-check.sh --tool` and `before_subagent_spawn` classifying task, eval `agent()`, and `workpool()` child creation as `subagent`; the `task` and eval `agent()` routes were live-verified on omp 18.14.0, `tests/fm-omp-harness.test.sh` pins both fences over the fake omp API, and `workpool()` plus a full tool enumeration remain unverified live. |
 | OpenCode | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
 | Pi | none reported | Not wired pending live verification. See below. |
 

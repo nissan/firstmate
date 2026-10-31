@@ -851,7 +851,8 @@ A bare `<harness>` preserves the previous behavior: harness only, with no model 
 When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
 
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
-Changing this pin affects the next secondmate spawn or control-plane relaunch; an omp `auto` pin remains `--thinking auto` through local control-plane relaunches, including the local `fm-secondmate-restart.sh` path, while resolving `auto` with any other harness refuses before the running mate is stopped. The relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).
+Changing this pin affects the next secondmate spawn or control-plane relaunch.
+The relaunch profile rules, including omp-only `auto` handling, are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).
 
 ### Per-launch overrides and inherited defaults
 
@@ -1224,8 +1225,12 @@ This single-provider table is separate from the frozen legacy mapping used by `f
 **Model, effort, and fallback behavior**
 
 - `ultra` is native-only: the model-aware validation contract and launch mapping are owned by `bin/fm-harness.sh validate-native-effort` and `bin/fm-spawn.sh` respectively.
-- `auto` is omp-only: the canonical adapter launches `--thinking auto`, so omp's own per-prompt difficulty classifier picks the level within `providers.autoThinkingMaxEffort`. A configured `auto` is a standing configured effort, so it outranks the generic fallback; any other harness and every raw launch command refuse it at spawn rather than omitting it. Raw commands must carry `--thinking auto` themselves.
-- An omp profile may name an omp model role (for example `@mid_claude`) instead of a `<provider>/<id>` selector; the role resolves through the captain's `modelRoles`, so model upgrades are made there once. A role has no provider prefix to bind quota, so declare the quota-axi `provider` (`claude`, `codex`, or `agy`) on the profile.
+- `auto` is omp-only: the canonical adapter launches `--thinking auto`, so omp's own per-prompt difficulty classifier picks the level within `providers.autoThinkingMaxEffort`.
+  A configured `auto` is a standing configured effort, so it outranks the generic fallback.
+  Any other harness and every raw launch command refuse it at spawn rather than omitting it.
+  Raw commands must carry `--thinking auto` themselves.
+- An omp profile may name an omp model role (for example `@mid_claude`) instead of a `<provider>/<id>` selector; the role resolves through the captain's `modelRoles`, so model upgrades are made there once.
+  A role has no provider prefix to bind quota, so declare the quota-axi `provider` (`claude`, `codex`, or `agy`) on the profile.
 - Codex `max` is valid when the profile selects `gpt-5.6-luna`, whose installed catalog entry supports that reasoning level.
 - An omitted model or effort means the selected harness uses its own default for that axis.
 - OpenCode receives the effort as its default `build` agent's `variant`, keyed to the resolved model, inside the `OPENCODE_CONFIG_CONTENT` JSON its launch already writes (the per-model reasoning-effort field of the config schema, verified on opencode 1.18.32); with no model resolved, the effort is recorded in task metadata but omitted from the launch.
