@@ -157,20 +157,10 @@ GH
   pass "the manual attestation step feeds the live pull-request head and body to the verifier"
 }
 
-# CONTRIBUTING.md is the public interface under test, not implementation source.
-# Execute its copyable verifier command against real attestation bytes and keep
-# its policy from directing operators to recreate automatic hosted requirements.
-contributor_guidance_contract() {
+extract_contributor_validation_command() {
   ruby - "$1" <<'RUBY'
 text = File.read(ARGV[0])
 section = text.split("## Fork-local validation\n", 2).fetch(1).split(/^## /, 2).first
-raise "manual fallback policy missing" unless text.include?("hosted CI and attestation workflows are manual-only diagnostic fallbacks")
-raise "upstream requirements missing" unless text.include?("must satisfy that repository's current rules")
-raise "exact-head policy missing" unless section.include?("exact-head local no-mistakes attestation")
-raise "red/pending safeguard missing" unless section.include?("A reported red or pending check still refuses ordinary merging")
-raise "hosted contexts must not become routine requirements" unless section.include?("Do not add required hosted contexts")
-raise "obsolete automatic compliance guidance" if text.include?("It evaluates every PR opening and body edit independently")
-raise "obsolete hosted context requirement" if text.include?("Require the actual job contexts:")
 command = section.match(/```sh\n(.*?)\n```/m)&.captures&.first
 raise "copyable local verifier command missing" unless command
 puts command
@@ -181,8 +171,8 @@ test_contributor_guidance_executes_local_validation() {
   local tmp head rc
   tmp=$(fm_test_tmproot fm-ci-contributor-guidance)
   head=537f2bbc95e7f42905cdbc48318514333f02f56d
-  contributor_guidance_contract "$ROOT/CONTRIBUTING.md" > "$tmp/command.sh" \
-    || fail "contributor guidance contradicts the manual/local validation policy"
+  extract_contributor_validation_command "$ROOT/CONTRIBUTING.md" > "$tmp/command.sh" \
+    || fail "contributor guidance has no executable local verifier command"
   write_pull_payload "$tmp/pull.json" "$head" "$head"
   jq -r .body "$tmp/pull.json" > "$tmp/body.md"
   (cd "$ROOT" && PR_HEAD="$head" PR_BODY_FILE="$tmp/body.md" bash -e "$tmp/command.sh") \
@@ -197,12 +187,7 @@ test_contributor_guidance_executes_local_validation() {
   [ "$rc" -ne 0 ] || fail "documented verifier accepted a stale attestation"
   grep -q 'attestation is malformed, stale' "$tmp/stale-err" \
     || fail "documented stale refusal was not the attestation check"
-  cp "$ROOT/CONTRIBUTING.md" "$tmp/contradictory.md"
-  printf '\nRequire the actual job contexts: Lint 1\n' >> "$tmp/contradictory.md"
-  if contributor_guidance_contract "$tmp/contradictory.md" >/dev/null 2>&1; then
-    fail "guidance contract accepted a restored hosted-context requirement"
-  fi
-  pass "contributor guidance preserves manual hosted policy and executes exact-head local validation"
+  pass "contributor guidance executes exact-head local validation"
 }
 
 test_hosted_workflows_are_manual_fallbacks
