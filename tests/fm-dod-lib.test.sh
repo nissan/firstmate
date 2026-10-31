@@ -526,13 +526,13 @@ test_external_rule_one_forbids_every_task_push() {
 
 test_external_dod_renders_the_adapter() {
   local dod out
-  dod=$(CONFIG=$EXT_CFG fm_dod_block direct-PR t1 fm/t1 external) || fail "external DoD did not render"
+  dod=$(CONFIG=$EXT_CFG fm_dod_block direct-PR t1 fm/t1 external "" "$ROOT/bin/fm-no-mistakes-run.sh") || fail "external DoD did not render"
   assert_contains "$dod" "Delivery contract: mode=direct-PR forge=external" "external DoD lacks its contract line"
   assert_contains "$dod" "done [at=<epoch>]: review {url} uploaded for review" "external DoD lacks the ready grammar"
   assert_contains "$dod" "## Review tool instructions (home configuration)" "external DoD lacks the adapter section"
   assert_contains "$dod" "review-tool upload --draft" "external DoD lacks the adapter body"
   assert_not_contains "$dod" "push your branch and open a PR" "external DoD still asks for a pushed PR"
-  out=$(CONFIG="$TMP_ROOT/no-such-config" fm_dod_block direct-PR t1 fm/t1 external 2>&1) \
+  out=$(CONFIG="$TMP_ROOT/no-such-config" fm_dod_block direct-PR t1 fm/t1 external "" "$ROOT/bin/fm-no-mistakes-run.sh" 2>&1) \
     && fail "external DoD rendered with no adapter"
   assert_contains "$out" "external-review.md" "the missing-adapter refusal did not name the file"
   pass "external DoD renders the contract, the review grammar, and the adapter, and refuses without one"
