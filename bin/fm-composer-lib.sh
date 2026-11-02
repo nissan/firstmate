@@ -178,6 +178,28 @@
 # Re-sourcing is a cheap idempotent redefinition, so this file needs no
 # include guard (matching bin/fm-tmux-lib.sh).
 
+# Recognize only the complete Codex onboarding choice screen, not an input
+# field or an overlay. This is a lifecycle-only signal, never composer empty.
+fm_composer_codex_signin_choice() {  # <plain visible viewport>
+  printf '%s\n' "$1" | awk '
+    { sub(/^[[:space:]]*/, ""); sub(/[[:space:]]*$/, "") }
+    /^$/ { next }
+    n == 0 && $0 == "Welcome to Codex, OpenAI\047s command-line coding agent" { n++; next }
+    n == 1 && $0 == "Choose how you want to use Codex." { n++; next }
+    n == 2 && /^>? ?1\. Sign in with ChatGPT$/ { n++; next }
+    n == 3 && $0 == "Usage included with Plus, Pro, Business, and Enterprise plans" { n++; next }
+    n == 4 && /^>? ?2\. Sign in with Device Code$/ { n++; next }
+    n == 5 && $0 == "Sign in from another device with a one-time code" { n++; next }
+    n == 6 && /^>? ?3\. Use an OpenAI API key$/ { n++; next }
+    n == 7 && $0 == "Pay for what you use" { n++; next }
+    n == 8 && /^>? ?4\. Use Amazon Bedrock$/ { n++; next }
+    n == 9 && $0 == "Connect using your AWS credentials" { n++; next }
+    n == 10 && $0 == "Press enter to continue" { n++; next }
+    { bad=1 }
+    END { exit !(n == 11 && !bad) }
+  '
+}
+
 # fm_composer_strip_ansi: drop every CSI escape sequence, leaving plain text.
 # Used for STRUCTURAL row/shape detection, where ghost text must be KEPT so the
 # composer box border or bare prompt glyph is still visible; content extraction

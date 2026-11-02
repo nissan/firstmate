@@ -744,6 +744,23 @@ ok - secondmate busy contract live guard checked every installed harness
 Pi's real parked pane classified `unknown launch-prompt`.
 That is the launch-prompt backstop: the same spawn's record classified `busy fm-spawn` for a non-prompt mid-turn tail, which is what the active-turn gate reads while a turn is in progress.
 
+## Codex sign-in lifecycle exit
+
+On 2026-11-03, codex-cli 0.166.0 on Linux x86_64 displayed the initial sign-in choice in a fresh `CODEX_HOME`.
+Its onboarding source defines Ctrl-C as a quit shortcut, and `fm-control.sh exit` stopped the real process with that key while retaining its Herdr 0.7.3 pane.
+No authentication option was selected.
+The sign-in screen remains unknown to ordinary composer callers; lifecycle exit recognizes only the complete unobstructed choice screen.
+
+Refresh the token-free live guard after upgrading Codex or Herdr:
+
+```sh
+bash tests/fm-control-codex-signin-live.test.sh
+```
+
+```text
+ok - codex-cli 0.166.0: sign-in exits while the endpoint survives
+```
+
 ## Codex hook trust
 
 Verified 2026-09-16 on codex-cli 0.151.0, macOS arm64, in a fresh linked worktree of this repository.

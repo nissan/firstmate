@@ -1682,3 +1682,48 @@ test_background_exit_picker_stays_pending_and_blocks_retry
 test_dialog_heading_and_footer_must_be_the_recorded_lines
 test_dialog_note_skips_the_match_when_no_sink_is_set
 test_quoted_exit_picker_text_is_not_a_dialog
+
+test_codex_signin_choice_requires_the_complete_unobstructed_screen() {
+  local screen
+  screen=$(cat <<'EOF'
+Welcome to Codex, OpenAI's command-line coding agent
+Choose how you want to use Codex.
+> 1. Sign in with ChatGPT
+Usage included with Plus, Pro, Business, and Enterprise plans
+2. Sign in with Device Code
+Sign in from another device with a one-time code
+3. Use an OpenAI API key
+Pay for what you use
+4. Use Amazon Bedrock
+Connect using your AWS credentials
+Press enter to continue
+EOF
+)
+  fm_composer_codex_signin_choice "$screen" || fail 'complete Codex sign-in choice was not recognized'
+  ! fm_composer_codex_signin_choice "$screen
+› unfinished draft" || fail 'a draft over sign-in must not authorize exit'
+  ! fm_composer_codex_signin_choice "$screen
+Enter API key:" || fail 'an overlaid input modal must not authorize exit'
+  ! fm_composer_codex_signin_choice 'Choose how you want to use Codex.' \
+    || fail 'an incomplete unknown screen must not authorize exit'
+  ! fm_composer_codex_signin_choice "${screen/Sign in with ChatGPT/Sign in with another provider}" \
+    || fail 'a sign-in lookalike must not authorize exit'
+  ! fm_composer_codex_signin_choice "$screen
+Trust this folder? Codex can read, edit, and run files here" \
+    || fail 'a trust prompt must not authorize the sign-in exit'
+  ! fm_composer_codex_signin_choice "Welcome to Codex, OpenAI's command-line coding agent
+> Use your own OpenAI API key for usage-based billing
+Paste or type your API key below.
+╭API key────────────────────────────────╮
+│Paste or type your API key             │
+╰───────────────────────────────────────╯
+Press enter to save
+Press esc to go back" \
+    || fail 'a credential-entry screen must not authorize the sign-in exit'
+  [ "$(fm_composer_classify_screen 'styled=1' 'Other modal')" = unknown ] \
+    || fail 'an unrelated modal must remain unknown to the composer guard'
+  [ "$(fm_composer_classify_screen 'styled=1' '› unfinished draft')" = pending ] \
+    || fail 'a typed Codex draft must remain pending to the composer guard'
+  pass 'Codex sign-in choice requires the complete unobstructed screen'
+}
+test_codex_signin_choice_requires_the_complete_unobstructed_screen

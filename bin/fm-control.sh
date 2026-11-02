@@ -36,6 +36,8 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
+#              A proven Codex sign-in choice uses its native Ctrl-C quit,
+#              without treating the modal as an empty composer.
 #              Already-stopped is success (idempotent). An endpoint that reads
 #              `missing` (or, on Rex, `unreadable`, which is how a stopped Rex
 #              server reads without starting it) is put through the control
@@ -187,6 +189,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-composer-lib.sh
+. "$SCRIPT_DIR/fm-composer-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
@@ -706,7 +710,7 @@ retire_busy_incarnation() {
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog
+  local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog screen
   local receipt_stage='' receipt_started receipt_seconds receipt_dialog=no receipt_class
   require_state_verified_backend exit
   fm_control_backend_exit_supported "$BACKEND" \
@@ -806,8 +810,17 @@ do_exit() {
     rm -f -- "$receipt_stage" 2>/dev/null || true
   fi
   [ "$receipt_dialog" = no ] || refuse_blocking_prompt "$dialog"
+  # Codex onboarding has no composer. Only its complete, unoverlaid choice
+  # screen authorizes its native quit chord; unknown screens stay refused.
+  if [ "$HARNESS" = codex ] && [ "$composer_state" = unknown ]; then
+    screen=$(fm_backend_visible_capture "$BACKEND" "$T" "$LABEL" 2>/dev/null) || screen=
+    if fm_composer_codex_signin_choice "$screen"; then
+      composer_state=codex-signin-choice
+    fi
+  fi
   case "$composer_state" in
     empty) ;;
+    codex-signin-choice) cmd=codex-signin-quit ;;
     pending)
       die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
       ;;
@@ -827,6 +840,10 @@ do_exit() {
   # composer text only clears it, so Ctrl-U clears the composer first and one
   # more Ctrl-C follows if the agent is still alive.
   case "$cmd" in
+    codex-signin-quit)
+      fm_backend_send_key "$BACKEND" "$T" C-c "$LABEL" \
+        || die "the exit key could not be sent to task $ID on $BACKEND"
+      ;;
     C-c)
       fm_backend_send_key "$BACKEND" "$T" C-u "$LABEL" \
         || die "the exit key could not be sent to task $ID on $BACKEND"
