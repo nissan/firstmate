@@ -3990,11 +3990,9 @@ ORPHAN_PID=$(cat "$HORPHAN/state/procevent/orphan-src.runner")
 KEEP_PID=$(cat "$HKEEP/state/procevent/keep-src.runner")
 ORPHAN_DESCENDANT=$(cat "$TMP_ROOT/orphan-dead.descendant")
 
-# The reproduction condition itself: the listener is already an orphan in the
-# kernel's sense before anything is asserted about reaping it.
-orphan_ppid=$(ps -o ppid= -p "$ORPHAN_PID" 2>/dev/null | tr -d '[:space:]')
-[ "$orphan_ppid" = 1 ] \
-  || fail "the listener under test was not reparented away from its session (ppid $orphan_ppid)"
+# Reconcile has returned, so the launching process has exited. The detached
+# group and its descendant must still run; init or a harness subreaper can
+# legitimately adopt them, so a specific adopter PID is not a precondition.
 kill -0 -"$ORPHAN_PID" 2>/dev/null \
   || fail "the listener's process group was not running"
 kill -0 "$ORPHAN_DESCENDANT" 2>/dev/null \
@@ -4838,7 +4836,7 @@ cat > "$REPLY_FAIL/bin/lavish-axi" <<'SH'
 #!/usr/bin/env bash
 set -eu
 case "${1-}" in
-  --version) printf '0.1.80\n' ;;
+  --version) printf '0.1.96\n' ;;
   reply) printf 'simulated reply timeout\n' >&2; exit 1 ;;
   poll) : > "$REPLY_FAIL/polled"; exit 0 ;;
   *) exit 2 ;;
@@ -4868,7 +4866,7 @@ cat > "$REPLY_FAIL/bin/lavish-axi" <<'SH'
 #!/usr/bin/env bash
 set -eu
 case "${1-}" in
-  --version) printf '0.1.80\n' ;;
+  --version) printf '0.1.96\n' ;;
   reply) printf '%s\n' "$(cat -- "$4")" >> "$REPLY_FAIL/replies" ;;
   poll) while [ ! -e "$REPLY_FAIL/release" ]; do sleep 0.02; done; exit 1 ;;
   *) exit 2 ;;
@@ -4925,7 +4923,7 @@ cat > "$POLL_REPLY/bin/lavish-axi" <<'SH'
 #!/usr/bin/env bash
 set -eu
 case "${1-}" in
-  --version) printf '0.1.80\n' ;;
+  --version) printf '0.1.96\n' ;;
   reply)
     [ "${3-}" = --agent-reply-file ] || exit 2
     [ "$(cat -- "$4")" = 'direct poll reply' ] || exit 3
@@ -4998,7 +4996,7 @@ pass "an unknown Lavish version fails arm and poll closed, keeping the staged re
 
 # A worker re-arms as soon as its round is published, which can land while the
 # earlier generation's runner is still finishing and holding the claim. The
-# Lavish 0.1.80 stand-in records synchronous reply acceptance before its poll.
+# current Lavish stand-in records synchronous reply acceptance before its poll.
 DRAIN="$TMP_ROOT/draining-rearm"
 mkdir -p "$DRAIN/bin" "$DRAIN/home/state"
 export DRAIN
@@ -5006,7 +5004,7 @@ cat > "$DRAIN/bin/lavish-axi" <<'SH'
 #!/usr/bin/env bash
 set -eu
 case "${1-}" in
-  --version) printf '0.1.80\n' ;;
+  --version) printf '0.1.96\n' ;;
   reply)
     [ "${3-}" = --agent-reply-file ] || exit 2
     printf '%s\n' "$(cat -- "$4")" >> "$DRAIN/replies"

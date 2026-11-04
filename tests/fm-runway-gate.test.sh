@@ -348,7 +348,7 @@ test_reading_the_tool_refuses_only_on_real_evidence() {
 
   # Baseline: a real read of real evidence refuses, so the cases below are not
   # vacuous and the live read path is genuinely exercised.
-  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-ok" 0.1.51 json "$snap")
+  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-ok" 0.1.69 json "$snap")
   record=$(run_check claude default PATH="$fakebin:$PATH")
   [ "$(rc_of "$record")" = "$REFUSE_RC" ] \
     || fail "reading a spent allowance from the tool must refuse: $record"
@@ -359,12 +359,12 @@ test_reading_the_tool_refuses_only_on_real_evidence() {
   [ "$(rc_of "$record")" != "$REFUSE_RC" ] \
     || fail "a quota tool below the supported floor must not refuse: $record"
 
-  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-fail" 0.1.51 fail)
+  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-fail" 0.1.69 fail)
   record=$(run_check claude default PATH="$fakebin:$PATH")
   [ "$(rc_of "$record")" != "$REFUSE_RC" ] \
     || fail "a failing quota read must not refuse: $record"
 
-  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-garbage" 0.1.51 garbage)
+  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-garbage" 0.1.69 garbage)
   record=$(run_check claude default PATH="$fakebin:$PATH")
   [ "$(rc_of "$record")" != "$REFUSE_RC" ] \
     || fail "an unreadable quota read must not refuse: $record"
@@ -372,7 +372,7 @@ test_reading_the_tool_refuses_only_on_real_evidence() {
   # A wedged vendor CLI must not wedge the dispatch: the bound has to fire and
   # the answer has to be "proceed".
   local started elapsed
-  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-hang" 0.1.51 hang)
+  fakebin=$(fake_quota_axi "$TMP_ROOT/tool-hang" 0.1.69 hang)
   started=$(date +%s)
   record=$(run_check claude default PATH="$fakebin:$PATH" FM_RUNWAY_READ_TIMEOUT=2)
   elapsed=$(( $(date +%s) - started ))

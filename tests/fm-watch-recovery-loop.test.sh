@@ -292,7 +292,6 @@ test_successor_notifies_independent_inbox_arrivals() {
 }
 
 test_successor_notifies_independent_inbox_arrivals
-
 # T3: a row appended after the predecessor closes but before its handling
 # successor can inspect the queue must survive the handoff and reach main.
 test_handling_successor_resurfaces_a_row_appended_during_startup() {

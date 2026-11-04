@@ -27,7 +27,7 @@ raise "manual CI must not cancel another deliberate dispatch" unless ci.dig("con
 
 expected_jobs = %w[
   lint test-coverage tests-portable-parallel-1 tests-portable-parallel-2
-  tests-portable-serial tests-herdr tests-timing-aggregate macos-stock-bash invariants
+  tests-portable-serial tests-herdr tests-hc tests-timing-aggregate macos-stock-bash invariants
 ].sort
 raise "manual CI lost a fallback validation job" unless ci.fetch("jobs").keys.sort == expected_jobs
 ci.fetch("jobs").each do |name, job|
@@ -38,15 +38,17 @@ ci.fetch("jobs").each do |name, job|
 end
 fast = %w[test-coverage invariants tests-timing-aggregate]
 normal = %w[lint tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial macos-stock-bash]
-heavy = %w[tests-herdr]
+heavy = %w[tests-herdr tests-hc]
 raise "fast fallback timeout drifted" unless fast.all? { |name| ci.dig("jobs", name, "timeout-minutes") == 5 }
 raise "normal fallback timeout drifted" unless normal.all? { |name| ci.dig("jobs", name, "timeout-minutes") == 30 }
 raise "heavy fallback timeout drifted" unless heavy.all? { |name| ci.dig("jobs", name, "timeout-minutes") == 75 }
-herdr_steps = ci.dig("jobs", "tests-herdr", "steps")
-run_step = herdr_steps.find { |step| step["id"] == "run-real-herdr-family" }
-cleanup_step = herdr_steps.find { |step| step["id"] == "cleanup-herdr-lab-sessions" }
-raise "Herdr step tripwire drifted" unless run_step&.fetch("timeout-minutes", nil) == 20
-raise "Herdr cleanup lost always()" unless cleanup_step&.fetch("if", nil) == "always()"
+{"tests-herdr" => "herdr", "tests-hc" => "hc"}.each do |job, backend|
+  steps = ci.dig("jobs", job, "steps")
+  run_step = steps.find { |step| step["id"] == "run-real-#{backend}-family" }
+  cleanup_step = steps.find { |step| step["id"] == "cleanup-#{backend}-lab-sessions" }
+  raise "#{backend} step tripwire drifted" unless run_step&.fetch("timeout-minutes", nil) == 20
+  raise "#{backend} cleanup lost always()" unless cleanup_step&.fetch("if", nil) == "always()"
+end
 
 serial = ci.dig("jobs", "tests-portable-serial", "strategy")
 raise "serial fallback must report every shard" unless serial["fail-fast"] == false

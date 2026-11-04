@@ -101,9 +101,16 @@ wake() {
   # checks on main, whereas an unrelated signal/heartbeat may go to a branch
   # that cannot consume inbox rows. Capture before output so later appends
   # belong to the successor, even during startup. Failure retains recovery.
-  # Keep ordinary stop handling while waiting for the append lock.
+  # A process-event surface already owns the append lock through its marker
+  # commit; taking it again would reclaim and release that outer transaction.
   case "$1" in
-    check:*) fm_wake_inbox_notification_snapshot || exit 1 ;;
+    check:*)
+      if [ "${3:-}" = queue-locked ]; then
+        fm_wake_inbox_notification_snapshot_locked || exit 1
+      else
+        fm_wake_inbox_notification_snapshot || exit 1
+      fi
+      ;;
   esac
   trap '' HUP INT TERM
   [ -z "$FM_WAKE_POST_OUTPUT_ACTION" ] || trap '' PIPE

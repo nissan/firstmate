@@ -56,11 +56,11 @@ make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
   fm_fake_exit0 "$fakebin" tmux node chrome-devtools-axi
-  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.80
+  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.96
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' "${FM_FAKE_GH_AXI_VERSION:-0.1.29}"
+  printf '%s\n' "${FM_FAKE_GH_AXI_VERSION:-0.1.48}"
   exit 0
 fi
 exit 0
@@ -94,7 +94,7 @@ SH
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' "${FM_FAKE_NO_MISTAKES_VERSION:-no-mistakes version v1.46.0 (fake) 2026-06-27T00:02:18Z}"
+  printf '%s\n' "${FM_FAKE_NO_MISTAKES_VERSION:-no-mistakes version v1.106.1 (fake) 2026-06-27T00:02:18Z}"
   exit 0
 fi
 exit 0
@@ -110,7 +110,7 @@ add_quota_axi() {
   cat > "$fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' "${FM_FAKE_QUOTA_AXI_VERSION:-0.1.51}"
+  printf '%s\n' "${FM_FAKE_QUOTA_AXI_VERSION:-0.1.69}"
   exit 0
 fi
 exit 0
@@ -312,7 +312,7 @@ test_bootstrap_reporting() {
       esac
       add_tasks_axi "$fakebin" "$tasks" "$archive_body" "$multi_id"
     fi
-    quota_version=0.1.51
+    quota_version=0.1.69
     if [ "$quota" = "0" ]; then
       rm -f "$fakebin/quota-axi"
       base=$(fm_test_base_path_sans "$base" quota-axi)
@@ -346,7 +346,7 @@ incompatible tasks-axi reports an upgrade by default^1^0.1.0^1^-^exact^OUTDATED:
 tasks-axi without archive-body reports an upgrade by default^1^0.2.6:noarchive^1^-^exact^OUTDATED: tasks-axi (installed: 0.2.6; requires 0.2.6 with update --archive-body; upgrade: npm install -g tasks-axi)^
 tasks-axi without multi-id mv reports an upgrade by default^1^0.2.6:nomulti^1^-^exact^OUTDATED: tasks-axi (installed: 0.2.6; requires 0.2.6 with mv multi-ID; upgrade: npm install -g tasks-axi)^
 missing quota-axi is required by default^1^0.2.6^0^manual^exact^MISSING: quota-axi (install: npm install -g quota-axi)^
-outdated quota-axi reports an upgrade by default^1^0.2.6^0.1.50^manual^exact^OUTDATED: quota-axi (installed: 0.1.50; requires 0.1.51; upgrade: quota-axi update)^
+outdated quota-axi reports an upgrade by default^1^0.2.6^0.1.50^manual^exact^OUTDATED: quota-axi (installed: 0.1.50; requires 0.1.69; upgrade: quota-axi update)^
 manual backlog backend still requires missing tasks-axi^1^-^1^manual^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 manual backlog backend suppresses tasks-axi availability^1^0.2.6^1^manual^empty^^
 ROWS
@@ -409,12 +409,12 @@ test_no_mistakes_min_version() {
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
       outdated)
-        expect="OUTDATED: no-mistakes (installed: $installed; requires 1.46.0; upgrade: no-mistakes update)"
+        expect="OUTDATED: no-mistakes (installed: $installed; requires 1.106.1; upgrade: no-mistakes update)"
         [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
     esac
   done <<'ROWS'
-minimum no-mistakes version is accepted^no-mistakes version v1.46.0 (fake)^empty^
-newer no-mistakes minor is accepted^no-mistakes version v1.47.0 (fake)^empty^
+minimum no-mistakes version is accepted^no-mistakes version v1.106.1 (fake)^empty^
+newer no-mistakes minor is accepted^no-mistakes version v1.107.0 (fake)^empty^
 newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty^
 absent no-mistakes reports a missing tool^absent^missing^
 older no-mistakes patch reports an upgrade^no-mistakes version v1.45.4 (fake)^outdated^1.45.4
@@ -447,12 +447,12 @@ test_gh_axi_min_version() {
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
       outdated)
-        expect="OUTDATED: gh-axi (installed: $installed; requires 0.1.29; upgrade: gh-axi update)"
+        expect="OUTDATED: gh-axi (installed: $installed; requires 0.1.48; upgrade: gh-axi update)"
         [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
     esac
   done <<'ROWS'
-minimum gh-axi version is accepted^0.1.29^empty^
-newer gh-axi patch is accepted^0.1.30^empty^
+minimum gh-axi version is accepted^0.1.48^empty^
+newer gh-axi patch is accepted^0.1.49^empty^
 newer gh-axi minor is accepted^0.2.0^empty^
 newer gh-axi major is accepted^1.0.0^empty^
 absent gh-axi reports a missing tool^absent^missing^
@@ -466,7 +466,7 @@ ROWS
 test_lavish_axi_min_version() {
   local label version mode case_dir fakebin base out unavailable upgrade n
   unavailable='PRESENTATION_UNAVAILABLE: lavish-axi (requires >=0.1.77; install: npm install -g lavish-axi && lavish-axi setup hooks) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish'
-  upgrade='BOOTSTRAP_INFO: lavish-axi >=0.1.80 enables confirmed board replies; this older compatible version retains the legacy reply path, but upgrade to prevent handing back a board before its reply is accepted'
+  upgrade='BOOTSTRAP_INFO: lavish-axi >=0.1.96 enables confirmed board replies; this older compatible version retains the legacy reply path, but upgrade to prevent handing back a board before its reply is accepted'
   n=0
   while IFS='^' read -r label version mode; do
     [ -n "$label" ] || continue
@@ -494,10 +494,10 @@ test_lavish_axi_min_version() {
     esac
   done <<'ROWS'
 absent lavish-axi permits text fallback^absent^unavailable
-lavish-axi reply feature floor is accepted^0.1.80^empty
+lavish-axi current supported reply baseline is accepted^0.1.96^empty
 older compatible lavish-axi retains boards and recommends upgrade^0.1.79^upgrade
 minimum legacy board version is accepted with upgrade advice^0.1.77^upgrade
-newer lavish-axi patch is accepted^0.1.81^empty
+newer lavish-axi patch is accepted^0.1.97^empty
 newer lavish-axi minor is accepted^0.2.0^empty
 newer lavish-axi major is accepted^1.0.0^empty
 the patch just below the board compatibility floor permits text fallback^0.1.76^unavailable
@@ -603,12 +603,12 @@ test_quota_axi_min_version() {
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
       outdated)
-        expect="OUTDATED: quota-axi (installed: $installed; requires 0.1.51; upgrade: quota-axi update)"
+        expect="OUTDATED: quota-axi (installed: $installed; requires 0.1.69; upgrade: quota-axi update)"
         [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
     esac
   done <<'ROWS'
-minimum quota-axi version is accepted^0.1.51^empty^
-newer quota-axi patch is accepted^0.1.52^empty^
+minimum quota-axi version is accepted^0.1.69^empty^
+newer quota-axi patch is accepted^0.1.70^empty^
 newer quota-axi minor is accepted^0.2.0^empty^
 newer quota-axi major is accepted^1.0.0^empty^
 absent quota-axi reports a missing tool^absent^missing^
@@ -720,7 +720,7 @@ test_session_provider_backends_gate_own_cli_not_tmux() {
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     # Toolchain has jq + treehouse but NOT the session CLI and NOT tmux.
     fakebin=$(make_fake_toolchain_no_tmux "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" "$cli" tmux)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_BACKEND_PASEO_BUNDLE_BIN="$case_dir/no-paseo" REX_BIN_DIR="$case_dir/no-rex-bin-dir" \
       FM_BACKEND_REX_BUNDLE_BIN="$case_dir/no-rex" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     case "$backend" in
@@ -783,7 +783,7 @@ test_unknown_backend_reports_invalid_configuration() {
   fakebin=$(make_fake_toolchain "$case_dir")
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "BACKEND_INVALID: bogus (known: tmux herdr zellij orca cmux paseo rex t3code tern)" \
+  assert_contains "$out" "BACKEND_INVALID: bogus (known: tmux herdr zellij orca cmux paseo rex t3code tern hc)" \
     "bootstrap should report an unknown resolved backend"
   assert_not_contains "$out" "MISSING: tmux" "an unknown backend should not silently fall back to tmux dependencies"
   pass "bootstrap: unknown resolved backends fail closed with an actionable diagnostic"
@@ -1361,7 +1361,7 @@ test_preferred_provider_validation() {
 }
 
 test_crew_dispatch_validation() {
-  local label body expect mode case_dir fakebin out child_env n
+  local label body expect mode case_dir fakebin out child_env n cred declaration
   n=0
   while IFS='^' read -r label body mode expect; do
     [ -n "$label" ] || continue
@@ -1404,12 +1404,17 @@ gemini profile with explicit provider is accepted^{"rules":[{"when":"gemini work
 agy low medium high efforts are accepted^{"rules":[{"when":"agy low","use":{"harness":"agy","effort":"low"}},{"when":"agy medium","use":{"harness":"agy","effort":"medium"}},{"when":"agy high","use":{"harness":"agy","effort":"high"}}]}^empty^
 unsupported agy xhigh effort is flagged^{"rules":[{"when":"agy xhigh","use":{"harness":"agy","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: agy:xhigh
 unsupported agy max effort is flagged^{"rules":[{"when":"agy max","use":{"harness":"agy","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: agy:max
+kiro shared efforts are accepted^{"rules":[{"when":"kiro low","use":{"harness":"kiro","effort":"low"}},{"when":"kiro medium","use":{"harness":"kiro","effort":"medium"}},{"when":"kiro high","use":{"harness":"kiro","effort":"high"}},{"when":"kiro xhigh","use":{"harness":"kiro","effort":"xhigh"}},{"when":"kiro max","use":{"harness":"kiro","effort":"max"}}]}^empty^
+unsupported kiro ultra effort is flagged^{"rules":[{"when":"kiro ultra","use":{"harness":"kiro","effort":"ultra"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: kiro:ultra
 unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high","provider":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
 kimi model profile is accepted^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3"}}]}^empty^
 unsupported kimi effort is flagged^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: kimi:high
 cursor model profile is accepted^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high"}}]}^empty^
 unsupported cursor effort is flagged^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: cursor:high
 array use with quota-balanced is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced"}]}^empty^
+top-level shared_quota true is accepted^{"shared_quota":true,"rules":[{"when":"big feature","use":{"harness":"claude"}}]}^empty^
+top-level shared_quota false is accepted^{"shared_quota":false,"rules":[{"when":"big feature","use":{"harness":"claude"}}]}^empty^
+non-boolean shared_quota is flagged^{"shared_quota":"yes","rules":[{"when":"big feature","use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - shared_quota must be true or false when present
 array use without select is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}]}]}^empty^
 one-element array use is accepted^{"rules":[{"when":"focused feature","use":[{"harness":"claude"}]}]}^empty^
 default array is accepted^{"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]}^empty^
@@ -1430,6 +1435,8 @@ whitespace profile provider is flagged^{"rules":[{"when":"images","use":[{"harne
 newline profile provider is flagged^{"rules":[{"when":"images","use":[{"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":"claude\n"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
 profile floor without scope is flagged^{"rules":[{"when":"images","use":[{"harness":"codex","floor":{"min_percent":50}}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile floor needs scope and min_percent 0..100
 profile floor provider override is flagged^{"rules":[{"when":"images","use":{"harness":"codex","floor":{"scope":"all_models","min_percent":50,"provider":"claude"}}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile floor needs scope and min_percent 0..100
+profile quota_scope empty is flagged^{"rules":[{"when":"images","use":{"harness":"agy","quota_scope":""}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile quota_scope must be a non-empty string when present
+default profile quota_scope non-string is flagged^{"default":{"harness":"agy","quota_scope":3}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile quota_scope must be a non-empty string when present
 unknown select is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"mystery"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unknown select: mystery
 array profile codex max without Luna model is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","effort":"max"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
 empty default array is flagged^{"default":[]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default needs at least one profile
@@ -1492,6 +1499,35 @@ ROWS
   [ -z "$out" ] || fail "typed resolution should add verified Gemini crewmate routing, got: $out"
 
   rm -f "$case_dir/home/.env"
+  cat > "$fakebin/security" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FM_TEST_SECURITY_LOG:?}"
+printf '%s\n' declared-source-secret
+SH
+  chmod +x "$fakebin/security"
+  : > "$case_dir/security.log"
+  cred="$case_dir/home/config/dispatch-credential-sources.json"
+  printf '%s\n' '{"typesafe":{"source":"macos-keychain","service":"typesafe-api-key"}}' > "$cred"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "a declared typesafe source should add verified Gemini crewmate routing, got: $out"
+  printf '%s\n' '{"rules":[{"when":"hard design","approval":"Captain","use":{"harness":"claude"}}]}' > "$case_dir/home/config/crew-dispatch.json"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - approval must be "captain" when present' ] \
+    || fail "a declared typesafe source must activate resolver-field validation, got: $out"
+  printf '%s\n' '{"rules":[{"when":"gemini work","use":{"harness":"gemini","model":"gemini-3.8-flash-high","provider":"google"}}]}' > "$case_dir/home/config/crew-dispatch.json"
+  for declaration in \
+    '{"openrouter":{"source":"macos-keychain","service":"openrouter-api-key"}}' \
+    '{"typesafe":{"source":"macos-keychain","service":"typesafe-api-key","key":"inline"}}'; do
+    printf '%s\n' "$declaration" > "$cred"
+    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+      FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+    [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: gemini' ] \
+      || fail "a declaration that is not a valid typesafe source must keep the verified-harness baseline ($declaration), got: $out"
+  done
+  [ ! -s "$case_dir/security.log" ] || fail "bootstrap must never run the credential tool, got: $(cat "$case_dir/security.log")"
+  rm -f "$cred"
   : > "$case_dir/child-env.log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     TYPESAFE_API_KEY=test-key FM_TEST_CHILD_ENV_LOG="$case_dir/child-env.log" \
@@ -1500,7 +1536,7 @@ ROWS
   child_env=$(cat "$case_dir/child-env.log")
   [ -n "$child_env" ] || fail "bootstrap child environment probe did not run"
   assert_not_contains "$child_env" 'secret-present' "bootstrap children never inherit the typesafe key"
-  pass "bootstrap gates resolver fields and additive harnesses on the typed key"
+  pass "bootstrap gates resolver fields and additive harnesses on the typed key or a declared typesafe source"
 }
 
 test_bootstrap_reporting

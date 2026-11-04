@@ -73,11 +73,13 @@ cleanup_all() {
       cleanup_status=1
     }
   fi
+
   fm_test_cleanup
   [ "$cleanup_status" = 0 ] || status=1
   exit "$status"
 }
 trap cleanup_all EXIT
+
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-control-herdr.XXXXXX")
 SCRATCH=$(cd "$SCRATCH" && pwd)
 # New panes inherit the server environment. Install only inert stand-ins before

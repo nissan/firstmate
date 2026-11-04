@@ -492,10 +492,10 @@ terminal_fail_open() {
   local pid role old_session old_count reason marker
   [ "$COUNT" -gt "$BLOCK_BUDGET" ] || return 1
   if terminal_condition_verified autoarm-failed; then
-    reason=autoarm-failed
+    reason='autoarm-failed'
     marker=$FAILURE_ALARM
   elif terminal_condition_verified lock-unavailable; then
-    reason=lock-unavailable
+    reason='lock-unavailable'
     marker=$LOCK_UNAVAILABLE_ALARM
   else
     return 1

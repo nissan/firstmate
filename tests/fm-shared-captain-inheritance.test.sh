@@ -380,7 +380,13 @@ make_fake_spawn_toolchain() {
 #!/usr/bin/env bash
 exit 0
 SH
-  chmod +x "$fakebin/tmux"
+  # Shadows any real herdr on BASE_PATH and records every call it receives.
+  cat > "$fakebin/herdr" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "$dir/herdr-calls"
+exit 1
+SH
+  chmod +x "$fakebin/tmux" "$fakebin/herdr"
   printf '%s\n' "$fakebin"
 }
 
@@ -388,11 +394,11 @@ SH
 add_bootstrap_compatible_tools() {
   local fakebin=$1
   fm_fake_exit0 "$fakebin" node chrome-devtools-axi gh treehouse
-  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.80
+  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.96
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' '0.1.29'
+  printf '%s\n' '0.1.48'
   exit 0
 fi
 exit 0
@@ -400,7 +406,7 @@ SH
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' 'no-mistakes version v1.46.0 (fake)'
+  printf '%s\n' 'no-mistakes version v1.106.1 (fake)'
   exit 0
 fi
 exit 0
@@ -417,7 +423,7 @@ SH
   cat > "$fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' '0.1.51'
+  printf '%s\n' '0.1.69'
   exit 0
 fi
 exit 0
@@ -466,16 +472,18 @@ EOF
   write_shared "$data_override/captain-shared.md" "shared from override"
   fakebin=$(make_fake_spawn_toolchain "$w")
 
-  PATH="$fakebin:$BASE_PATH" TMUX='' \
+  # HERDR_ENV=1 is what a run from inside a Herdr pane inherits.
+  PATH="$fakebin:$BASE_PATH" TMUX='' HERDR_ENV=1 \
     FM_ROOT_OVERRIDE="$root" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$data_override" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" sm "$sm" codex --secondmate >/dev/null 2>&1 || true
+    "$ROOT/bin/fm-spawn.sh" sm "$sm" codex --backend tmux --secondmate >/dev/null 2>&1 || true
 
   cmp -s "$data_override/captain-shared.md" "$sm/data/captain-shared.md" \
     || fail "spawn convergence point did not copy shared captain preferences from FM_DATA_OVERRIDE"
   assert_shared_readonly "$sm/data/captain-shared.md"
+  assert_absent "$w/herdr-calls" "spawn convergence point called herdr: $(cat "$w/herdr-calls" 2>/dev/null)"
   pass "spawn convergence point propagates data/captain-shared.md from FM_DATA_OVERRIDE"
 }
 
