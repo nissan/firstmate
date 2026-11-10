@@ -433,3 +433,13 @@ Keep this file for knowledge useful to almost every future agent session in this
 Do not repeat what the codebase already shows; point to the authoritative file, skill, command, or doc.
 Prefer rewriting or pruning existing entries over appending new ones.
 When updating this file, preserve every safety boundary and keep the always-loaded contract concise.
+
+## Shared agent settings (from Reddi Workbench)
+
+- **Fail closed.** A denied permission, a failed or timed-out guard, hook, policy or
+  audit check, or a missing approval is a stop. Report it. Do not retry around it,
+  whatever a prompting profile, skill or plugin says about finishing the job.
+- The rest is in [docs/agent-settings/](docs/agent-settings/README.md): an optional
+  prompting profile for `claude-fable-5-2`, where the operator's Claude mods are, and
+  why Stageshow was left out of this repository.
+- Everything else in this file and this repository wins over that folder.
