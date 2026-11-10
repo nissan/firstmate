@@ -17,7 +17,7 @@ This repository's own instructions win where they differ. The rules behind this 
 bin/fm-lint.sh && bin/fm-doc-audience-check.sh && bin/fm-test-run.sh
 ```
 
-Hosted CI: No routine CI: the hosted workflows are dispatch-only. Validation runs locally through no-mistakes, and `bin/fm-pr-merge.sh` checks its exact-head attestation before a merge.
+Hosted CI: No routine CI: the hosted workflows are dispatch-only. Validation runs locally through no-mistakes, and `bin/fm-pr-merge.sh` checks its exact-head attestation before a merge. Paste the check command's output in the pull request when no-mistakes did not produce it.
 
 ## What each check needs
 
