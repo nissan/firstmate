@@ -9,15 +9,15 @@ This repository's own instructions win where they differ. The rules behind this 
 
 - **Builds:** A crewmate spawned by Firstmate into its own worktree; Firstmate supervises and does not write to projects.
 - **Reviews:** The builder reviews its own work; the no-mistakes pipeline owns review when it is the selected delivery path.
-- **Merges:** Only on the captain's word, unless the project's standing yolo posture is on.
+- **Merges:** Only on the captain's word, unless the project's standing yolo posture is on, and through `bin/fm-pr-merge.sh`.
 
 ## The check command
 
 ```sh
-bin/fm-test-run.sh
+bin/fm-lint.sh && bin/fm-doc-audience-check.sh && bin/fm-test-run.sh
 ```
 
-Hosted CI: Yes: GitHub Actions (lint partitions, coverage guard, behaviour shards).
+Hosted CI: No routine CI: the hosted workflows are dispatch-only. Validation runs locally through no-mistakes, and `bin/fm-pr-merge.sh` checks its exact-head attestation before a merge.
 
 ## What each check needs
 
@@ -27,7 +27,8 @@ name the machine that has to run it.
 
 | Check | Command | Needs | Runs in a cloud session |
 |---|---|---|---|
-| Lint | see .github/workflows/ci.yml | pinned ShellCheck and actionlint | not tried |
+| no-mistakes validation and attestation | `the no-mistakes pipeline` | a Firstmate host with no-mistakes configured | no |
+| Lint | `bin/fm-lint.sh` | the pinned ShellCheck and actionlint versions | not tried |
 | Behaviour tests | `bin/fm-test-run.sh` | tasks-axi, the Pi package, tmux | no: tasks-axi is not available; a reap assertion failed in 2 of 3 runs |
 | Documentation audiences | `bin/fm-doc-audience-check.sh` | bash, jq | yes |
 | Herdr lifecycle | guarded lab helper only | Herdr in a named non-default lab | no |
