@@ -146,6 +146,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/builder-discretion/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/captain-hold-lifecycle/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -332,6 +336,18 @@
     {
       "path": "docs/agent-control.md",
       "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/agent-settings/DELIVERY-PRACTICES.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/agent-settings/README.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/agent-settings/claude-fable-5-2.md",
+      "audience": "agent-runtime"
     },
     {
       "path": "docs/architecture.md",

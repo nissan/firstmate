@@ -456,21 +456,6 @@ When updating this file, preserve every safety boundary and keep the always-load
   read-back before hashing, draft scenarios) apply too.
 - Apart from the two rules above, everything else in this file and this repository wins
   over that folder.
-
-<!-- workbench:discretion:begin (managed by scripts/adopt.py; edit planning/adoption-rules.json) -->
-## What the builder decides without asking (Workbench adoption)
-
-- Reviewing its own work as a build step: whole diff re-read, checks and negative cases run, each claim checked against a result.
-- Which additional checks to run beyond the required ones, and in what order.
-- Closing an issue whose acceptance is already met on the default branch, with the commit, command and output as evidence.
-- Picking the smallest issue marked Ready when none is assigned.
-- Fixing CI failures and merge conflicts on its own pull request.
-- Regenerating generated files, mirrors and manifests with the repository's own tooling.
-- Choosing the model and effort for its own subagents within the approved providers.
-
-Still needs the owner:
-
-- Merging, unless this repository gives standing merge authority.
-- Deploying, spending, changing settings, handling credentials, sending anything outside the repository, and any destructive or irreversible action.
-- Anything behind a denied, failed or timed-out control: that is a stop.
-<!-- workbench:discretion:end -->
+- **Builder discretion.** Load `builder-discretion` before stopping to ask whether a routine
+  build step needs approval; it grants nothing that this file's hard rules or merge
+  authority withhold.
