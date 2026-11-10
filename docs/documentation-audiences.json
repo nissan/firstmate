@@ -338,6 +338,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/agent-settings/CHECKS.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "docs/agent-settings/DELIVERY-PRACTICES.md",
       "audience": "agent-runtime"
     },
