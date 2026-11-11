@@ -56,11 +56,14 @@ so its pin and rules were left out.
 
 ## 5. Delivery practices
 
-[DELIVERY-PRACTICES.md](DELIVERY-PRACTICES.md) holds six working rules adopted after a
-road test across eleven repositories: the CI run is the proof that tests pass; check an
-issue is not already done before building it; the builder reviews its own work; every
-issue's Status carries a readiness line; read an issue back before hashing or mirroring
-it; scenarios an agent wrote are drafts until a person confirms them.
+[DELIVERY-PRACTICES.md](DELIVERY-PRACTICES.md) holds the shared working rules for delivery, copied from
+Reddi Workbench. Its first paragraph says how many rules there are and when each was
+adopted. Read the page itself: a summary kept here went out of date each time a rule changed.
+
+[CHECKS.md](CHECKS.md) is this repository's own answer to the rules about checks and roles: who
+builds and who reviews here, the one check command, what each check needs, what happens
+after a merge, and which test files no gate names. It is rendered from
+Reddi Workbench's `planning/repo-facts.json`; correct a wrong fact there.
 
 Unlike the rest of this folder, the review rule is also stated in this repository's own
 agent instructions, so it is binding here.
@@ -68,5 +71,5 @@ agent instructions, so it is binding here.
 ## Keeping this in step
 
 The source of truth is Reddi Workbench: `AGENTS.md`, `docs/model-profiles/`, `mods/`,
-`docs/STAGESHOW.md` and `docs/DELIVERY-PRACTICES.md`. This folder is a dated copy. Nothing checks it automatically;
+`docs/STAGESHOW.md`, `docs/DELIVERY-PRACTICES.md` and `planning/repo-facts.json`. This folder is a dated copy. Nothing checks it automatically;
 re-copy it when the source changes.
